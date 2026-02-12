@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         IdoSell - Kopiowanie ustawień kurierów
 // @namespace    idosell-courier-copy
-// @version      4.3.1
+// @version      4.3.2
 // @description  Eksport i import konfiguracji kurierów między panelami IdoSell
 // @match        *://*.iai-shop.com/panel/config-shippingdelivery.php*
 // @match        *://*.iai-shop.com/panel/config-shippingprofiles.php*
@@ -475,7 +475,7 @@
                 "_fields": [
                     'dvp', 'dvp_all_currencies', 'active_currencies[]',
                     'dvp_minworth', 'dvp_maxworth',
-                    '@dvp_cost', '@dvp_percent', '@dvp_points', '@dvp_customer_min_cost',
+                    '@dvp_cost', '@dvp_points', '@dvp_percent', '@dvp_customer_min_cost',
                     'dvp_if_limitfree',
                     '@dvp_limitfree',
                     '@dvp_shop_cost', '@dvp_shop_cost_percent', '@dvp_shop_min_cost',
@@ -486,7 +486,7 @@
                 "_label": "Koszty dostawy za przedplata",
                 "_fields": [
                     'prepaid', 'prepaid_minworth', 'prepaid_maxworth',
-                    '@prepaid_cost', '@prepaid_percent', '@prepaid_points', '@prepaid_customer_min_cost',
+                    '@prepaid_cost', '@prepaid_points', '@prepaid_percent', '@prepaid_customer_min_cost',
                     'prepaid_if_limitfree',
                     '@prepaid_limitfree',
                     '@prepaid_shop_cost', '@prepaid_shop_cost_percent', '@prepaid_shop_min_cost',
@@ -545,9 +545,9 @@
         // Sekcja przedzialow wagowych
         const weightFieldPrefixes = [
             'weight_min', 'weight_max',
-            'dvp_cost', 'dvp_percent', 'dvp_points', 'dvp_customer_min_cost', 'dvp_limitfree',
+            'dvp_cost', 'dvp_points', 'dvp_percent', 'dvp_customer_min_cost', 'dvp_limitfree',
             'dvp_shop_cost', 'dvp_shop_cost_percent', 'dvp_shop_min_cost',
-            'prepaid_cost', 'prepaid_percent', 'prepaid_points', 'prepaid_customer_min_cost', 'prepaid_limitfree',
+            'prepaid_cost', 'prepaid_points', 'prepaid_percent', 'prepaid_customer_min_cost', 'prepaid_limitfree',
             'prepaid_shop_cost', 'prepaid_shop_cost_percent', 'prepaid_shop_min_cost',
         ];
 
@@ -618,9 +618,9 @@
             // Splaszcz przedzialy wagowe
             const weightFieldPrefixes = [
                 'weight_min', 'weight_max',
-                'dvp_cost', 'dvp_percent', 'dvp_points', 'dvp_customer_min_cost', 'dvp_limitfree',
+                'dvp_cost', 'dvp_points', 'dvp_percent', 'dvp_customer_min_cost', 'dvp_limitfree',
                 'dvp_shop_cost', 'dvp_shop_cost_percent', 'dvp_shop_min_cost',
-                'prepaid_cost', 'prepaid_percent', 'prepaid_points', 'prepaid_customer_min_cost', 'prepaid_limitfree',
+                'prepaid_cost', 'prepaid_points', 'prepaid_percent', 'prepaid_customer_min_cost', 'prepaid_limitfree',
                 'prepaid_shop_cost', 'prepaid_shop_cost_percent', 'prepaid_shop_min_cost',
             ];
 
@@ -704,9 +704,9 @@
 
         const weightFieldPrefixes = [
             'weight_min', 'weight_max',
-            'dvp_cost', 'dvp_percent', 'dvp_points', 'dvp_customer_min_cost', 'dvp_limitfree',
+            'dvp_cost', 'dvp_points', 'dvp_percent', 'dvp_customer_min_cost', 'dvp_limitfree',
             'dvp_shop_cost', 'dvp_shop_cost_percent', 'dvp_shop_min_cost',
-            'prepaid_cost', 'prepaid_percent', 'prepaid_points', 'prepaid_customer_min_cost', 'prepaid_limitfree',
+            'prepaid_cost', 'prepaid_points', 'prepaid_percent', 'prepaid_customer_min_cost', 'prepaid_limitfree',
             'prepaid_shop_cost', 'prepaid_shop_cost_percent', 'prepaid_shop_min_cost',
         ];
 
@@ -747,7 +747,7 @@
             'active_currencies[]',
             'dvp_minworth',
             'dvp_maxworth',
-            '~dvp_cost', '~dvp_percent', '~dvp_points', '~dvp_customer_min_cost',
+            '~dvp_cost', '~dvp_points', '~dvp_percent', '~dvp_customer_min_cost',
             'dvp_if_limitfree',
             '~dvp_limitfree',
             '~dvp_shop_cost', '~dvp_shop_cost_percent', '~dvp_shop_min_cost',
@@ -758,7 +758,7 @@
             'prepaid',
             'prepaid_minworth',
             'prepaid_maxworth',
-            '~prepaid_cost', '~prepaid_percent', '~prepaid_points', '~prepaid_customer_min_cost',
+            '~prepaid_cost', '~prepaid_points', '~prepaid_percent', '~prepaid_customer_min_cost',
             'prepaid_if_limitfree',
             '~prepaid_limitfree',
             '~prepaid_shop_cost', '~prepaid_shop_cost_percent', '~prepaid_shop_min_cost',
