@@ -1,10 +1,10 @@
 // ==UserScript==
 // @name         IdoSell - Kopiowanie ustawień kurierów
 // @namespace    idosell-courier-copy
-// @version      3.8
+// @version      3.9
 // @description  Eksport i import konfiguracji kurierów między panelami IdoSell
-// @match        *://*.iai-shop.com/panel/config-shippingdelivery.php*
-// @match        *://*.iai-shop.com/panel/app/config-shippingdelivery.php*
+// @match        *://*.iai-shop.com/panel/*config-shipping*
+// @match        *://*.iai-shop.com/panel/app/*config-shipping*
 // @author       Maciej Dobroń <maciej.dobron@gmail.com>
 // @grant        none
 // @run-at       document-idle
@@ -243,7 +243,7 @@
             </style>
 
             <div class="cc-header" id="cc-drag-handle">
-                <h3>Kopiowanie kurierow v3.8</h3>
+                <h3>Kopiowanie kurierow v3.9</h3>
                 <button class="cc-close" id="cc-close-btn" title="Zamknij">&#10005;</button>
             </div>
             <div class="cc-body" id="cc-body">
@@ -1232,12 +1232,71 @@
     // -----------------------------------------------------------------------
     // START
     // -----------------------------------------------------------------------
-    console.log('[CourierCopy] v2.5 - Uruchamiam na:', window.location.href);
+    console.log('[CourierCopy] v3.9 - Uruchamiam na:', window.location.href);
 
     // Dodaj UI do strony glownej
     createUI();
 
-    // Szukaj formularza (moze byc w iframe - czekaj az sie zaladuje)
-    waitForForm(initControls, 30);
+    // Czy jestesmy na stronie konfiguracji kuriera?
+    function isDeliveryPage() {
+        return window.location.href.includes('config-shippingdelivery');
+    }
+
+    // Stan - czy kontrolki juz zainicjalizowane
+    let controlsInitialized = false;
+
+    function tryInitForm() {
+        if (!isDeliveryPage()) {
+            console.log('[CourierCopy] Nie na stronie konfiguracji kuriera, czekam na nawigacje...');
+            return;
+        }
+        if (controlsInitialized) return;
+        console.log('[CourierCopy] Strona konfiguracji kuriera - szukam formularza...');
+
+        // Pokaz waiting
+        const waitEl = document.getElementById('cc-waiting');
+        const ctrlEl = document.getElementById('cc-controls');
+        if (waitEl) waitEl.style.display = 'block';
+        if (ctrlEl) ctrlEl.style.display = 'none';
+
+        waitForForm((result) => {
+            controlsInitialized = true;
+            initControls(result);
+        }, 30);
+    }
+
+    // Monitoruj zmiany URL (SPA pushState/popstate)
+    let lastUrl = window.location.href;
+    function checkUrlChange() {
+        if (window.location.href !== lastUrl) {
+            const oldUrl = lastUrl;
+            lastUrl = window.location.href;
+            console.log('[CourierCopy] Zmiana URL:', oldUrl, '->', lastUrl);
+            controlsInitialized = false;
+            _formRef = null;
+            tryInitForm();
+        }
+    }
+
+    // Nasluchuj popstate (przycisk wstecz/dalej)
+    window.addEventListener('popstate', () => setTimeout(checkUrlChange, 500));
+
+    // Patchuj pushState i replaceState (SPA nawigacja)
+    const origPushState = history.pushState;
+    history.pushState = function() {
+        origPushState.apply(this, arguments);
+        setTimeout(checkUrlChange, 500);
+    };
+    const origReplaceState = history.replaceState;
+    history.replaceState = function() {
+        origReplaceState.apply(this, arguments);
+        setTimeout(checkUrlChange, 500);
+    };
+
+    // Dodatkowy polling na wypadek gdyby inne mechanizmy nawigacji nie wyzwolily eventow
+    setInterval(checkUrlChange, 2000);
+
+    // Pierwsza proba
+    tryInitForm();
 
 })();
