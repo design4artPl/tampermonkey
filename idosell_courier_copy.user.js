@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         IdoSell - Kopiowanie ustawień kurierów
 // @namespace    idosell-courier-copy
-// @version      3.7
+// @version      3.8
 // @description  Eksport i import konfiguracji kurierów między panelami IdoSell
 // @match        *://*.iai-shop.com/panel/config-shippingdelivery.php*
 // @match        *://*.iai-shop.com/panel/app/config-shippingdelivery.php*
@@ -243,7 +243,7 @@
             </style>
 
             <div class="cc-header" id="cc-drag-handle">
-                <h3>Kopiowanie kurierow v3.7</h3>
+                <h3>Kopiowanie kurierow v3.8</h3>
                 <button class="cc-close" id="cc-close-btn" title="Zamknij">&#10005;</button>
             </div>
             <div class="cc-body" id="cc-body">
@@ -472,14 +472,22 @@
                 "_label": "Koszty dostawy za pobraniem",
                 "_fields": [
                     'dvp', 'dvp_all_currencies', 'active_currencies[]',
-                    'dvp_minworth', 'dvp_maxworth', 'dvp_if_limitfree',
+                    'dvp_minworth', 'dvp_maxworth',
+                    '@dvp_cost', '@dvp_percent', '@dvp_points', '@dvp_customer_min_cost',
+                    'dvp_if_limitfree',
+                    '@dvp_limitfree',
+                    '@dvp_shop_cost', '@dvp_shop_cost_percent', '@dvp_shop_min_cost',
                     'dvp_allegro_surcharge', 'dvp_ebay_surcharge_enabled', 'dvp_ebay_surcharge'
                 ]
             },
             "koszty_za_przedplata": {
                 "_label": "Koszty dostawy za przedplata",
                 "_fields": [
-                    'prepaid', 'prepaid_minworth', 'prepaid_maxworth', 'prepaid_if_limitfree',
+                    'prepaid', 'prepaid_minworth', 'prepaid_maxworth',
+                    '@prepaid_cost', '@prepaid_percent', '@prepaid_points', '@prepaid_customer_min_cost',
+                    'prepaid_if_limitfree',
+                    '@prepaid_limitfree',
+                    '@prepaid_shop_cost', '@prepaid_shop_cost_percent', '@prepaid_shop_min_cost',
                     'prepaid_allegro_surcharge', 'prepaid_ebay_surcharge_enabled', 'prepaid_ebay_surcharge'
                 ]
             }
@@ -505,14 +513,28 @@
 
         // Sekcje gornej konfiguracji
         const assignedFields = new Set(['__iai_shop_panel[__encoding]', 'id', 'profile', 'action', 'default']);
+        const isSimpleMode = flat['mode'] === 's' || weightRowIds.length <= 1;
+        const simpleRowId = isSimpleMode && weightRowIds.length > 0 ? weightRowIds[0] : null;
 
         for (const [sectionKey, section] of Object.entries(sections)) {
             const sectionData = { "_sekcja": section._label };
             for (const fieldName of section._fields) {
-                if (flat[fieldName] !== undefined) {
-                    if (fieldLabels[fieldName]) sectionData[`// ${fieldName}`] = fieldLabels[fieldName];
-                    sectionData[fieldName] = flat[fieldName];
-                    assignedFields.add(fieldName);
+                // Pola z @ = pola kosztowe z [rowId], tylko w trybie prostym
+                if (fieldName.startsWith('@')) {
+                    if (!simpleRowId) continue;
+                    const prefix = fieldName.substring(1);
+                    const key = `${prefix}[${simpleRowId}]`;
+                    if (flat[key] !== undefined) {
+                        if (fieldLabels[prefix]) sectionData[`// ${prefix}`] = fieldLabels[prefix];
+                        sectionData[key] = flat[key];
+                        assignedFields.add(key);
+                    }
+                } else {
+                    if (flat[fieldName] !== undefined) {
+                        if (fieldLabels[fieldName]) sectionData[`// ${fieldName}`] = fieldLabels[fieldName];
+                        sectionData[fieldName] = flat[fieldName];
+                        assignedFields.add(fieldName);
+                    }
                 }
             }
             result[sectionKey] = sectionData;
@@ -526,45 +548,6 @@
             'prepaid_cost', 'prepaid_percent', 'prepaid_points', 'prepaid_customer_min_cost', 'prepaid_limitfree',
             'prepaid_shop_cost', 'prepaid_shop_cost_percent', 'prepaid_shop_min_cost',
         ];
-
-        // Pola kosztowe DVP/prepaid z row ID (w panelu widoczne w sekcji DVP/prepaid)
-        const dvpCostPrefixes = [
-            'dvp_cost', 'dvp_percent', 'dvp_points', 'dvp_customer_min_cost',
-            'dvp_limitfree', 'dvp_shop_cost', 'dvp_shop_cost_percent', 'dvp_shop_min_cost',
-        ];
-        const prepaidCostPrefixes = [
-            'prepaid_cost', 'prepaid_percent', 'prepaid_points', 'prepaid_customer_min_cost',
-            'prepaid_limitfree', 'prepaid_shop_cost', 'prepaid_shop_cost_percent', 'prepaid_shop_min_cost',
-        ];
-
-        // W trybie prostym (mode=s) lub gdy jest tylko 1 wiersz wagowy,
-        // dolacz pola kosztowe do sekcji DVP/prepaid (tak jak widac w panelu)
-        const isSimpleMode = flat['mode'] === 's' || weightRowIds.length <= 1;
-        if (isSimpleMode && weightRowIds.length > 0) {
-            const rowId = weightRowIds[0];
-            // Dodaj do koszty_za_pobraniem
-            if (result["koszty_za_pobraniem"]) {
-                for (const prefix of dvpCostPrefixes) {
-                    const key = `${prefix}[${rowId}]`;
-                    if (flat[key] !== undefined) {
-                        if (fieldLabels[prefix]) result["koszty_za_pobraniem"][`// ${prefix}`] = fieldLabels[prefix];
-                        result["koszty_za_pobraniem"][`${prefix}[${rowId}]`] = flat[key];
-                        assignedFields.add(key);
-                    }
-                }
-            }
-            // Dodaj do koszty_za_przedplata
-            if (result["koszty_za_przedplata"]) {
-                for (const prefix of prepaidCostPrefixes) {
-                    const key = `${prefix}[${rowId}]`;
-                    if (flat[key] !== undefined) {
-                        if (fieldLabels[prefix]) result["koszty_za_przedplata"][`// ${prefix}`] = fieldLabels[prefix];
-                        result["koszty_za_przedplata"][`${prefix}[${rowId}]`] = flat[key];
-                        assignedFields.add(key);
-                    }
-                }
-            }
-        }
 
         const weightRows = [];
         for (const rowId of weightRowIds) {
