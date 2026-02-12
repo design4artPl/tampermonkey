@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         IdoSell - Kopiowanie ustawień kurierów
 // @namespace    idosell-courier-copy
-// @version      4.5
+// @version      1.0
 // @description  Eksport i import konfiguracji kurierów między panelami IdoSell
 // @match        *://*.iai-shop.com/panel/config-shippingdelivery.php*
 // @match        *://*.iai-shop.com/panel/config-shippingprofiles.php*
@@ -284,6 +284,9 @@
                     <div class="cc-separator"></div>
 
                     <label style="display:block; font-size:11px; margin:4px 0; cursor:pointer;">
+                        <input type="checkbox" id="cc-remove-conflicts" checked> Usuwaj kolidujace przedzialy
+                    </label>
+                    <label style="display:block; font-size:11px; margin:4px 0; cursor:pointer;">
                         <input type="checkbox" id="cc-step-mode"> Tryb krokowy (potwierdzaj kazde pole)
                     </label>
                     <button class="cc-btn" id="cc-btn-step"
@@ -344,6 +347,43 @@
         statusEl.textContent += `\n[${time}] ${msg}`;
         statusEl.scrollTop = statusEl.scrollHeight;
         console.log('[CourierCopy]', msg);
+    }
+
+    // -----------------------------------------------------------------------
+    // PRE-EKSPORT: wymus synchronizacje wartosci formularza
+    // -----------------------------------------------------------------------
+    function syncFormValues(form) {
+        // Blur aktywnego elementu - wymusza commit wartosci z pola z kursorem
+        const doc = form.ownerDocument;
+        if (doc.activeElement && doc.activeElement !== doc.body) {
+            doc.activeElement.blur();
+        }
+    }
+
+    // -----------------------------------------------------------------------
+    // POST-EKSPORT: walidacja - sprawdz czy wartosci wyglqdaja na wczytane
+    // -----------------------------------------------------------------------
+    function validateExportData(data) {
+        const warnings = [];
+        const rangesKey = data.przedzialy_kwotowe ? 'przedzialy_kwotowe' : 'przedzialy_wagowe';
+        const ranges = data[rangesKey];
+        if (Array.isArray(ranges) && ranges.length > 1) {
+            const rangeField = data.przedzialy_kwotowe ? 'cost_min' : 'weight_min';
+            const allZero = ranges.every(r => !r[rangeField] || r[rangeField] === '0' || r[rangeField] === '0.00');
+            if (allZero) {
+                warnings.push(`UWAGA: Wszystkie ${ranges.length} przedzialy maja ${rangeField}=0. Mozliwe ze formularz nie zdazyl wczytac danych. Odswież stronę i sprobuj ponownie.`);
+            }
+
+            // Sprawdz czy koszty tez sa zerowe
+            const costFields = ['dvp_cost', 'prepaid_cost'];
+            for (const cf of costFields) {
+                const allCostZero = ranges.every(r => !r[cf] || r[cf] === '0' || r[cf] === '0.00');
+                if (allCostZero) {
+                    warnings.push(`UWAGA: Wszystkie ${cf} sa rowne 0.`);
+                }
+            }
+        }
+        return warnings;
     }
 
     // -----------------------------------------------------------------------
@@ -934,6 +974,188 @@
 
         filled += weightFilled;
         log(`Tabela ${rangeType}: wypelniono ${weightFilled} pol.`);
+
+        // --- KROK 3: Usuwanie kolidujacych przedzialow ---
+        const removeConflicts = document.getElementById('cc-remove-conflicts')?.checked;
+        if (removeConflicts && sourceRowIds.length > 0) {
+            log('Krok 3: Sprawdzam kolidujace przedzialy...');
+
+            // Zbierz zakresy zaimportowane (z config)
+            const importedRanges = sourceRowIds.map(srcId => ({
+                min: parseFloat(config[`${srcMatchField}[${srcId}]`] || 0),
+                max: parseFloat(config[`${maxField}[${srcId}]`] || config[`weight_max[${srcId}]`] || config[`cost_max[${srcId}]`] || 0),
+            }));
+
+            // Pobierz aktualne wiersze z formularza (po dodaniu nowych)
+            const currentRows = getDestRows(formDoc);
+            const rowsToRemove = []; // indeksy DOM od konca
+
+            for (let idx = 0; idx < currentRows.length; idx++) {
+                const row = currentRows[idx];
+                const rowMin = parseFloat(row.matchValue || 0);
+                // Pobierz tez max
+                const maxInputName = `${maxField}[${row.id}]`;
+                const maxEl = formDoc.querySelector(`input[name="${maxInputName}"]`);
+                const rowMax = maxEl ? parseFloat(maxEl.value || 0) : 0;
+
+                // Sprawdz czy ten wiersz jest jednym z zaimportowanych
+                const isImported = importedRanges.some(r => r.min === rowMin && r.max === rowMax);
+                if (isImported) continue;
+
+                // Sprawdz czy koliduje z ktorymkolwiek zaimportowanym
+                const conflicts = importedRanges.some(r =>
+                    rowMin < r.max && rowMax > r.min // zakresy sie nakladaja
+                );
+                // Specjalny przypadek: domyslny przedzial 0-999999999 (lub 0-0 gdy niezapisany)
+                const isDefault = (rowMin === 0 && (rowMax >= 999999999 || rowMax === 0));
+
+                if (conflicts || isDefault) {
+                    rowsToRemove.push({ idx, id: row.id, min: rowMin, max: rowMax, isDefault });
+                }
+            }
+
+            if (rowsToRemove.length > 0) {
+                log(`Znaleziono ${rowsToRemove.length} kolidujacych przedzialow do usuniecia:`);
+                // Usuwaj od konca (zeby indeksy sie nie przesunealy)
+                rowsToRemove.sort((a, b) => b.idx - a.idx);
+
+                // Helper: potwierdz modal IdoSell ("Czy jestes pewien swojej decyzji?")
+                // Nadpisuje confirm() w iframe + szuka przycisku OK w modalu outer page
+                async function autoConfirmDelete(ifrWin) {
+                    // 1. Nadpisz confirm() zeby zwrocic true automatycznie
+                    const origConfirm = ifrWin.confirm;
+                    ifrWin.confirm = () => true;
+
+                    // 2. Obserwuj modal w outer page (dialog moze pojawic sie w parent)
+                    const confirmPromise = new Promise(resolve => {
+                        const check = () => {
+                            // Szukaj przycisku OK w modalu - w outer page i iframe
+                            for (const doc of [document, ifrWin.document]) {
+                                // Typowe selektory modali: button z tekstem "OK", .confirm-ok, itp.
+                                const okBtn = doc.querySelector('.ui-dialog button:first-child')
+                                           || doc.querySelector('[role="dialog"] button:first-child')
+                                           || Array.from(doc.querySelectorAll('button')).find(b =>
+                                               b.textContent.trim() === 'OK' || b.textContent.trim() === 'Tak'
+                                           );
+                                if (okBtn && okBtn.offsetParent !== null) {
+                                    okBtn.click();
+                                    resolve(true);
+                                    return;
+                                }
+                            }
+                        };
+                        // Sprawdzaj co 100ms przez max 2s
+                        let attempts = 0;
+                        const interval = setInterval(() => {
+                            check();
+                            attempts++;
+                            if (attempts > 20) {
+                                clearInterval(interval);
+                                resolve(false);
+                            }
+                        }, 100);
+                        // Tez sprawdz od razu
+                        setTimeout(check, 50);
+                        // Cleanup po ukonczeniu
+                        const origResolve = resolve;
+                        resolve = (val) => { clearInterval(interval); origResolve(val); };
+                    });
+
+                    return { origConfirm, confirmPromise };
+                }
+
+                function restoreConfirm(ifrWin, origConfirm) {
+                    if (origConfirm) ifrWin.confirm = origConfirm;
+                }
+
+                for (const row of rowsToRemove) {
+                    const unit = (matchField === 'cost_min') ? 'zl' : 'g';
+                    log(`  Usuwam przedzial [${row.min}-${row.max} ${unit}]${row.isDefault ? ' (domyslny)' : ' (kolidujacy)'}...`);
+
+                    let deleted = false;
+                    const iframeWin = formDoc.defaultView || formDoc.parentWindow;
+
+                    // Znajdz hide_id z wartoscia rowId -> w tym samym TD jest link z onclick
+                    const hideInput = formDoc.querySelector(`input[name="hide_id[]"][value="${row.id}"]`);
+                    if (!hideInput) {
+                        log(`  [!] Brak hide_id[] z wartoscia ${row.id}`);
+                        continue;
+                    }
+
+                    const container = hideInput.closest('td') || hideInput.closest('tr');
+                    const removeLink = container && (
+                        container.querySelector('a[onclick*="removeFormRow"]')
+                        || container.querySelector('a[onclick*="deleteFormRow"]')
+                        || Array.from(container.querySelectorAll('a')).find(a => /usun|usuń/i.test(a.textContent))
+                    );
+
+                    if (!removeLink) {
+                        log(`  [!] Brak linku usun w TD/TR przy hide_id ${row.id}`);
+                        continue;
+                    }
+
+                    // Ustaw auto-potwierdzenie PRZED kliknieciem
+                    const { origConfirm, confirmPromise } = await autoConfirmDelete(iframeWin);
+
+                    try {
+                        const oc = removeLink.getAttribute('onclick') || '';
+                        log(`    Klikam: ${oc.substring(0, 80)}`);
+                        executeOnclick(formDoc, removeLink);
+
+                        // Czekaj na modal i potwierdzenie (max 2s)
+                        await Promise.race([confirmPromise, sleep(2000)]);
+                        await sleep(300);
+
+                        // Sprawdz czy wiersz zniknal
+                        const checkInput = formDoc.querySelector(`input[name="${matchField}[${row.id}]"]`);
+                        if (!checkInput) {
+                            log(`  -> Usunieto.`);
+                            deleted = true;
+                        } else {
+                            log(`  -> Wiersz nadal istnieje, probuje click()...`);
+                            removeLink.click();
+                            await Promise.race([confirmPromise, sleep(2000)]);
+                            await sleep(300);
+                            const checkInput2 = formDoc.querySelector(`input[name="${matchField}[${row.id}]"]`);
+                            if (!checkInput2) {
+                                log(`  -> Usunieto (click fallback).`);
+                                deleted = true;
+                            }
+                        }
+                    } finally {
+                        restoreConfirm(iframeWin, origConfirm);
+                    }
+
+                    if (!deleted) {
+                        log(`  [!] Nie znaleziono sposobu na usuniecie wiersza ID=${row.id}`);
+                        // Debug: pokaz structure inputu
+                        const dbgInput = formDoc.querySelector(`input[name="${matchField}[${row.id}]"]`);
+                        if (dbgInput) {
+                            let parent = dbgInput.parentElement;
+                            let path = dbgInput.tagName;
+                            for (let i = 0; i < 5 && parent; i++) {
+                                path = parent.tagName + (parent.className ? '.' + parent.className.split(' ')[0] : '') + ' > ' + path;
+                                parent = parent.parentElement;
+                            }
+                            log(`    DOM path: ${path}`);
+                            const tr = dbgInput.closest('tr');
+                            if (tr) {
+                                const links = tr.querySelectorAll('a');
+                                log(`    Linkow w TR: ${links.length}`);
+                                links.forEach((a, i) => log(`    TR link ${i}: text="${a.textContent.trim()}", onclick="${(a.getAttribute('onclick')||'').substring(0,80)}"`));
+                            }
+                        }
+                    }
+                }
+
+                // Weryfikacja
+                const afterRows = getDestRows(formDoc);
+                log(`Po usunieciu: ${afterRows.length} wierszy w tabeli.`);
+            } else {
+                log('Brak kolidujacych przedzialow.');
+            }
+        }
+
         log(`IMPORT ZAKONCZONY! Lacznie: ${filled} pol.`);
         log('Sprawdz dane i kliknij "Zmien" aby zapisac.');
 
@@ -1204,7 +1426,11 @@
         // ----- Eksport do pliku -----
         document.getElementById('cc-btn-export').addEventListener('click', () => {
             try {
+                syncFormValues(form);
                 const data = extractFormDataStructured(form);
+                // Walidacja
+                const warnings = validateExportData(data);
+                warnings.forEach(w => log(w));
                 const json = JSON.stringify(data, null, 2);
                 const blob = new Blob([json], { type: 'application/json' });
                 const url = URL.createObjectURL(blob);
@@ -1214,6 +1440,9 @@
                 a.click();
                 URL.revokeObjectURL(url);
                 log(`Eksport OK! ${Object.keys(data).length} pol. Plik pobrany.`);
+                if (warnings.length > 0) {
+                    log(`⚠ Wykryto ${warnings.length} ostrzezen - sprawdz plik.`);
+                }
             } catch (e) {
                 log(`BLAD eksportu: ${e.message}`);
             }
@@ -1222,12 +1451,19 @@
         // ----- Eksport do schowka -----
         document.getElementById('cc-btn-clipboard').addEventListener('click', async () => {
             try {
+                syncFormValues(form);
                 const data = extractFormDataStructured(form);
+                const warnings = validateExportData(data);
+                warnings.forEach(w => log(w));
                 const json = JSON.stringify(data, null, 2);
                 await navigator.clipboard.writeText(json);
                 log(`Skopiowano do schowka! ${Object.keys(data).length} pol.`);
+                if (warnings.length > 0) {
+                    log(`⚠ Wykryto ${warnings.length} ostrzezen - sprawdz dane.`);
+                }
             } catch (e) {
                 // Fallback
+                syncFormValues(form);
                 const data = extractFormDataStructured(form);
                 const json = JSON.stringify(data, null, 2);
                 const ta = document.createElement('textarea');
