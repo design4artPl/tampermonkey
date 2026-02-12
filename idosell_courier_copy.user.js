@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         IdoSell - Kopiowanie ustawień kurierów
 // @namespace    idosell-courier-copy
-// @version      4.4
+// @version      4.5
 // @description  Eksport i import konfiguracji kurierów między panelami IdoSell
 // @match        *://*.iai-shop.com/panel/config-shippingdelivery.php*
 // @match        *://*.iai-shop.com/panel/config-shippingprofiles.php*
@@ -427,7 +427,14 @@
             'prepaid_allegro_surcharge': '[UKRYTE] Doplata za kolejna sztuke Allegro (przedplata)',
             'prepaid_ebay_surcharge_enabled': '[UKRYTE] Doplata za kolejna sztuke eBay (przedplata)',
             'prepaid_ebay_surcharge': '[UKRYTE] Wysokosc doplaty eBay (przedplata)',
-            // Pola wagowe (w przedzialach)
+            // Pola specyficzne dla mode=c (przedzialy kwotowe)
+            'cost_min': 'Kwota minimalna (przedzial kwotowy)',
+            'cost_max': 'Kwota maksymalna (przedzial kwotowy)',
+            'dvp_minweight': 'Minimalna waga zamowienia (pobranie)',
+            'dvp_maxweight': 'Maksymalna waga zamowienia (pobranie)',
+            'prepaid_minweight': 'Minimalna waga zamowienia (przedplata)',
+            'prepaid_maxweight': 'Maksymalna waga zamowienia (przedplata)',
+            // Pola wierszowe (w przedzialach wagowych/kwotowych)
             'weight_min': 'Waga minimalna',
             'weight_max': 'Waga maksymalna',
             'dvp_cost': 'Koszt przesylki klient (pobranie) [zl]',
@@ -475,6 +482,7 @@
                 "_fields": [
                     'dvp', 'dvp_all_currencies', 'active_currencies[]',
                     'dvp_minworth', 'dvp_maxworth',
+                    'dvp_minweight', 'dvp_maxweight',
                     '@dvp_cost', '@dvp_points', '@dvp_percent', '@dvp_customer_min_cost',
                     'dvp_if_limitfree',
                     '@dvp_limitfree',
@@ -486,6 +494,7 @@
                 "_label": "Koszty dostawy za przedplata",
                 "_fields": [
                     'prepaid', 'prepaid_minworth', 'prepaid_maxworth',
+                    'prepaid_minweight', 'prepaid_maxweight',
                     '@prepaid_cost', '@prepaid_points', '@prepaid_percent', '@prepaid_customer_min_cost',
                     'prepaid_if_limitfree',
                     '@prepaid_limitfree',
@@ -495,13 +504,21 @@
             }
         };
 
-        // Zbierz ID-ki z tabeli wagowej
+        // Zbierz ID-ki z tabeli (weight_min dla wagi, cost_min dla kwoty)
+        let rowPrefix = 'weight_min';
         const weightRowIds = [];
         for (const key of Object.keys(flat)) {
             const m = key.match(/^weight_min\[(\d+)\]$/);
             if (m) weightRowIds.push(m[1]);
         }
-        weightRowIds.sort((a, b) => parseFloat(flat[`weight_min[${a}]`] || 0) - parseFloat(flat[`weight_min[${b}]`] || 0));
+        if (weightRowIds.length === 0) {
+            rowPrefix = 'cost_min';
+            for (const key of Object.keys(flat)) {
+                const m = key.match(/^cost_min\[(\d+)\]$/);
+                if (m) weightRowIds.push(m[1]);
+            }
+        }
+        weightRowIds.sort((a, b) => parseFloat(flat[`${rowPrefix}[${a}]`] || 0) - parseFloat(flat[`${rowPrefix}[${b}]`] || 0));
 
         // Buduj strukturalny JSON
         const result = {
@@ -542,9 +559,10 @@
             result[sectionKey] = sectionData;
         }
 
-        // Sekcja przedzialow wagowych
+        // Sekcja przedzialow (wagowych lub kwotowych)
         const weightFieldPrefixes = [
             'weight_min', 'weight_max',
+            'cost_min', 'cost_max',
             'dvp_cost', 'dvp_points', 'dvp_percent', 'dvp_customer_min_cost', 'dvp_limitfree',
             'dvp_shop_cost', 'dvp_shop_cost_percent', 'dvp_shop_min_cost',
             'prepaid_cost', 'prepaid_points', 'prepaid_percent', 'prepaid_customer_min_cost', 'prepaid_limitfree',
@@ -566,7 +584,8 @@
             assignedFields.add(`hide_id[${rowId}]`);
             weightRows.push(row);
         }
-        result["przedzialy_wagowe"] = weightRows;
+        const rangesSectionKey = (flat['mode'] === 'c') ? 'przedzialy_kwotowe' : 'przedzialy_wagowe';
+        result[rangesSectionKey] = weightRows;
 
         // Ewentualne nieprzypisane pola (na wszelki wypadek)
         const unassigned = {};
@@ -615,17 +634,19 @@
                 }
             }
 
-            // Splaszcz przedzialy wagowe
+            // Splaszcz przedzialy wagowe/kwotowe
             const weightFieldPrefixes = [
                 'weight_min', 'weight_max',
+                'cost_min', 'cost_max',
                 'dvp_cost', 'dvp_points', 'dvp_percent', 'dvp_customer_min_cost', 'dvp_limitfree',
                 'dvp_shop_cost', 'dvp_shop_cost_percent', 'dvp_shop_min_cost',
                 'prepaid_cost', 'prepaid_points', 'prepaid_percent', 'prepaid_customer_min_cost', 'prepaid_limitfree',
                 'prepaid_shop_cost', 'prepaid_shop_cost_percent', 'prepaid_shop_min_cost',
             ];
 
-            if (Array.isArray(config.przedzialy_wagowe)) {
-                for (const row of config.przedzialy_wagowe) {
+            const rangesData = config.przedzialy_kwotowe || config.przedzialy_wagowe;
+            if (Array.isArray(rangesData)) {
+                for (const row of rangesData) {
                     const rowId = row._row_id;
                     if (!rowId) continue;
                     for (const prefix of weightFieldPrefixes) {
@@ -656,10 +677,18 @@
     // -----------------------------------------------------------------------
     function getDestRows(doc) {
         const rows = [];
+        // Sprobuj weight_min (mode=a/s/dim_weight)
         doc.querySelectorAll('input[name^="weight_min["]').forEach(el => {
             const m = el.name.match(/weight_min\[(\d+)\]/);
-            if (m) rows.push({ id: m[1], weightMin: el.value.trim() });
+            if (m) rows.push({ id: m[1], matchValue: el.value.trim(), matchField: 'weight_min' });
         });
+        // Fallback: cost_min (mode=c)
+        if (rows.length === 0) {
+            doc.querySelectorAll('input[name^="cost_min["]').forEach(el => {
+                const m = el.name.match(/cost_min\[(\d+)\]/);
+                if (m) rows.push({ id: m[1], matchValue: el.value.trim(), matchField: 'cost_min' });
+            });
+        }
         return rows;
     }
 
@@ -672,7 +701,7 @@
     // Helper: znajdz przycisk "Dodaj przedzial"
     // -----------------------------------------------------------------------
     function findAddRowButton(formDoc) {
-        return formDoc.querySelector('a[href*="addWeightRow"], a.add_weight_row, [onclick*="addRow"]')
+        return formDoc.querySelector('a[href*="addWeightRow"], a.add_weight_row, [onclick*="addRow"], [onclick*="addFormRow"]')
             || Array.from(formDoc.querySelectorAll('a, span, button')).find(el =>
                 el.textContent.includes('Dodaj przedzia') || el.textContent.includes('dodaj przedzia')
             );
@@ -689,14 +718,22 @@
         ]);
         const skipPrefixes = ['hide_id'];
 
-        // Zbierz source row IDs
+        // Zbierz source row IDs (weight_min lub cost_min)
+        let srcMatchField = 'weight_min';
         const sourceRowIds = [];
         for (const key of Object.keys(config)) {
             const match = key.match(/^weight_min\[(\d+)\]$/);
             if (match) sourceRowIds.push(match[1]);
         }
+        if (sourceRowIds.length === 0) {
+            srcMatchField = 'cost_min';
+            for (const key of Object.keys(config)) {
+                const match = key.match(/^cost_min\[(\d+)\]$/);
+                if (match) sourceRowIds.push(match[1]);
+            }
+        }
         sourceRowIds.sort((a, b) =>
-            parseFloat(config[`weight_min[${a}]`] || 0) - parseFloat(config[`weight_min[${b}]`] || 0)
+            parseFloat(config[`${srcMatchField}[${a}]`] || 0) - parseFloat(config[`${srcMatchField}[${b}]`] || 0)
         );
 
         // --- KROK 1: Wypelnij pola NIE-wagowe w PRAWIDLOWEJ KOLEJNOSCI ---
@@ -704,6 +741,7 @@
 
         const weightFieldPrefixes = [
             'weight_min', 'weight_max',
+            'cost_min', 'cost_max',
             'dvp_cost', 'dvp_points', 'dvp_percent', 'dvp_customer_min_cost', 'dvp_limitfree',
             'dvp_shop_cost', 'dvp_shop_cost_percent', 'dvp_shop_min_cost',
             'prepaid_cost', 'prepaid_points', 'prepaid_percent', 'prepaid_customer_min_cost', 'prepaid_limitfree',
@@ -747,7 +785,9 @@
             'active_currencies[]',
             'dvp_minworth',
             'dvp_maxworth',
-            // pola kosztowe (dvp_cost, dvp_points, ...) wypelniane w Kroku 2 razem z tabela wagowa
+            'dvp_minweight',
+            'dvp_maxweight',
+            // pola kosztowe (dvp_cost, dvp_points, ...) wypelniane w Kroku 2 razem z tabela wagowa/kwotowa
             'dvp_if_limitfree',
             'dvp_allegro_surcharge',
             'dvp_ebay_surcharge_enabled',
@@ -756,7 +796,9 @@
             'prepaid',
             'prepaid_minworth',
             'prepaid_maxworth',
-            // pola kosztowe (prepaid_cost, prepaid_points, ...) wypelniane w Kroku 2 razem z tabela wagowa
+            'prepaid_minweight',
+            'prepaid_maxweight',
+            // pola kosztowe (prepaid_cost, prepaid_points, ...) wypelniane w Kroku 2 razem z tabela wagowa/kwotowa
             'prepaid_if_limitfree',
             'prepaid_allegro_surcharge',
             'prepaid_ebay_surcharge_enabled',
@@ -805,9 +847,10 @@
         }
         log(`Ustawienia ogolne: wypelniono ${filled} pol.`);
 
-        // --- KROK 2: Przedzialy wagowe (matchowanie po weight_min) ---
+        // --- KROK 2: Przedzialy wagowe/kwotowe ---
         let destRows = getDestRows(formDoc);
-        log(`Krok 2: Tabela wagowa - zrodlo: ${sourceRowIds.length}, cel: ${destRows.length} wierszy`);
+        const rangeType = (destRows.length > 0 && destRows[0].matchField === 'cost_min') ? 'kwotowa' : 'wagowa';
+        log(`Krok 2: Tabela ${rangeType} - zrodlo: ${sourceRowIds.length}, cel: ${destRows.length} wierszy`);
 
         if (sourceRowIds.length === 0) {
             log(`IMPORT ZAKONCZONY! Lacznie: ${filled} pol.`);
@@ -841,23 +884,28 @@
             return count;
         }
 
-        // Buduj mape istniejacych wierszy wg weight_min -> indeks DOM
-        const destByWeightMin = {};
+        // Buduj mape istniejacych wierszy wg matchValue -> indeks DOM
+        const destByMatchValue = {};
         for (let idx = 0; idx < destRows.length; idx++) {
-            destByWeightMin[destRows[idx].weightMin] = idx;
+            destByMatchValue[destRows[idx].matchValue] = idx;
         }
+
+        // Ustal prefix matchowania (weight_min lub cost_min)
+        const matchField = (destRows.length > 0) ? destRows[0].matchField : srcMatchField;
+        const maxField = (matchField === 'cost_min') ? 'cost_max' : 'weight_max';
 
         for (let i = 0; i < sourceRowIds.length; i++) {
             const srcId = sourceRowIds[i];
-            const srcMin = config[`weight_min[${srcId}]`] || '?';
-            const srcMax = config[`weight_max[${srcId}]`] || '?';
+            const srcMin = config[`${srcMatchField}[${srcId}]`] || '?';
+            const srcMax = config[`${maxField}[${srcId}]`] || config[`weight_max[${srcId}]`] || config[`cost_max[${srcId}]`] || '?';
 
-            // Szukaj istniejacego wiersza o tym samym weight_min
-            const existingIdx = destByWeightMin[srcMin];
+            // Szukaj istniejacego wiersza o tej samej wartosci matchujacej
+            const existingIdx = destByMatchValue[srcMin];
 
+            const unit = (matchField === 'cost_min') ? 'zl' : 'kg';
             if (existingIdx !== undefined) {
-                // Wiersz z takim weight_min juz istnieje -> aktualizuj
-                log(`  Wiersz ${i + 1}/${sourceRowIds.length} [${srcMin}-${srcMax} kg] -> AKTUALIZACJA pozycja ${existingIdx}`);
+                // Wiersz z taka wartoscia juz istnieje -> aktualizuj
+                log(`  Wiersz ${i + 1}/${sourceRowIds.length} [${srcMin}-${srcMax} ${unit}] -> AKTUALIZACJA pozycja ${existingIdx}`);
                 weightFilled += await fillWeightRow(srcId, existingIdx);
             } else {
                 // Brak takiego przedzialu -> dodaj nowy
@@ -876,16 +924,16 @@
                     break;
                 }
 
-                log(`  Wiersz ${i + 1}/${sourceRowIds.length} [${srcMin}-${srcMax} kg] -> NOWY pozycja ${newRowIdx}`);
+                log(`  Wiersz ${i + 1}/${sourceRowIds.length} [${srcMin}-${srcMax} ${unit}] -> NOWY pozycja ${newRowIdx}`);
                 weightFilled += await fillWeightRow(srcId, newRowIdx);
 
                 // Dodaj nowy wiersz do mapy (po wypelnieniu ma juz srcMin)
-                destByWeightMin[srcMin] = newRowIdx;
+                destByMatchValue[srcMin] = newRowIdx;
             }
         }
 
         filled += weightFilled;
-        log(`Tabela wagowa: wypelniono ${weightFilled} pol.`);
+        log(`Tabela ${rangeType}: wypelniono ${weightFilled} pol.`);
         log(`IMPORT ZAKONCZONY! Lacznie: ${filled} pol.`);
         log('Sprawdz dane i kliknij "Zmien" aby zapisac.');
 
