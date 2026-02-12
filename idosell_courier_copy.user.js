@@ -83,12 +83,9 @@
     // UI - Pływający panel (dodajemy do outer page - zawsze widoczny)
     // -----------------------------------------------------------------------
     function createUI() {
-        // --- Okragla ikonka (FAB) ---
-        const fab = document.createElement('div');
-        fab.id = 'cc-fab';
-        fab.title = 'Kopiowanie kurierów';
-        fab.innerHTML = `
-            <style>
+        // --- Globalny styl (jeden element <style> dodany programatycznie) ---
+        const styleEl = document.createElement('style');
+        styleEl.textContent = `
                 #cc-fab {
                     position: fixed;
                     bottom: 20px;
@@ -115,16 +112,6 @@
                     height: 24px;
                     fill: white;
                 }
-            </style>
-            <svg viewBox="0 0 24 24"><path d="M16 1H4c-1.1 0-2 .9-2 2v14h2V3h12V1zm3 4H8c-1.1 0-2 .9-2 2v14c0 1.1.9 2 2 2h11c1.1 0 2-.9 2-2V7c0-1.1-.9-2-2-2zm0 16H8V7h11v14z"/></svg>
-        `;
-        document.body.appendChild(fab);
-
-        // --- Panel glowny (domyslnie ukryty) ---
-        const panel = document.createElement('div');
-        panel.id = 'courier-copy-panel';
-        panel.innerHTML = `
-            <style>
                 #courier-copy-panel {
                     position: fixed;
                     top: 10px;
@@ -242,8 +229,30 @@
                     margin-right: 6px;
                 }
                 @keyframes cc-spin { to { transform: rotate(360deg); } }
-            </style>
+                #courier-copy-panel .cc-log-icon {
+                    cursor: pointer;
+                    font-size: 14px;
+                    opacity: 0.5;
+                    padding: 2px;
+                    transition: opacity 0.15s;
+                }
+                #courier-copy-panel .cc-log-icon:hover {
+                    opacity: 1;
+                }
+        `;
+        document.head.appendChild(styleEl);
 
+        // --- Okragla ikonka (FAB) ---
+        const fab = document.createElement('div');
+        fab.id = 'cc-fab';
+        fab.title = 'Kopiowanie kurierów';
+        fab.innerHTML = `<svg viewBox="0 0 24 24"><path d="M16 1H4c-1.1 0-2 .9-2 2v14h2V3h12V1zm3 4H8c-1.1 0-2 .9-2 2v14c0 1.1.9 2 2 2h11c1.1 0 2-.9 2-2V7c0-1.1-.9-2-2-2zm0 16H8V7h11v14z"/></svg>`;
+        document.body.appendChild(fab);
+
+        // --- Panel glowny (domyslnie ukryty) ---
+        const panel = document.createElement('div');
+        panel.id = 'courier-copy-panel';
+        panel.innerHTML = `
             <div class="cc-header" id="cc-drag-handle">
                 <h3>Kopiowanie kurierów v1.0</h3>
                 <button class="cc-close" id="cc-close-btn" title="Zamknij">&#10005;</button>
@@ -298,12 +307,8 @@
 
                     <div style="display:flex; align-items:center; gap:4px;">
                         <div class="cc-status" id="cc-status" style="flex:1;">Gotowy. Wybierz akcję powyżej.</div>
-                        <span id="cc-log-copy" title="Kopiuj log do schowka"
-                            style="cursor:pointer; font-size:14px; opacity:0.5; padding:2px;"
-                            onmouseover="this.style.opacity=1" onmouseout="this.style.opacity=0.5">&#128203;</span>
-                        <span id="cc-log-save" title="Zapisz log do pliku"
-                            style="cursor:pointer; font-size:14px; opacity:0.5; padding:2px;"
-                            onmouseover="this.style.opacity=1" onmouseout="this.style.opacity=0.5">&#128190;</span>
+                        <span id="cc-log-copy" class="cc-log-icon" title="Kopiuj log do schowka">&#128203;</span>
+                        <span id="cc-log-save" class="cc-log-icon" title="Zapisz log do pliku">&#128190;</span>
                     </div>
                 </div>
             </div>
