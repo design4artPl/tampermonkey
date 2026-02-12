@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         IdoSell - Kopiowanie ustawień kurierów
 // @namespace    idosell-courier-copy
-// @version      3.6
+// @version      3.7
 // @description  Eksport i import konfiguracji kurierów między panelami IdoSell
 // @match        *://*.iai-shop.com/panel/config-shippingdelivery.php*
 // @match        *://*.iai-shop.com/panel/app/config-shippingdelivery.php*
@@ -243,7 +243,7 @@
             </style>
 
             <div class="cc-header" id="cc-drag-handle">
-                <h3>Kopiowanie kurierow v3.6</h3>
+                <h3>Kopiowanie kurierow v3.7</h3>
                 <button class="cc-close" id="cc-close-btn" title="Zamknij">&#10005;</button>
             </div>
             <div class="cc-body" id="cc-body">
@@ -527,6 +527,45 @@
             'prepaid_shop_cost', 'prepaid_shop_cost_percent', 'prepaid_shop_min_cost',
         ];
 
+        // Pola kosztowe DVP/prepaid z row ID (w panelu widoczne w sekcji DVP/prepaid)
+        const dvpCostPrefixes = [
+            'dvp_cost', 'dvp_percent', 'dvp_points', 'dvp_customer_min_cost',
+            'dvp_limitfree', 'dvp_shop_cost', 'dvp_shop_cost_percent', 'dvp_shop_min_cost',
+        ];
+        const prepaidCostPrefixes = [
+            'prepaid_cost', 'prepaid_percent', 'prepaid_points', 'prepaid_customer_min_cost',
+            'prepaid_limitfree', 'prepaid_shop_cost', 'prepaid_shop_cost_percent', 'prepaid_shop_min_cost',
+        ];
+
+        // W trybie prostym (mode=s) lub gdy jest tylko 1 wiersz wagowy,
+        // dolacz pola kosztowe do sekcji DVP/prepaid (tak jak widac w panelu)
+        const isSimpleMode = flat['mode'] === 's' || weightRowIds.length <= 1;
+        if (isSimpleMode && weightRowIds.length > 0) {
+            const rowId = weightRowIds[0];
+            // Dodaj do koszty_za_pobraniem
+            if (result["koszty_za_pobraniem"]) {
+                for (const prefix of dvpCostPrefixes) {
+                    const key = `${prefix}[${rowId}]`;
+                    if (flat[key] !== undefined) {
+                        if (fieldLabels[prefix]) result["koszty_za_pobraniem"][`// ${prefix}`] = fieldLabels[prefix];
+                        result["koszty_za_pobraniem"][`${prefix}[${rowId}]`] = flat[key];
+                        assignedFields.add(key);
+                    }
+                }
+            }
+            // Dodaj do koszty_za_przedplata
+            if (result["koszty_za_przedplata"]) {
+                for (const prefix of prepaidCostPrefixes) {
+                    const key = `${prefix}[${rowId}]`;
+                    if (flat[key] !== undefined) {
+                        if (fieldLabels[prefix]) result["koszty_za_przedplata"][`// ${prefix}`] = fieldLabels[prefix];
+                        result["koszty_za_przedplata"][`${prefix}[${rowId}]`] = flat[key];
+                        assignedFields.add(key);
+                    }
+                }
+            }
+        }
+
         const weightRows = [];
         for (const rowId of weightRowIds) {
             const row = { _row_id: rowId };
@@ -586,7 +625,7 @@
                 const section = config[sectionKey];
                 if (section && typeof section === 'object' && !Array.isArray(section)) {
                     for (const [key, val] of Object.entries(section)) {
-                        if (!key.startsWith('_')) flat[key] = val;
+                        if (!key.startsWith('_') && !key.startsWith('//')) flat[key] = val;
                     }
                 }
             }
