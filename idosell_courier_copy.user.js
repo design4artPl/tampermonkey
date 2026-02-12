@@ -1,10 +1,12 @@
 // ==UserScript==
 // @name         IdoSell - Kopiowanie ustawień kurierów
 // @namespace    idosell-courier-copy
-// @version      4.1
+// @version      4.2
 // @description  Eksport i import konfiguracji kurierów między panelami IdoSell
-// @match        *://*.iai-shop.com/panel/*config-shipping*
-// @match        *://*.iai-shop.com/panel/app/*config-shipping*
+// @match        *://*.iai-shop.com/panel/config-shippingdelivery.php*
+// @match        *://*.iai-shop.com/panel/config-shippingprofiles.php*
+// @match        *://*.iai-shop.com/panel/app/config-shippingdelivery.php*
+// @match        *://*.iai-shop.com/panel/app/config-shippingprofiles.php*
 // @author       Maciej Dobroń <maciej.dobron@gmail.com>
 // @grant        none
 // @run-at       document-idle
@@ -243,7 +245,7 @@
             </style>
 
             <div class="cc-header" id="cc-drag-handle">
-                <h3>Kopiowanie kurierow v4.1</h3>
+                <h3>Kopiowanie kurierow v4.2</h3>
                 <button class="cc-close" id="cc-close-btn" title="Zamknij">&#10005;</button>
             </div>
             <div class="cc-body" id="cc-body">
