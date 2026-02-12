@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         IdoSell - Kopiowanie ustawień kurierów
 // @namespace    idosell-courier-copy
-// @version      4.0
+// @version      4.1
 // @description  Eksport i import konfiguracji kurierów między panelami IdoSell
 // @match        *://*.iai-shop.com/panel/*config-shipping*
 // @match        *://*.iai-shop.com/panel/app/*config-shipping*
@@ -243,7 +243,7 @@
             </style>
 
             <div class="cc-header" id="cc-drag-handle">
-                <h3>Kopiowanie kurierow v4.0</h3>
+                <h3>Kopiowanie kurierow v4.1</h3>
                 <button class="cc-close" id="cc-close-btn" title="Zamknij">&#10005;</button>
             </div>
             <div class="cc-body" id="cc-body">
@@ -777,19 +777,34 @@
         log('Krok 1: Wypelniam ustawienia ogolne (od gory do dolu)...');
         const processed = new Set();
 
+        // Mapowanie source rowId -> dest rowId (potrzebne dla pol kosztowych z [rowId])
+        const destRows = getDestRows(formDoc);
+        const srcRowIdMap = {}; // srcRowId -> destRowId
+        for (let i = 0; i < sourceRowIds.length && i < destRows.length; i++) {
+            srcRowIdMap[sourceRowIds[i]] = destRows[i].id;
+        }
+        if (Object.keys(srcRowIdMap).length > 0) {
+            log(`  Mapowanie row ID: ${Object.entries(srcRowIdMap).map(([s,d]) => s+'->'+d).join(', ')}`);
+        }
+
         for (const name of FORM_FIELD_ORDER) {
             // Pola z @ = prefiksy kosztowe z dynamicznym [rowId]
             if (name.startsWith('@')) {
                 const prefix = name.substring(1);
-                // Znajdz wszystkie klucze pasujace do prefix[*]
+                // Znajdz klucze w config pasujace do prefix[*] i zmapuj na dest rowId
                 for (const [key, value] of Object.entries(config)) {
-                    if (key.startsWith(`${prefix}[`) && !processed.has(key)) {
-                        log(`  -> ${key} = ${JSON.stringify(value)}`);
-                        const r = fillField(formDoc, key, value);
-                        filled += r;
-                        processed.add(key);
-                        await waitForStep();
-                    }
+                    const m = key.match(new RegExp(`^${prefix.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}\\[(\\d+)\\]$`));
+                    if (!m || processed.has(key)) continue;
+                    const srcRowId = m[1];
+                    const destRowId = srcRowIdMap[srcRowId] || srcRowId;
+                    const destKey = `${prefix}[${destRowId}]`;
+                    log(`  -> ${destKey} = ${JSON.stringify(value)}${destRowId !== srcRowId ? ` (mapped ${srcRowId}->${destRowId})` : ''}`);
+                    const r = fillField(formDoc, destKey, value);
+                    filled += r;
+                    processed.add(key);
+                    // Oznacz tez dest key jako przetworzony (zeby faza wagowa nie nadpisala)
+                    processed.add(destKey);
+                    await waitForStep();
                 }
                 continue;
             }
