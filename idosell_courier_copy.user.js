@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         IdoSell - Kopiowanie ustawień kurierów
 // @namespace    idosell-courier-copy
-// @version      4.2
+// @version      4.3
 // @description  Eksport i import konfiguracji kurierów między panelami IdoSell
 // @match        *://*.iai-shop.com/panel/config-shippingdelivery.php*
 // @match        *://*.iai-shop.com/panel/config-shippingprofiles.php*
@@ -528,7 +528,7 @@
                     const key = `${prefix}[${simpleRowId}]`;
                     if (flat[key] !== undefined) {
                         if (fieldLabels[prefix]) sectionData[`// ${prefix}`] = fieldLabels[prefix];
-                        sectionData[key] = flat[key];
+                        sectionData[prefix] = flat[key]; // bez row ID - uniwersalne
                         assignedFields.add(key);
                     }
                 } else {
@@ -747,10 +747,10 @@
             'active_currencies[]',
             'dvp_minworth',
             'dvp_maxworth',
-            '@dvp_cost', '@dvp_percent', '@dvp_points', '@dvp_customer_min_cost',
+            '~dvp_cost', '~dvp_percent', '~dvp_points', '~dvp_customer_min_cost',
             'dvp_if_limitfree',
-            '@dvp_limitfree',
-            '@dvp_shop_cost', '@dvp_shop_cost_percent', '@dvp_shop_min_cost',
+            '~dvp_limitfree',
+            '~dvp_shop_cost', '~dvp_shop_cost_percent', '~dvp_shop_min_cost',
             'dvp_allegro_surcharge',
             'dvp_ebay_surcharge_enabled',
             'dvp_ebay_surcharge',
@@ -758,10 +758,10 @@
             'prepaid',
             'prepaid_minworth',
             'prepaid_maxworth',
-            '@prepaid_cost', '@prepaid_percent', '@prepaid_points', '@prepaid_customer_min_cost',
+            '~prepaid_cost', '~prepaid_percent', '~prepaid_points', '~prepaid_customer_min_cost',
             'prepaid_if_limitfree',
-            '@prepaid_limitfree',
-            '@prepaid_shop_cost', '@prepaid_shop_cost_percent', '@prepaid_shop_min_cost',
+            '~prepaid_limitfree',
+            '~prepaid_shop_cost', '~prepaid_shop_cost_percent', '~prepaid_shop_min_cost',
             'prepaid_allegro_surcharge',
             'prepaid_ebay_surcharge_enabled',
             'prepaid_ebay_surcharge',
@@ -779,33 +779,45 @@
         log('Krok 1: Wypelniam ustawienia ogolne (od gory do dolu)...');
         const processed = new Set();
 
-        // Mapowanie source rowId -> dest rowId (potrzebne dla pol kosztowych z [rowId])
-        let destRows = getDestRows(formDoc);
-        const srcRowIdMap = {}; // srcRowId -> destRowId
-        for (let i = 0; i < sourceRowIds.length && i < destRows.length; i++) {
-            srcRowIdMap[sourceRowIds[i]] = destRows[i].id;
-        }
-        if (Object.keys(srcRowIdMap).length > 0) {
-            log(`  Mapowanie row ID: ${Object.entries(srcRowIdMap).map(([s,d]) => s+'->'+d).join(', ')}`);
-        }
-
         for (const name of FORM_FIELD_ORDER) {
-            // Pola z @ = prefiksy kosztowe z dynamicznym [rowId]
-            if (name.startsWith('@')) {
+            // Pola z ~ = prefiksy kosztowe - szukaj w formularzu po prefiksie nazwy
+            if (name.startsWith('~')) {
                 const prefix = name.substring(1);
-                // Znajdz klucze w config pasujace do prefix[*] i zmapuj na dest rowId
-                for (const [key, value] of Object.entries(config)) {
-                    const m = key.match(new RegExp(`^${prefix.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}\\[(\\d+)\\]$`));
-                    if (!m || processed.has(key)) continue;
-                    const srcRowId = m[1];
-                    const destRowId = srcRowIdMap[srcRowId] || srcRowId;
-                    const destKey = `${prefix}[${destRowId}]`;
-                    log(`  -> ${destKey} = ${JSON.stringify(value)}${destRowId !== srcRowId ? ` (mapped ${srcRowId}->${destRowId})` : ''}`);
-                    const r = fillField(formDoc, destKey, value);
+                // Znajdz wartosc w configu (moze byc jako "dvp_cost" lub "dvp_cost[7999]")
+                let value = config[prefix];
+                if (value === undefined) {
+                    // Szukaj klucza z dowolnym [rowId]
+                    for (const key of Object.keys(config)) {
+                        if (key.startsWith(`${prefix}[`)) {
+                            value = config[key];
+                            processed.add(key);
+                            break;
+                        }
+                    }
+                }
+                if (value === undefined) continue;
+
+                // Znajdz input w formularzu po prefiksie nazwy
+                const allInputs = [];
+                const form = _formRef || formDoc.querySelector('form');
+                if (form) {
+                    form.querySelectorAll('input, select, textarea').forEach(el => {
+                        if (el.name && el.name.startsWith(`${prefix}[`)) allInputs.push(el);
+                    });
+                }
+                if (allInputs.length === 0) {
+                    formDoc.querySelectorAll('input, select, textarea').forEach(el => {
+                        if (el.name && el.name.startsWith(`${prefix}[`)) allInputs.push(el);
+                    });
+                }
+
+                if (allInputs.length > 0) {
+                    const destName = allInputs[0].name;
+                    log(`  -> ${destName} = ${JSON.stringify(value)} (prefix: ${prefix})`);
+                    const r = fillField(formDoc, destName, value);
                     filled += r;
-                    processed.add(key);
-                    // Oznacz tez dest key jako przetworzony (zeby faza wagowa nie nadpisala)
-                    processed.add(destKey);
+                    processed.add(prefix);
+                    processed.add(destName);
                     await waitForStep();
                 }
                 continue;
@@ -853,23 +865,30 @@
         const addBtn = findAddRowButton(formDoc);
         let weightFilled = 0;
 
-        // Wypelnij jeden wiersz wagowy (src -> dest)
-        function fillWeightRow(srcRowId, destRowId) {
+        // Wypelnij jeden wiersz wagowy (src -> dest) - wg pozycji DOM (row ID moga sie roznic miedzy typami pol)
+        function fillWeightRow(srcRowId, destRowIndex) {
             let count = 0;
             for (const prefix of weightFieldPrefixes) {
                 const srcKey = `${prefix}[${srcRowId}]`;
                 if (config[srcKey] !== undefined) {
-                    const destName = `${prefix}[${destRowId}]`;
-                    count += fillField(formDoc, destName, config[srcKey]);
+                    const inputs = [];
+                    formDoc.querySelectorAll('input, select, textarea').forEach(el => {
+                        if (el.name && el.name.startsWith(`${prefix}[`)) inputs.push(el);
+                    });
+                    if (inputs.length > destRowIndex) {
+                        count += fillField(formDoc, inputs[destRowIndex].name, config[srcKey]);
+                    } else {
+                        log(`    [!] ${prefix}: brak inputu na pozycji ${destRowIndex} (znaleziono ${inputs.length})`);
+                    }
                 }
             }
             return count;
         }
 
-        // Buduj mape istniejacych wierszy wg weight_min
+        // Buduj mape istniejacych wierszy wg weight_min -> indeks DOM
         const destByWeightMin = {};
-        for (const row of destRows) {
-            destByWeightMin[row.weightMin] = row.id;
+        for (let idx = 0; idx < destRows.length; idx++) {
+            destByWeightMin[destRows[idx].weightMin] = idx;
         }
 
         for (let i = 0; i < sourceRowIds.length; i++) {
@@ -878,12 +897,12 @@
             const srcMax = config[`weight_max[${srcId}]`] || '?';
 
             // Szukaj istniejacego wiersza o tym samym weight_min
-            const existingId = destByWeightMin[srcMin];
+            const existingIdx = destByWeightMin[srcMin];
 
-            if (existingId) {
+            if (existingIdx !== undefined) {
                 // Wiersz z takim weight_min juz istnieje -> aktualizuj
-                log(`  Wiersz ${i + 1}/${sourceRowIds.length} [${srcMin}-${srcMax} kg] -> AKTUALIZACJA row ${existingId}`);
-                weightFilled += fillWeightRow(srcId, existingId);
+                log(`  Wiersz ${i + 1}/${sourceRowIds.length} [${srcMin}-${srcMax} kg] -> AKTUALIZACJA pozycja ${existingIdx}`);
+                weightFilled += fillWeightRow(srcId, existingIdx);
                 await waitForStep();
             } else {
                 // Brak takiego przedzialu -> dodaj nowy
@@ -894,20 +913,20 @@
                 addBtn.click();
                 await sleep(600);
 
-                // Pobierz nowe row IDs - ostatni dodany to nowy wiersz
+                // Pobierz nowe wiersze - ostatni dodany to nowy wiersz
                 const newRows = getDestRows(formDoc);
-                const newRow = newRows[newRows.length - 1];
-                if (!newRow) {
+                const newRowIdx = newRows.length - 1;
+                if (newRowIdx < 0) {
                     log(`  [!] Nie wykryto nowego wiersza po kliknieciu "Dodaj"`);
                     break;
                 }
 
-                log(`  Wiersz ${i + 1}/${sourceRowIds.length} [${srcMin}-${srcMax} kg] -> NOWY row ${newRow.id}`);
-                weightFilled += fillWeightRow(srcId, newRow.id);
+                log(`  Wiersz ${i + 1}/${sourceRowIds.length} [${srcMin}-${srcMax} kg] -> NOWY pozycja ${newRowIdx}`);
+                weightFilled += fillWeightRow(srcId, newRowIdx);
                 await waitForStep();
 
                 // Dodaj nowy wiersz do mapy (po wypelnieniu ma juz srcMin)
-                destByWeightMin[srcMin] = newRow.id;
+                destByWeightMin[srcMin] = newRowIdx;
             }
         }
 
