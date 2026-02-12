@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         IdoSell - Kopiowanie ustawień kurierów
 // @namespace    idosell-courier-copy
-// @version      4.3
+// @version      4.3.1
 // @description  Eksport i import konfiguracji kurierów między panelami IdoSell
 // @match        *://*.iai-shop.com/panel/config-shippingdelivery.php*
 // @match        *://*.iai-shop.com/panel/config-shippingprofiles.php*
@@ -853,7 +853,7 @@
         log(`Ustawienia ogolne: wypelniono ${filled} pol.`);
 
         // --- KROK 2: Przedzialy wagowe (matchowanie po weight_min) ---
-        destRows = getDestRows(formDoc);
+        let destRows = getDestRows(formDoc);
         log(`Krok 2: Tabela wagowa - zrodlo: ${sourceRowIds.length}, cel: ${destRows.length} wierszy`);
 
         if (sourceRowIds.length === 0) {
