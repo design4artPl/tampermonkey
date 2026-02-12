@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         IdoSell - Kopiowanie ustawień kurierów
 // @namespace    idosell-courier-copy
-// @version      3.4
+// @version      3.5
 // @description  Eksport i import konfiguracji kurierów między panelami IdoSell
 // @match        *://*.iai-shop.com/panel/config-shippingdelivery.php*
 // @match        *://*.iai-shop.com/panel/app/config-shippingdelivery.php*
@@ -243,7 +243,7 @@
             </style>
 
             <div class="cc-header" id="cc-drag-handle">
-                <h3>Kopiowanie kurierow v3.4</h3>
+                <h3>Kopiowanie kurierow v3.5</h3>
                 <button class="cc-close" id="cc-close-btn" title="Zamknij">&#10005;</button>
             </div>
             <div class="cc-body" id="cc-body">
@@ -392,6 +392,60 @@
     function extractFormDataStructured(form) {
         const flat = extractFormDataFlat(form);
 
+        // Etykiety pol (nazwy z panelu IdoSell)
+        const fieldLabels = {
+            'time': 'Przecietny czas dostawy',
+            'time_type': 'Jednostka czasu dostawy (day/hour/minute)',
+            'currency': 'Ceny za przesylke definiowane w',
+            'calendar': 'Klient moze wskazywac preferowany dzien dostawy',
+            'max_items_per_package_radio': 'Dziel zamowienie na paczki',
+            'max_items_per_package': 'Maksymalna liczba sztuk w paczce',
+            'max_weight_per_package': 'Maksymalna waga paczki (g)',
+            'dispatch_days[]': 'Dostawy realizowane sa w dni (1=Pon,2=Wt,4=Sr,8=Czw,16=Pt,32=Sob,64=Ndz)',
+            'service_additionally_charged[3][1]': 'Doplata za towar ponadgabarytowy (waluta)',
+            'service_additionally_charged[3][2]': 'Doplata za towar ponadgabarytowy (punkty)',
+            'vat': 'Stawka VAT dla kosztu przesylki (klient)',
+            'shop_vat': 'Stawka VAT dla kosztu ponoszonego przez sklep',
+            'taxcode': 'PKWiU dla kosztu przesylki',
+            'costs_defined_as': 'Kwoty podane w (net/gross)',
+            'mode': 'Tryb konfiguracji (s=prosty, a=waga, c=kwota, dim_weight=waga gabarytowa)',
+            'dvp': 'Dopuszczac za pobraniem (y/n)',
+            'dvp_all_currencies': 'Aktywna dla wszystkich walut (y/n)',
+            'active_currencies[]': 'Widoczna tylko dla zamowien w walucie',
+            'dvp_minworth': 'Minimalna wartosc zamowienia (pobranie)',
+            'dvp_maxworth': 'Maksymalna wartosc zamowienia (pobranie)',
+            'dvp_if_limitfree': 'Promocja darmowej przesylki od wartosci (pobranie)',
+            'dvp_allegro_surcharge': 'Doplata za kolejna sztuke Allegro (pobranie)',
+            'dvp_ebay_surcharge_enabled': 'Doplata za kolejna sztuke eBay (pobranie)',
+            'dvp_ebay_surcharge': 'Wysokosc doplaty eBay (pobranie)',
+            'prepaid': 'Dopuszczac przedplate (y/n)',
+            'prepaid_minworth': 'Minimalna wartosc zamowienia (przedplata)',
+            'prepaid_maxworth': 'Maksymalna wartosc zamowienia (przedplata)',
+            'prepaid_if_limitfree': 'Promocja darmowej przesylki od wartosci (przedplata)',
+            'prepaid_allegro_surcharge': 'Doplata za kolejna sztuke Allegro (przedplata)',
+            'prepaid_ebay_surcharge_enabled': 'Doplata za kolejna sztuke eBay (przedplata)',
+            'prepaid_ebay_surcharge': 'Wysokosc doplaty eBay (przedplata)',
+            // Pola wagowe (w przedzialach)
+            'weight_min': 'Waga minimalna',
+            'weight_max': 'Waga maksymalna',
+            'dvp_cost': 'Koszt przesylki klient (pobranie) [zl]',
+            'dvp_percent': 'Koszt przesylki klient (pobranie) [% wartosci zamowienia]',
+            'dvp_points': 'Koszt w punktach (pobranie)',
+            'dvp_customer_min_cost': 'Wartosc minimalna kosztu klienta (pobranie)',
+            'dvp_limitfree': 'Darmowa dostawa od (pobranie)',
+            'dvp_shop_cost': 'Koszt dostawy sklep (pobranie) [zl]',
+            'dvp_shop_cost_percent': 'Koszt dostawy sklep (pobranie) [% wartosci zamowienia]',
+            'dvp_shop_min_cost': 'Koszt sklepu nie mniejszy niz (pobranie)',
+            'prepaid_cost': 'Koszt przesylki klient (przedplata) [zl]',
+            'prepaid_percent': 'Koszt przesylki klient (przedplata) [% wartosci zamowienia]',
+            'prepaid_points': 'Koszt w punktach (przedplata)',
+            'prepaid_customer_min_cost': 'Wartosc minimalna kosztu klienta (przedplata)',
+            'prepaid_limitfree': 'Darmowa dostawa od (przedplata)',
+            'prepaid_shop_cost': 'Koszt dostawy sklep (przedplata) [zl]',
+            'prepaid_shop_cost_percent': 'Koszt dostawy sklep (przedplata) [% wartosci zamowienia]',
+            'prepaid_shop_min_cost': 'Koszt sklepu nie mniejszy niz (przedplata)',
+        };
+
         // Mapowanie pol do sekcji
         const sections = {
             "ustawienia_ogolne": {
@@ -453,22 +507,25 @@
         const assignedFields = new Set(['__iai_shop_panel[__encoding]', 'id', 'profile', 'action', 'default']);
 
         for (const [sectionKey, section] of Object.entries(sections)) {
-            const sectionData = {};
+            const sectionData = { "_sekcja": section._label };
+            const labels = {};
             for (const fieldName of section._fields) {
                 if (flat[fieldName] !== undefined) {
                     sectionData[fieldName] = flat[fieldName];
+                    if (fieldLabels[fieldName]) labels[fieldName] = fieldLabels[fieldName];
                     assignedFields.add(fieldName);
                 }
             }
+            if (Object.keys(labels).length > 0) sectionData["_etykiety"] = labels;
             result[sectionKey] = sectionData;
         }
 
         // Sekcja przedzialow wagowych
         const weightFieldPrefixes = [
             'weight_min', 'weight_max',
-            'dvp_cost', 'dvp_percent', 'dvp_customer_min_cost', 'dvp_limitfree',
+            'dvp_cost', 'dvp_percent', 'dvp_points', 'dvp_customer_min_cost', 'dvp_limitfree',
             'dvp_shop_cost', 'dvp_shop_cost_percent', 'dvp_shop_min_cost',
-            'prepaid_cost', 'prepaid_percent', 'prepaid_customer_min_cost', 'prepaid_limitfree',
+            'prepaid_cost', 'prepaid_percent', 'prepaid_points', 'prepaid_customer_min_cost', 'prepaid_limitfree',
             'prepaid_shop_cost', 'prepaid_shop_cost_percent', 'prepaid_shop_min_cost',
         ];
 
@@ -486,7 +543,13 @@
             assignedFields.add(`hide_id[${rowId}]`);
             weightRows.push(row);
         }
+        // Dodaj etykiety pol wagowych
+        const weightLabels = {};
+        for (const prefix of weightFieldPrefixes) {
+            if (fieldLabels[prefix]) weightLabels[prefix] = fieldLabels[prefix];
+        }
         result["przedzialy_wagowe"] = weightRows;
+        result["_etykiety_wagowe"] = weightLabels;
 
         // Ewentualne nieprzypisane pola (na wszelki wypadek)
         const unassigned = {};
@@ -538,9 +601,9 @@
             // Splaszcz przedzialy wagowe
             const weightFieldPrefixes = [
                 'weight_min', 'weight_max',
-                'dvp_cost', 'dvp_percent', 'dvp_customer_min_cost', 'dvp_limitfree',
+                'dvp_cost', 'dvp_percent', 'dvp_points', 'dvp_customer_min_cost', 'dvp_limitfree',
                 'dvp_shop_cost', 'dvp_shop_cost_percent', 'dvp_shop_min_cost',
-                'prepaid_cost', 'prepaid_percent', 'prepaid_customer_min_cost', 'prepaid_limitfree',
+                'prepaid_cost', 'prepaid_percent', 'prepaid_points', 'prepaid_customer_min_cost', 'prepaid_limitfree',
                 'prepaid_shop_cost', 'prepaid_shop_cost_percent', 'prepaid_shop_min_cost',
             ];
 
@@ -624,9 +687,9 @@
 
         const weightFieldPrefixes = [
             'weight_min', 'weight_max',
-            'dvp_cost', 'dvp_percent', 'dvp_customer_min_cost', 'dvp_limitfree',
+            'dvp_cost', 'dvp_percent', 'dvp_points', 'dvp_customer_min_cost', 'dvp_limitfree',
             'dvp_shop_cost', 'dvp_shop_cost_percent', 'dvp_shop_min_cost',
-            'prepaid_cost', 'prepaid_percent', 'prepaid_customer_min_cost', 'prepaid_limitfree',
+            'prepaid_cost', 'prepaid_percent', 'prepaid_points', 'prepaid_customer_min_cost', 'prepaid_limitfree',
             'prepaid_shop_cost', 'prepaid_shop_cost_percent', 'prepaid_shop_min_cost',
         ];
 
