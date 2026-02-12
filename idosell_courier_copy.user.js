@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         IdoSell - Kopiowanie ustawień kurierów
 // @namespace    idosell-courier-copy
-// @version      3.5
+// @version      3.6
 // @description  Eksport i import konfiguracji kurierów między panelami IdoSell
 // @match        *://*.iai-shop.com/panel/config-shippingdelivery.php*
 // @match        *://*.iai-shop.com/panel/app/config-shippingdelivery.php*
@@ -243,7 +243,7 @@
             </style>
 
             <div class="cc-header" id="cc-drag-handle">
-                <h3>Kopiowanie kurierow v3.5</h3>
+                <h3>Kopiowanie kurierow v3.6</h3>
                 <button class="cc-close" id="cc-close-btn" title="Zamknij">&#10005;</button>
             </div>
             <div class="cc-body" id="cc-body">
@@ -508,15 +508,13 @@
 
         for (const [sectionKey, section] of Object.entries(sections)) {
             const sectionData = { "_sekcja": section._label };
-            const labels = {};
             for (const fieldName of section._fields) {
                 if (flat[fieldName] !== undefined) {
+                    if (fieldLabels[fieldName]) sectionData[`// ${fieldName}`] = fieldLabels[fieldName];
                     sectionData[fieldName] = flat[fieldName];
-                    if (fieldLabels[fieldName]) labels[fieldName] = fieldLabels[fieldName];
                     assignedFields.add(fieldName);
                 }
             }
-            if (Object.keys(labels).length > 0) sectionData["_etykiety"] = labels;
             result[sectionKey] = sectionData;
         }
 
@@ -535,6 +533,7 @@
             for (const prefix of weightFieldPrefixes) {
                 const key = `${prefix}[${rowId}]`;
                 if (flat[key] !== undefined) {
+                    if (fieldLabels[prefix]) row[`// ${prefix}`] = fieldLabels[prefix];
                     row[prefix] = flat[key];
                     assignedFields.add(key);
                 }
@@ -543,13 +542,7 @@
             assignedFields.add(`hide_id[${rowId}]`);
             weightRows.push(row);
         }
-        // Dodaj etykiety pol wagowych
-        const weightLabels = {};
-        for (const prefix of weightFieldPrefixes) {
-            if (fieldLabels[prefix]) weightLabels[prefix] = fieldLabels[prefix];
-        }
         result["przedzialy_wagowe"] = weightRows;
-        result["_etykiety_wagowe"] = weightLabels;
 
         // Ewentualne nieprzypisane pola (na wszelki wypadek)
         const unassigned = {};
