@@ -780,7 +780,7 @@
         const processed = new Set();
 
         // Mapowanie source rowId -> dest rowId (potrzebne dla pol kosztowych z [rowId])
-        const destRows = getDestRows(formDoc);
+        let destRows = getDestRows(formDoc);
         const srcRowIdMap = {}; // srcRowId -> destRowId
         for (let i = 0; i < sourceRowIds.length && i < destRows.length; i++) {
             srcRowIdMap[sourceRowIds[i]] = destRows[i].id;
@@ -841,7 +841,7 @@
         log(`Ustawienia ogolne: wypelniono ${filled} pol.`);
 
         // --- KROK 2: Przedzialy wagowe (matchowanie po weight_min) ---
-        let destRows = getDestRows(formDoc);
+        destRows = getDestRows(formDoc);
         log(`Krok 2: Tabela wagowa - zrodlo: ${sourceRowIds.length}, cel: ${destRows.length} wierszy`);
 
         if (sourceRowIds.length === 0) {
