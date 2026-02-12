@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         IdoSell - Kopiowanie ustawień kurierów
 // @namespace    idosell-courier-copy
-// @version      4.3.2
+// @version      4.4
 // @description  Eksport i import konfiguracji kurierów między panelami IdoSell
 // @match        *://*.iai-shop.com/panel/config-shippingdelivery.php*
 // @match        *://*.iai-shop.com/panel/config-shippingprofiles.php*
@@ -747,10 +747,8 @@
             'active_currencies[]',
             'dvp_minworth',
             'dvp_maxworth',
-            '~dvp_cost', '~dvp_points', '~dvp_percent', '~dvp_customer_min_cost',
+            // pola kosztowe (dvp_cost, dvp_points, ...) wypelniane w Kroku 2 razem z tabela wagowa
             'dvp_if_limitfree',
-            '~dvp_limitfree',
-            '~dvp_shop_cost', '~dvp_shop_cost_percent', '~dvp_shop_min_cost',
             'dvp_allegro_surcharge',
             'dvp_ebay_surcharge_enabled',
             'dvp_ebay_surcharge',
@@ -758,10 +756,8 @@
             'prepaid',
             'prepaid_minworth',
             'prepaid_maxworth',
-            '~prepaid_cost', '~prepaid_points', '~prepaid_percent', '~prepaid_customer_min_cost',
+            // pola kosztowe (prepaid_cost, prepaid_points, ...) wypelniane w Kroku 2 razem z tabela wagowa
             'prepaid_if_limitfree',
-            '~prepaid_limitfree',
-            '~prepaid_shop_cost', '~prepaid_shop_cost_percent', '~prepaid_shop_min_cost',
             'prepaid_allegro_surcharge',
             'prepaid_ebay_surcharge_enabled',
             'prepaid_ebay_surcharge',
@@ -780,49 +776,6 @@
         const processed = new Set();
 
         for (const name of FORM_FIELD_ORDER) {
-            // Pola z ~ = prefiksy kosztowe - szukaj w formularzu po prefiksie nazwy
-            if (name.startsWith('~')) {
-                const prefix = name.substring(1);
-                // Znajdz wartosc w configu (moze byc jako "dvp_cost" lub "dvp_cost[7999]")
-                let value = config[prefix];
-                if (value === undefined) {
-                    // Szukaj klucza z dowolnym [rowId]
-                    for (const key of Object.keys(config)) {
-                        if (key.startsWith(`${prefix}[`)) {
-                            value = config[key];
-                            processed.add(key);
-                            break;
-                        }
-                    }
-                }
-                if (value === undefined) continue;
-
-                // Znajdz input w formularzu po prefiksie nazwy
-                const allInputs = [];
-                const form = _formRef || formDoc.querySelector('form');
-                if (form) {
-                    form.querySelectorAll('input, select, textarea').forEach(el => {
-                        if (el.name && el.name.startsWith(`${prefix}[`)) allInputs.push(el);
-                    });
-                }
-                if (allInputs.length === 0) {
-                    formDoc.querySelectorAll('input, select, textarea').forEach(el => {
-                        if (el.name && el.name.startsWith(`${prefix}[`)) allInputs.push(el);
-                    });
-                }
-
-                if (allInputs.length > 0) {
-                    const destName = allInputs[0].name;
-                    log(`  -> ${destName} = ${JSON.stringify(value)} (prefix: ${prefix})`);
-                    const r = fillField(formDoc, destName, value);
-                    filled += r;
-                    processed.add(prefix);
-                    processed.add(destName);
-                    await waitForStep();
-                }
-                continue;
-            }
-
             if (config[name] === undefined) continue;
 
             log(`  -> ${name} = ${JSON.stringify(config[name])}`);
@@ -866,7 +819,7 @@
         let weightFilled = 0;
 
         // Wypelnij jeden wiersz wagowy (src -> dest) - wg pozycji DOM (row ID moga sie roznic miedzy typami pol)
-        function fillWeightRow(srcRowId, destRowIndex) {
+        async function fillWeightRow(srcRowId, destRowIndex) {
             let count = 0;
             for (const prefix of weightFieldPrefixes) {
                 const srcKey = `${prefix}[${srcRowId}]`;
@@ -876,7 +829,10 @@
                         if (el.name && el.name.startsWith(`${prefix}[`)) inputs.push(el);
                     });
                     if (inputs.length > destRowIndex) {
-                        count += fillField(formDoc, inputs[destRowIndex].name, config[srcKey]);
+                        const destName = inputs[destRowIndex].name;
+                        log(`    -> ${destName} = ${JSON.stringify(config[srcKey])}`);
+                        count += fillField(formDoc, destName, config[srcKey]);
+                        await waitForStep();
                     } else {
                         log(`    [!] ${prefix}: brak inputu na pozycji ${destRowIndex} (znaleziono ${inputs.length})`);
                     }
@@ -902,8 +858,7 @@
             if (existingIdx !== undefined) {
                 // Wiersz z takim weight_min juz istnieje -> aktualizuj
                 log(`  Wiersz ${i + 1}/${sourceRowIds.length} [${srcMin}-${srcMax} kg] -> AKTUALIZACJA pozycja ${existingIdx}`);
-                weightFilled += fillWeightRow(srcId, existingIdx);
-                await waitForStep();
+                weightFilled += await fillWeightRow(srcId, existingIdx);
             } else {
                 // Brak takiego przedzialu -> dodaj nowy
                 if (!addBtn) {
@@ -922,8 +877,7 @@
                 }
 
                 log(`  Wiersz ${i + 1}/${sourceRowIds.length} [${srcMin}-${srcMax} kg] -> NOWY pozycja ${newRowIdx}`);
-                weightFilled += fillWeightRow(srcId, newRowIdx);
-                await waitForStep();
+                weightFilled += await fillWeightRow(srcId, newRowIdx);
 
                 // Dodaj nowy wiersz do mapy (po wypelnieniu ma juz srcMin)
                 destByWeightMin[srcMin] = newRowIdx;
