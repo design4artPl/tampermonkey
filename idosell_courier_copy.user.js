@@ -86,7 +86,7 @@
         // --- Okragla ikonka (FAB) ---
         const fab = document.createElement('div');
         fab.id = 'cc-fab';
-        fab.title = 'Kopiowanie kurierow';
+        fab.title = 'Kopiowanie kurierów';
         fab.innerHTML = `
             <style>
                 #cc-fab {
@@ -245,7 +245,7 @@
             </style>
 
             <div class="cc-header" id="cc-drag-handle">
-                <h3>Kopiowanie kurierow v4.2</h3>
+                <h3>Kopiowanie kurierów v1.0</h3>
                 <button class="cc-close" id="cc-close-btn" title="Zamknij">&#10005;</button>
             </div>
             <div class="cc-body" id="cc-body">
@@ -261,18 +261,18 @@
                     <div class="cc-separator"></div>
 
                     <button class="cc-btn cc-btn-export" id="cc-btn-export">
-                        Eksportuj konfiguracje do pliku JSON
+                        Eksportuj konfigurację do pliku JSON
                     </button>
 
                     <button class="cc-btn cc-btn-export" id="cc-btn-clipboard"
                         style="background:#F3E5F5; border-color:#9C27B0; color:#4A148C;">
-                        Kopiuj konfiguracje do schowka
+                        Kopiuj konfigurację do schowka
                     </button>
 
                     <div class="cc-separator"></div>
 
                     <button class="cc-btn cc-btn-import" id="cc-btn-import-file">
-                        Importuj konfiguracje z pliku JSON
+                        Importuj konfigurację z pliku JSON
                     </button>
                     <input type="file" id="cc-file-input" accept=".json">
 
@@ -284,10 +284,10 @@
                     <div class="cc-separator"></div>
 
                     <label style="display:block; font-size:11px; margin:4px 0; cursor:pointer;">
-                        <input type="checkbox" id="cc-remove-conflicts" checked> Usuwaj kolidujace przedzialy
+                        <input type="checkbox" id="cc-remove-conflicts" checked> Usuwaj kolidujące przedziały
                     </label>
                     <label style="display:block; font-size:11px; margin:4px 0; cursor:pointer;">
-                        <input type="checkbox" id="cc-step-mode"> Tryb krokowy (potwierdzaj kazde pole)
+                        <input type="checkbox" id="cc-step-mode"> Tryb krokowy (potwierdzaj każde pole)
                     </label>
                     <button class="cc-btn" id="cc-btn-step"
                         style="display:none; background:#FFF3E0; border-color:#FF9800; color:#E65100; font-weight:bold; text-align:center;">
@@ -296,7 +296,15 @@
 
                     <div class="cc-separator"></div>
 
-                    <div class="cc-status" id="cc-status">Gotowy. Wybierz akcje powyzej.</div>
+                    <div style="display:flex; align-items:center; gap:4px;">
+                        <div class="cc-status" id="cc-status" style="flex:1;">Gotowy. Wybierz akcję powyżej.</div>
+                        <span id="cc-log-copy" title="Kopiuj log do schowka"
+                            style="cursor:pointer; font-size:14px; opacity:0.5; padding:2px;"
+                            onmouseover="this.style.opacity=1" onmouseout="this.style.opacity=0.5">&#128203;</span>
+                        <span id="cc-log-save" title="Zapisz log do pliku"
+                            style="cursor:pointer; font-size:14px; opacity:0.5; padding:2px;"
+                            onmouseover="this.style.opacity=1" onmouseout="this.style.opacity=0.5">&#128190;</span>
+                    </div>
                 </div>
             </div>
         `;
@@ -371,7 +379,7 @@
             const rangeField = data.przedzialy_kwotowe ? 'cost_min' : 'weight_min';
             const allZero = ranges.every(r => !r[rangeField] || r[rangeField] === '0' || r[rangeField] === '0.00');
             if (allZero) {
-                warnings.push(`UWAGA: Wszystkie ${ranges.length} przedzialy maja ${rangeField}=0. Mozliwe ze formularz nie zdazyl wczytac danych. Odswież stronę i sprobuj ponownie.`);
+                warnings.push(`UWAGA: Wszystkie ${ranges.length} przedziały mają ${rangeField}=0. Możliwe że formularz nie zdążył wczytać danych. Odśwież stronę i spróbuj ponownie.`);
             }
 
             // Sprawdz czy koszty tez sa zerowe
@@ -379,7 +387,7 @@
             for (const cf of costFields) {
                 const allCostZero = ranges.every(r => !r[cf] || r[cf] === '0' || r[cf] === '0.00');
                 if (allCostZero) {
-                    warnings.push(`UWAGA: Wszystkie ${cf} sa rowne 0.`);
+                    warnings.push(`UWAGA: Wszystkie ${cf} są równe 0.`);
                 }
             }
         }
@@ -777,7 +785,7 @@
         );
 
         // --- KROK 1: Wypelnij pola NIE-wagowe w PRAWIDLOWEJ KOLEJNOSCI ---
-        log('Krok 1: Wypelniam ustawienia ogolne...');
+        log('Krok 1: Wypełniam ustawienia ogólne...');
 
         const weightFieldPrefixes = [
             'weight_min', 'weight_max',
@@ -854,7 +862,7 @@
         log(`Kontekst iframe: jQuery=${hasJQ ? 'TAK' : 'NIE'}, IAI.shippingDeliveries=${hasIAI ? 'TAK' : 'NIE'}`);
 
         // Wypelniaj pola sekwencyjnie od gory do dolu
-        log('Krok 1: Wypelniam ustawienia ogolne (od gory do dolu)...');
+        log('Krok 1: Wypełniam ustawienia ogólne (od góry do dołu)...');
         const processed = new Set();
 
         for (const name of FORM_FIELD_ORDER) {
@@ -885,16 +893,16 @@
             filled += fillField(formDoc, name, value);
             await waitForStep();
         }
-        log(`Ustawienia ogolne: wypelniono ${filled} pol.`);
+        log(`Ustawienia ogólne: wypełniono ${filled} pól.`);
 
         // --- KROK 2: Przedzialy wagowe/kwotowe ---
         let destRows = getDestRows(formDoc);
         const rangeType = (destRows.length > 0 && destRows[0].matchField === 'cost_min') ? 'kwotowa' : 'wagowa';
-        log(`Krok 2: Tabela ${rangeType} - zrodlo: ${sourceRowIds.length}, cel: ${destRows.length} wierszy`);
+        log(`Krok 2: Tabela ${rangeType} - źródło: ${sourceRowIds.length}, cel: ${destRows.length} wierszy`);
 
         if (sourceRowIds.length === 0) {
-            log(`IMPORT ZAKONCZONY! Lacznie: ${filled} pol.`);
-            log('Sprawdz dane i kliknij "Zmien" aby zapisac.');
+            log(`IMPORT ZAKOŃCZONY! Łącznie: ${filled} pól.`);
+            log('Sprawdź dane i kliknij "Zmień" aby zapisać.');
             return { filled, skipped };
         }
 
@@ -950,7 +958,7 @@
             } else {
                 // Brak takiego przedzialu -> dodaj nowy
                 if (!addBtn) {
-                    log(`  [!] Brak przycisku "Dodaj przedzial" - nie moge dodac wiersza ${i + 1}`);
+                    log(`  [!] Brak przycisku "Dodaj przedział" - nie mogę dodać wiersza ${i + 1}`);
                     break;
                 }
                 addBtn.click();
@@ -960,7 +968,7 @@
                 const newRows = getDestRows(formDoc);
                 const newRowIdx = newRows.length - 1;
                 if (newRowIdx < 0) {
-                    log(`  [!] Nie wykryto nowego wiersza po kliknieciu "Dodaj"`);
+                    log(`  [!] Nie wykryto nowego wiersza po kliknięciu "Dodaj"`);
                     break;
                 }
 
@@ -973,12 +981,12 @@
         }
 
         filled += weightFilled;
-        log(`Tabela ${rangeType}: wypelniono ${weightFilled} pol.`);
+        log(`Tabela ${rangeType}: wypełniono ${weightFilled} pól.`);
 
         // --- KROK 3: Usuwanie kolidujacych przedzialow ---
         const removeConflicts = document.getElementById('cc-remove-conflicts')?.checked;
         if (removeConflicts && sourceRowIds.length > 0) {
-            log('Krok 3: Sprawdzam kolidujace przedzialy...');
+            log('Krok 3: Sprawdzam kolidujące przedziały...');
 
             // Zbierz zakresy zaimportowane (z config)
             const importedRanges = sourceRowIds.map(srcId => ({
@@ -1015,7 +1023,7 @@
             }
 
             if (rowsToRemove.length > 0) {
-                log(`Znaleziono ${rowsToRemove.length} kolidujacych przedzialow do usuniecia:`);
+                log(`Znaleziono ${rowsToRemove.length} kolidujących przedziałów do usunięcia:`);
                 // Usuwaj od konca (zeby indeksy sie nie przesunealy)
                 rowsToRemove.sort((a, b) => b.idx - a.idx);
 
@@ -1070,7 +1078,7 @@
 
                 for (const row of rowsToRemove) {
                     const unit = (matchField === 'cost_min') ? 'zl' : 'g';
-                    log(`  Usuwam przedzial [${row.min}-${row.max} ${unit}]${row.isDefault ? ' (domyslny)' : ' (kolidujacy)'}...`);
+                    log(`  Usuwam przedział [${row.min}-${row.max} ${unit}]${row.isDefault ? ' (domyślny)' : ' (kolidujący)'}...`);
 
                     let deleted = false;
                     const iframeWin = formDoc.defaultView || formDoc.parentWindow;
@@ -1078,7 +1086,7 @@
                     // Znajdz hide_id z wartoscia rowId -> w tym samym TD jest link z onclick
                     const hideInput = formDoc.querySelector(`input[name="hide_id[]"][value="${row.id}"]`);
                     if (!hideInput) {
-                        log(`  [!] Brak hide_id[] z wartoscia ${row.id}`);
+                        log(`  [!] Brak hide_id[] z wartością ${row.id}`);
                         continue;
                     }
 
@@ -1090,7 +1098,7 @@
                     );
 
                     if (!removeLink) {
-                        log(`  [!] Brak linku usun w TD/TR przy hide_id ${row.id}`);
+                        log(`  [!] Brak linku usuń w TD/TR przy hide_id ${row.id}`);
                         continue;
                     }
 
@@ -1109,16 +1117,16 @@
                         // Sprawdz czy wiersz zniknal
                         const checkInput = formDoc.querySelector(`input[name="${matchField}[${row.id}]"]`);
                         if (!checkInput) {
-                            log(`  -> Usunieto.`);
+                            log(`  -> Usunięto.`);
                             deleted = true;
                         } else {
-                            log(`  -> Wiersz nadal istnieje, probuje click()...`);
+                            log(`  -> Wiersz nadal istnieje, próbuję click()...`);
                             removeLink.click();
                             await Promise.race([confirmPromise, sleep(2000)]);
                             await sleep(300);
                             const checkInput2 = formDoc.querySelector(`input[name="${matchField}[${row.id}]"]`);
                             if (!checkInput2) {
-                                log(`  -> Usunieto (click fallback).`);
+                                log(`  -> Usunięto (click fallback).`);
                                 deleted = true;
                             }
                         }
@@ -1127,7 +1135,7 @@
                     }
 
                     if (!deleted) {
-                        log(`  [!] Nie znaleziono sposobu na usuniecie wiersza ID=${row.id}`);
+                        log(`  [!] Nie znaleziono sposobu na usunięcie wiersza ID=${row.id}`);
                         // Debug: pokaz structure inputu
                         const dbgInput = formDoc.querySelector(`input[name="${matchField}[${row.id}]"]`);
                         if (dbgInput) {
@@ -1141,7 +1149,7 @@
                             const tr = dbgInput.closest('tr');
                             if (tr) {
                                 const links = tr.querySelectorAll('a');
-                                log(`    Linkow w TR: ${links.length}`);
+                                log(`    Linków w TR: ${links.length}`);
                                 links.forEach((a, i) => log(`    TR link ${i}: text="${a.textContent.trim()}", onclick="${(a.getAttribute('onclick')||'').substring(0,80)}"`));
                             }
                         }
@@ -1150,14 +1158,14 @@
 
                 // Weryfikacja
                 const afterRows = getDestRows(formDoc);
-                log(`Po usunieciu: ${afterRows.length} wierszy w tabeli.`);
+                log(`Po usunięciu: ${afterRows.length} wierszy w tabeli.`);
             } else {
-                log('Brak kolidujacych przedzialow.');
+                log('Brak kolidujących przedziałów.');
             }
         }
 
-        log(`IMPORT ZAKONCZONY! Lacznie: ${filled} pol.`);
-        log('Sprawdz dane i kliknij "Zmien" aby zapisac.');
+        log(`IMPORT ZAKOŃCZONY! Łącznie: ${filled} pól.`);
+        log('Sprawdź dane i kliknij "Zmień" aby zapisać.');
 
         // Usun podswietlenie i schowaj przycisk "Dalej"
         highlightField(null);
@@ -1293,9 +1301,9 @@
             // Tablica (checkboxy) - w tym pusta [] = odznacz wszystko
             if (Array.isArray(value)) {
                 const allCb = getByName(doc, name, {type: 'checkbox'});
-                log(`    [checkbox] ${name}: znaleziono ${allCb.length} checkboxow, wartosci do zaznaczenia: ${JSON.stringify(value)}`);
+                log(`    [checkbox] ${name}: znaleziono ${allCb.length} checkboxów, wartości do zaznaczenia: ${JSON.stringify(value)}`);
                 if (allCb.length > 0) {
-                    log(`    [checkbox] Dostepne wartosci w DOM: ${allCb.map(cb => cb.value).join(', ')}`);
+                    log(`    [checkbox] Dostępne wartości w DOM: ${allCb.map(cb => cb.value).join(', ')}`);
                     highlightField(allCb[0]);
                 }
                 const toCheck = new Set(value);
@@ -1313,7 +1321,7 @@
                         log(`    [checkbox] ${el.value} -> ODZNACZONO (click)`);
                     }
                 });
-                if (count === 0) log(`    [checkbox] ${name}: wszystko juz zgodne, brak zmian`);
+                if (count === 0) log(`    [checkbox] ${name}: wszystko już zgodne, brak zmian`);
                 return count || (allCb.length > 0 ? 1 : 0);
             }
 
@@ -1338,12 +1346,12 @@
             if (radios.length > 0) {
                 const radio = radios.find(r => r.value === value);
                 if (!radio) {
-                    log(`  [!] ${name}: brak opcji radio z value="${value}"`);
+                    log(`  [!] ${name}: brak opcji radio z wartością="${value}"`);
                     return 0;
                 }
                 highlightField(radio);
                 if (radio.checked) {
-                    log(`  [radio] ${name}=${value} - juz zaznaczony, pomijam`);
+                    log(`  [radio] ${name}=${value} - już zaznaczony, pomijam`);
                     return 1;
                 }
                 radio.checked = true;
@@ -1391,7 +1399,7 @@
             log(`  [!] Nie znaleziono pola: ${name}`);
             return 0;
         } catch (e) {
-            log(`Blad pola ${name}: ${e.message}`);
+            log(`Błąd pola ${name}: ${e.message}`);
             return 0;
         }
     }
@@ -1411,7 +1419,7 @@
         // ----- Tryb krokowy -----
         document.getElementById('cc-step-mode').addEventListener('change', (e) => {
             stepMode = e.target.checked;
-            log(stepMode ? 'Tryb krokowy WLACZONY' : 'Tryb krokowy WYLACZONY');
+            log(stepMode ? 'Tryb krokowy WŁĄCZONY' : 'Tryb krokowy WYŁĄCZONY');
             if (!stepMode) {
                 document.getElementById('cc-btn-step').style.display = 'none';
                 // Odblokuj jesli czeka
@@ -1421,6 +1429,37 @@
         document.getElementById('cc-btn-step').addEventListener('click', () => {
             document.getElementById('cc-btn-step').style.display = 'none';
             if (stepResolve) { stepResolve(); stepResolve = null; }
+        });
+
+        // ----- Log: kopiuj do schowka -----
+        document.getElementById('cc-log-copy').addEventListener('click', async () => {
+            const statusEl = document.getElementById('cc-status');
+            if (!statusEl) return;
+            try {
+                await navigator.clipboard.writeText(statusEl.textContent);
+                log('Log skopiowany do schowka.');
+            } catch (e) {
+                const ta = document.createElement('textarea');
+                ta.value = statusEl.textContent;
+                document.body.appendChild(ta);
+                ta.select();
+                document.execCommand('copy');
+                document.body.removeChild(ta);
+                log('Log skopiowany do schowka.');
+            }
+        });
+
+        // ----- Log: zapisz do pliku -----
+        document.getElementById('cc-log-save').addEventListener('click', () => {
+            const statusEl = document.getElementById('cc-status');
+            if (!statusEl) return;
+            const blob = new Blob([statusEl.textContent], { type: 'text/plain' });
+            const url = URL.createObjectURL(blob);
+            const a = document.createElement('a');
+            a.href = url;
+            a.download = `courier_log_${new Date().toISOString().replace(/[:.]/g, '-').substring(0, 19)}.txt`;
+            a.click();
+            URL.revokeObjectURL(url);
         });
 
         // ----- Eksport do pliku -----
@@ -1439,12 +1478,12 @@
                 a.download = `courier_config_id${courierId}_profile${profileId}.json`;
                 a.click();
                 URL.revokeObjectURL(url);
-                log(`Eksport OK! ${Object.keys(data).length} pol. Plik pobrany.`);
+                log(`Eksport OK! ${Object.keys(data).length} pól. Plik pobrany.`);
                 if (warnings.length > 0) {
-                    log(`⚠ Wykryto ${warnings.length} ostrzezen - sprawdz plik.`);
+                    log(`⚠ Wykryto ${warnings.length} ostrzeżeń - sprawdź plik.`);
                 }
             } catch (e) {
-                log(`BLAD eksportu: ${e.message}`);
+                log(`BŁĄD eksportu: ${e.message}`);
             }
         });
 
@@ -1457,9 +1496,9 @@
                 warnings.forEach(w => log(w));
                 const json = JSON.stringify(data, null, 2);
                 await navigator.clipboard.writeText(json);
-                log(`Skopiowano do schowka! ${Object.keys(data).length} pol.`);
+                log(`Skopiowano do schowka! ${Object.keys(data).length} pól.`);
                 if (warnings.length > 0) {
-                    log(`⚠ Wykryto ${warnings.length} ostrzezen - sprawdz dane.`);
+                    log(`⚠ Wykryto ${warnings.length} ostrzeżeń - sprawdź dane.`);
                 }
             } catch (e) {
                 // Fallback
@@ -1472,7 +1511,7 @@
                 ta.select();
                 document.execCommand('copy');
                 document.body.removeChild(ta);
-                log(`Skopiowano do schowka (fallback)! ${Object.keys(data).length} pol.`);
+                log(`Skopiowano do schowka (fallback)! ${Object.keys(data).length} pól.`);
             }
         });
 
@@ -1489,11 +1528,11 @@
             reader.onload = async (ev) => {
                 try {
                     const config = JSON.parse(ev.target.result);
-                    log(`Wczytano plik: ${file.name} (${Object.keys(config).length} pol)`);
+                    log(`Wczytano plik: ${file.name} (${Object.keys(config).length} pól)`);
                     const dataToApply = flattenConfig(config);
                     await applyConfigToForm(form, formDoc, dataToApply);
                 } catch (err) {
-                    log(`BLAD parsowania JSON: ${err.message}`);
+                    log(`BŁĄD parsowania JSON: ${err.message}`);
                 }
             };
             reader.readAsText(file);
@@ -1505,12 +1544,12 @@
             try {
                 const text = await navigator.clipboard.readText();
                 const config = JSON.parse(text);
-                log(`Wczytano ze schowka (${Object.keys(config).length} pol)`);
+                log(`Wczytano ze schowka (${Object.keys(config).length} pól)`);
                 const dataToApply = flattenConfig(config);
                 await applyConfigToForm(form, formDoc, dataToApply);
             } catch (e) {
-                log(`BLAD: ${e.message}`);
-                log('Sprobuj: Ctrl+V do pola ponizej lub "Zezwol na odczyt schowka"');
+                log(`BŁĄD: ${e.message}`);
+                log('Spróbuj: Ctrl+V do pola poniżej lub "Zezwól na odczyt schowka"');
                 const text = prompt('Wklej JSON z konfiguracja:');
                 if (text) {
                     try {
@@ -1518,7 +1557,7 @@
                         const dataToApply = flattenConfig(config);
                         await applyConfigToForm(form, formDoc, dataToApply);
                     } catch (err) {
-                        log(`BLAD parsowania: ${err.message}`);
+                        log(`BŁĄD parsowania: ${err.message}`);
                     }
                 }
             }
