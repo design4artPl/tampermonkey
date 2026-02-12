@@ -10,12 +10,17 @@ Skrypt Tampermonkey umożliwiający eksport i import konfiguracji kurierów mię
 
 ### Instalacja skryptu
 1. Zainstaluj rozszerzenie Tampermonkey w przeglądarce
-2. Kliknij link poniżej — Tampermonkey automatycznie zaproponuje instalację:
+2. **(Tylko Chrome)** Włącz uprawnienia dla Tampermonkey:
+   - Wejdź w `chrome://extensions/` → włącz **Tryb dewelopera** (prawy górny róg)
+   - Kliknij **Szczegóły** przy Tampermonkey
+   - Włącz **"Zezwalaj na skrypty użytkownika"**
+   - Zrestartuj Chrome
+3. Kliknij link poniżej — Tampermonkey automatycznie zaproponuje instalację:
 
    **[Zainstaluj skrypt](https://raw.githubusercontent.com/design4artPl/tampermonkey/main/idosell_courier_copy.user.js)**
 
-3. Kliknij **"Instaluj"** w oknie Tampermonkey
-4. Gotowe — skrypt uruchomi się automatycznie na stronach konfiguracji kurierów
+4. Kliknij **"Instaluj"** w oknie Tampermonkey
+5. Gotowe — skrypt uruchomi się automatycznie na stronach konfiguracji kurierów
 
 ### Aktualizacja
 Skrypt aktualizuje się automatycznie przez Tampermonkey. Możesz też wymusić aktualizację ręcznie w ustawieniach Tampermonkey.
