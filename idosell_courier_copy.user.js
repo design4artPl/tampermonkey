@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         IdoSell - Kopiowanie ustawień kurierów
 // @namespace    idosell-courier-copy
-// @version      3.9
+// @version      4.0
 // @description  Eksport i import konfiguracji kurierów między panelami IdoSell
 // @match        *://*.iai-shop.com/panel/*config-shipping*
 // @match        *://*.iai-shop.com/panel/app/*config-shipping*
@@ -243,7 +243,7 @@
             </style>
 
             <div class="cc-header" id="cc-drag-handle">
-                <h3>Kopiowanie kurierow v3.9</h3>
+                <h3>Kopiowanie kurierow v4.0</h3>
                 <button class="cc-close" id="cc-close-btn" title="Zamknij">&#10005;</button>
             </div>
             <div class="cc-body" id="cc-body">
@@ -745,7 +745,10 @@
             'active_currencies[]',
             'dvp_minworth',
             'dvp_maxworth',
+            '@dvp_cost', '@dvp_percent', '@dvp_points', '@dvp_customer_min_cost',
             'dvp_if_limitfree',
+            '@dvp_limitfree',
+            '@dvp_shop_cost', '@dvp_shop_cost_percent', '@dvp_shop_min_cost',
             'dvp_allegro_surcharge',
             'dvp_ebay_surcharge_enabled',
             'dvp_ebay_surcharge',
@@ -753,7 +756,10 @@
             'prepaid',
             'prepaid_minworth',
             'prepaid_maxworth',
+            '@prepaid_cost', '@prepaid_percent', '@prepaid_points', '@prepaid_customer_min_cost',
             'prepaid_if_limitfree',
+            '@prepaid_limitfree',
+            '@prepaid_shop_cost', '@prepaid_shop_cost_percent', '@prepaid_shop_min_cost',
             'prepaid_allegro_surcharge',
             'prepaid_ebay_surcharge_enabled',
             'prepaid_ebay_surcharge',
@@ -772,6 +778,22 @@
         const processed = new Set();
 
         for (const name of FORM_FIELD_ORDER) {
+            // Pola z @ = prefiksy kosztowe z dynamicznym [rowId]
+            if (name.startsWith('@')) {
+                const prefix = name.substring(1);
+                // Znajdz wszystkie klucze pasujace do prefix[*]
+                for (const [key, value] of Object.entries(config)) {
+                    if (key.startsWith(`${prefix}[`) && !processed.has(key)) {
+                        log(`  -> ${key} = ${JSON.stringify(value)}`);
+                        const r = fillField(formDoc, key, value);
+                        filled += r;
+                        processed.add(key);
+                        await waitForStep();
+                    }
+                }
+                continue;
+            }
+
             if (config[name] === undefined) continue;
 
             log(`  -> ${name} = ${JSON.stringify(config[name])}`);
