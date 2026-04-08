@@ -197,109 +197,83 @@
   }
 
   // =========================================================================
-  // MODULE: SIZES (ROZMIARY)
+  // MODULE: SIZES (ROZMIARY - definicje grup i rozmiarow)
   // =========================================================================
 
-  async function fetchAllSizes(domain, apiKey, log) {
-    const allProducts = {};
-    let page = 0;
-    let totalPages = null;
+  async function fetchSizeGroups(domain, apiKey, log) {
+    const url = buildUrl(domain, '/api/admin/v7/sizes/sizes');
+    log('Pobieranie grup rozmiarow...');
+    const data = await apiRequest('GET', url, apiKey);
+    const groups = data.size_groups || [];
+    log(`Pobrano ${groups.length} grup rozmiarow`);
+    return groups;
+  }
 
-    while (true) {
-      const url = buildUrl(domain, `/api/admin/v7/products/sizes?page=${page}`);
-      log(`Pobieranie rozmiarow: strona ${page + 1}...`);
-      const data = await apiRequest('GET', url, apiKey);
+  // Create size group via panel internal AJAX (requires being logged into target panel)
+  async function createSizeGroupViaPanel(groupName, log) {
+    const endpoints = [
+      { url: '/panel/ajax/sizes.php', body: `action=addSizeGroup&name=${encodeURIComponent(groupName)}` },
+      { url: '/panel/ajax/sizes.php', body: `action=add_size_group&name=${encodeURIComponent(groupName)}` },
+      { url: '/panel/ajax/sizes.php', body: `action=addGroup&name=${encodeURIComponent(groupName)}` },
+      { url: '/panel/ajax/sizes-group.php', body: `action=add&name=${encodeURIComponent(groupName)}` },
+    ];
 
-      if (!data.results) {
-        throw new Error('Brak results w odpowiedzi: ' + JSON.stringify(data).substring(0, 300));
-      }
-
-      const results = data.results;
-      for (const key of Object.keys(results)) {
-        const product = results[key];
-        if (product.productId !== undefined) {
-          allProducts[product.productId] = product;
+    for (const ep of endpoints) {
+      try {
+        const resp = await fetch(ep.url, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+          body: ep.body,
+        });
+        if (resp.ok) {
+          const text = await resp.text();
+          // Check if it looks like success (not a login page redirect)
+          if (text.length < 5000 && !text.includes('panel_login') && !text.includes('Login')) {
+            log(`  Grupa "${groupName}" - odpowiedz z ${ep.url}: ${text.substring(0, 200)}`);
+            return { ok: true, endpoint: ep.url, response: text };
+          }
         }
+      } catch (e) {
+        // try next endpoint
       }
-
-      if (totalPages === null) totalPages = data.result.pageAll;
-      log(`Pobrano ${Object.keys(allProducts).length} produktow (strona ${page + 1}/${totalPages})`);
-
-      page++;
-      if (page >= totalPages) break;
     }
 
-    return allProducts;
+    return { ok: false };
   }
 
-  function mapSizeForPut(product) {
-    const sizes = (product.sizesResult || []).map(sr => ({
-      sizeId: sr.sizeId,
-      sizePanelName: sr.sizePanelName,
-      sizeData: {
-        productWeight: sr.productWeight || 0,
-        codeProducer: sr.productProducerCode || '',
-        productSizeCodeExternal: sr.productSizeCodeExternal || '',
-        sitesData: (sr.sites || []).map(site => ({
-          siteId: site.siteId,
-          productPrices: {
-            productPriceRetail: site.productRetailPrice || 0,
-            productPriceWholesale: site.productWholesalePrice || 0,
-            productSearchPriceMin: site.productMinimalPrice || 0,
-            productPriceSuggested: site.productSuggestedPrice || 0,
-          },
-        })),
-      },
-    }));
-
-    return {
-      productId: product.productId,
-      sizes,
-    };
-  }
-
-  async function importSizes(domain, apiKey, sourceProducts, log) {
-    const productIds = Object.keys(sourceProducts).filter(id => Number(id) > 0);
+  async function importSizeDefinitions(domain, apiKey, sizesToAdd, log) {
     const batchSize = 20;
     let successCount = 0;
     let failCount = 0;
     const errors = [];
 
-    for (let i = 0; i < productIds.length; i += batchSize) {
-      const batchIds = productIds.slice(i, i + batchSize);
-      const mapped = batchIds.map(id => mapSizeForPut(sourceProducts[id]));
+    for (let i = 0; i < sizesToAdd.length; i += batchSize) {
+      const batch = sizesToAdd.slice(i, i + batchSize);
       const batchNum = Math.floor(i / batchSize) + 1;
 
-      log(`PUT batch ${batchNum}: produkty ${batchIds.slice(0, 5).join(', ')}${batchIds.length > 5 ? '...' : ''} (${batchIds.length} szt.)`);
-
+      log(`PUT batch ${batchNum}: ${batch.length} rozmiarow`);
       try {
-        const url = buildUrl(domain, '/api/admin/v7/products/sizes');
+        const url = buildUrl(domain, '/api/admin/v7/sizes/sizes');
         const res = await apiRequest('PUT', url, apiKey, {
-          mode: 'edit',
-          sizesProductsData: mapped,
+          params: { sizes: batch },
         });
 
-        if (res.results && Array.isArray(res.results)) {
-          for (const pr of res.results) {
-            const hasErrors = (pr.errors && pr.errors.length > 0) ||
-              (pr.sizes || []).some(s => s.errors && s.errors.length > 0);
-            if (hasErrors) {
+        if (res.sizes && Array.isArray(res.sizes)) {
+          for (const s of res.sizes) {
+            if (s.faultCode && s.faultCode !== 0) {
               failCount++;
-              const errDetail = JSON.stringify(pr.errors || pr.sizes?.flatMap(s => s.errors) || []);
-              errors.push(`Product ${pr.productId}: ${errDetail}`);
-              log(`  [FAIL] Product ${pr.productId}: ${errDetail.substring(0, 100)}`);
+              errors.push(`${s.name || s.id} (gr.${s.group_id}): [${s.faultCode}] ${s.faultString}`);
+              log(`  [FAIL] ${s.name || s.id}: ${s.faultString}`);
             } else {
               successCount++;
             }
           }
         }
       } catch (err) {
-        failCount += batchIds.length;
+        failCount += batch.length;
         errors.push(`Batch ${batchNum}: ${err.message}`);
         log(`  BLAD: ${err.message}`);
       }
-
-      log(`Postep: ${successCount} OK, ${failCount} bledow / ${productIds.length} lacznie`);
     }
 
     return { imported: successCount, failed: failCount, errors };
@@ -388,51 +362,148 @@
     },
     {
       id: 'sizes',
-      label: 'Rozmiary (Sizes)',
+      label: 'Rozmiary (grupy + definicje)',
       icon: '\uD83D\uDCCF',
       run: async (cfg, log) => {
         log('--- Start migracji rozmiarow ---');
 
-        log('Pobieranie rozmiarow ze zrodla...');
-        const sourceProducts = await fetchAllSizes(cfg.sourceDomain, cfg.sourceApiKey, log);
-        const srcIds = Object.keys(sourceProducts).filter(id => Number(id) > 0);
-        log(`Pobrano rozmiary dla ${srcIds.length} produktow.`);
+        // 1. Fetch source and target size groups
+        const srcGroups = await fetchSizeGroups(cfg.sourceDomain, cfg.sourceApiKey, log);
+        const tgtGroups = await fetchSizeGroups(cfg.targetDomain, cfg.targetApiKey, log);
 
-        const result = await importSizes(cfg.targetDomain, cfg.targetApiKey, sourceProducts, log);
-        log(`--- Zakonczono: ${result.imported} OK, ${result.failed} bledow ---`);
-        if (result.errors.length > 0) {
-          log('Szczegoly bledow:\n' + result.errors.slice(0, 30).join('\n'));
+        const srcGroupMap = new Map(srcGroups.map(g => [g.group_id, g]));
+        const tgtGroupMap = new Map(tgtGroups.map(g => [g.group_id, g]));
+        const tgtGroupByName = new Map(tgtGroups.map(g => [g.group_name.toLowerCase().trim(), g]));
+
+        log(`Zrodlo: ${srcGroups.length} grup, Cel: ${tgtGroups.length} grup`);
+
+        // 2. Find missing groups and try to create them
+        const missingGroups = srcGroups.filter(g => g.group_id >= 0 && !tgtGroupMap.has(g.group_id) && !tgtGroupByName.has(g.group_name.toLowerCase().trim()));
+        const createdGroups = [];
+        const failedGroups = [];
+
+        if (missingGroups.length > 0) {
+          log(`Brakujace grupy: ${missingGroups.map(g => `"${g.group_name}" (${g.group_id})`).join(', ')}`);
+          log('Probuje utworzyc brakujace grupy przez panel...');
+
+          for (const mg of missingGroups) {
+            log(`  Tworzenie grupy "${mg.group_name}"...`);
+            const result = await createSizeGroupViaPanel(mg.group_name, log);
+            if (result.ok) {
+              createdGroups.push(mg);
+            } else {
+              failedGroups.push(mg);
+              log(`  [FAIL] Nie udalo sie utworzyc grupy "${mg.group_name}" - musisz ja utworzyc recznie w panelu`);
+            }
+          }
+
+          if (createdGroups.length > 0) {
+            log(`Utworzono ${createdGroups.length} grup. Odswiezam dane...`);
+          }
         }
 
-        // Weryfikacja
-        log('--- Weryfikacja po imporcie ---');
-        const targetProducts = await fetchAllSizes(cfg.targetDomain, cfg.targetApiKey, log);
+        // 3. Re-fetch target groups after creation
+        const tgtGroupsAfter = await fetchSizeGroups(cfg.targetDomain, cfg.targetApiKey, log);
+        const tgtAfterByName = new Map(tgtGroupsAfter.map(g => [g.group_name.toLowerCase().trim(), g]));
+        const tgtAfterById = new Map(tgtGroupsAfter.map(g => [g.group_id, g]));
+
+        // 4. Map source group_id -> target group_id (by name or same id)
+        const groupIdMapping = new Map();
+        for (const sg of srcGroups) {
+          if (sg.group_id < 0) {
+            groupIdMapping.set(sg.group_id, sg.group_id); // universal group
+            continue;
+          }
+          if (tgtAfterById.has(sg.group_id)) {
+            groupIdMapping.set(sg.group_id, sg.group_id);
+          } else {
+            const tgt = tgtAfterByName.get(sg.group_name.toLowerCase().trim());
+            if (tgt) {
+              groupIdMapping.set(sg.group_id, tgt.group_id);
+              log(`  Mapowanie: grupa "${sg.group_name}" src:${sg.group_id} -> tgt:${tgt.group_id}`);
+            }
+          }
+        }
+
+        // 5. Build sizes to add/edit
+        const sizesToImport = [];
+        const unmappedGroups = [];
+
+        for (const sg of srcGroups) {
+          if (sg.group_id < 0) continue; // skip universal
+
+          const targetGroupId = groupIdMapping.get(sg.group_id);
+          if (!targetGroupId) {
+            unmappedGroups.push(sg.group_name);
+            continue;
+          }
+
+          // Check which sizes already exist in target group
+          const tgtGroup = tgtAfterById.get(targetGroupId) || tgtAfterByName.get(sg.group_name.toLowerCase().trim());
+          const existingSizeNames = new Set((tgtGroup?.sizes || []).map(s => s.size_name.toLowerCase().trim()));
+
+          for (const size of sg.sizes) {
+            const exists = existingSizeNames.has(size.size_name.toLowerCase().trim());
+            sizesToImport.push({
+              group_id: targetGroupId,
+              id: exists ? size.size_id : undefined,
+              name: size.size_name,
+              description: '',
+              operation: exists ? 'edit' : 'add',
+              lang_data: (size.lang_data || []).map(ld => ({
+                lang_id: ld.lang_id,
+                name: ld.name,
+              })),
+            });
+          }
+        }
+
+        if (unmappedGroups.length > 0) {
+          log(`Grupy bez mapowania (pominiete): ${unmappedGroups.join(', ')}`);
+        }
+
+        log(`Rozmiarow do importu: ${sizesToImport.length}`);
+
+        // 6. Import sizes
+        if (sizesToImport.length > 0) {
+          const result = await importSizeDefinitions(cfg.targetDomain, cfg.targetApiKey, sizesToImport, log);
+          log(`Import: ${result.imported} OK, ${result.failed} bledow`);
+          if (result.errors.length > 0) {
+            log('Bledy:\n' + result.errors.slice(0, 20).join('\n'));
+          }
+        }
+
+        // 7. Weryfikacja
+        log('--- Weryfikacja ---');
+        const finalGroups = await fetchSizeGroups(cfg.targetDomain, cfg.targetApiKey, log);
+        const finalByName = new Map(finalGroups.map(g => [g.group_name.toLowerCase().trim(), g]));
+
         let matchCount = 0;
         const issues = [];
 
-        for (const id of srcIds) {
-          const src = sourceProducts[id];
-          const tgt = targetProducts[id];
-          if (!tgt) {
-            issues.push(`Product ${id}: brak w panelu docelowym`);
+        for (const sg of srcGroups) {
+          if (sg.group_id < 0) continue;
+          const tg = finalByName.get(sg.group_name.toLowerCase().trim());
+          if (!tg) {
+            issues.push(`Grupa "${sg.group_name}": brak w celu`);
             continue;
           }
-          const srcSizes = (src.sizesResult || []).map(s => s.sizeId).sort().join(',');
-          const tgtSizes = (tgt.sizesResult || []).map(s => s.sizeId).sort().join(',');
-          if (srcSizes !== tgtSizes) {
-            issues.push(`Product ${id}: rozmiary roznia sie (zrodlo: ${srcSizes}, cel: ${tgtSizes})`);
+          const srcSizeNames = new Set(sg.sizes.map(s => s.size_name.toLowerCase().trim()));
+          const tgtSizeNames = new Set(tg.sizes.map(s => s.size_name.toLowerCase().trim()));
+          const missingSizes = [...srcSizeNames].filter(n => !tgtSizeNames.has(n));
+          if (missingSizes.length > 0) {
+            issues.push(`Grupa "${sg.group_name}": brak ${missingSizes.length} rozmiarow`);
           } else {
             matchCount++;
           }
         }
 
-        log(`Weryfikacja: ${matchCount} zgodnych, ${issues.length} problemow / ${srcIds.length} produktow`);
-        if (issues.length > 0) {
-          log(`Problemy (max 20):\n${issues.slice(0, 20).join('\n')}`);
-        }
-        if (matchCount === srcIds.length) log('Wszystkie rozmiary zgodne!');
+        const totalGroups = srcGroups.filter(g => g.group_id >= 0).length;
+        log(`Weryfikacja: ${matchCount}/${totalGroups} grup zgodnych`);
+        if (issues.length > 0) log(`Problemy:\n${issues.join('\n')}`);
+        if (matchCount === totalGroups) log('Wszystkie grupy i rozmiary zgodne!');
 
-        return { ok: issues.length === 0, matchCount, total: srcIds.length, issues };
+        return { ok: issues.length === 0, matchCount, total: totalGroups, issues };
       },
     },
   ];
