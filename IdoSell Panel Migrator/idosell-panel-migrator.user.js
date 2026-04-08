@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         IdoSell - Panel Migrator
 // @namespace    https://idosell.com/
-// @version      1.6.0
+// @version      1.7.0
 // @description  Migracja danych (marki, i inne) między panelami IdoSell przez API
 // @author       SyncOffer
 // @match        https://*.iai-shop.com/panel/*
@@ -279,6 +279,102 @@
   }
 
   // =========================================================================
+  // MODULE: PARAMETERS (PARAMETRY)
+  // =========================================================================
+
+  async function fetchAllParameters(domain, apiKey, log) {
+    const all = {};
+    let page = 0;
+    let total = null;
+    while (true) {
+      const url = buildUrl(domain, '/api/admin/v7/products/parameters/search');
+      log(`Pobieranie parametrow: strona ${page + 1}...`);
+      const data = await apiRequest('POST', url, apiKey, {
+        params: { resultsPage: page, resultsLimit: 100, languagesIds: ['pol', 'eng'], parameterValueIds: true },
+      });
+      const results = data.parametersResult || {};
+      for (const [k, v] of Object.entries(results)) all[k] = v;
+      if (total === null) total = data.resultsNumberAll;
+      log(`Pobrano ${Object.keys(all).length} / ${total} elementow`);
+      if (Object.keys(all).length >= total) break;
+      page++;
+    }
+    return all;
+  }
+
+  function getParamNamePl(item) {
+    return (item.names || []).find(n => n.languageId === 'pol')?.value || '?';
+  }
+
+  async function importParameters(domain, apiKey, srcParams, log) {
+    const parameters = Object.values(srcParams).filter(p => p.type === 'parameter');
+    const values = Object.values(srcParams).filter(p => p.type === 'value');
+    const sections = Object.values(srcParams).filter(p => p.type === 'section');
+    let successCount = 0, failCount = 0;
+    const errors = [];
+    const batchSize = 20;
+
+    if (sections.length > 0) {
+      log(`Importowanie ${sections.length} sekcji...`);
+      const items = sections.map(s => ({
+        item_text_ids: s.names.map(n => ({ languageId: n.languageId, value: n.value })),
+        type: 'section',
+        names: s.names.map(n => ({ lang_id: n.languageId, value: n.value })),
+        descriptions: (s.descriptions || []).map(d => ({ lang_id: d.languageId, value: d.value })),
+      }));
+      try {
+        const res = await apiRequest('PUT', buildUrl(domain, '/api/admin/v7/products/parameters'), apiKey, { items });
+        for (const r of (res.results || [])) { if (r.faultCode === 0) successCount++; else { failCount++; errors.push(`Section: ${r.faultString}`); } }
+      } catch (err) { failCount += sections.length; errors.push(`Sections: ${err.message}`); }
+    }
+
+    log(`Importowanie ${parameters.length} parametrow...`);
+    for (let i = 0; i < parameters.length; i += batchSize) {
+      const batch = parameters.slice(i, i + batchSize);
+      const items = batch.map(p => ({
+        item_text_ids: p.names.map(n => ({ languageId: n.languageId, value: n.value })),
+        type: 'parameter',
+        names: p.names.map(n => ({ lang_id: n.languageId, value: n.value })),
+        descriptions: (p.descriptions || []).map(d => ({ lang_id: d.languageId, value: d.value })),
+      }));
+      try {
+        const res = await apiRequest('PUT', buildUrl(domain, '/api/admin/v7/products/parameters'), apiKey, { items });
+        for (let j = 0; j < (res.results || []).length; j++) {
+          const r = res.results[j];
+          if (r.faultCode === 0) successCount++;
+          else { failCount++; errors.push(`"${getParamNamePl(batch[j])}": ${r.faultString}`); log(`  [FAIL] ${getParamNamePl(batch[j])}: ${r.faultString}`); }
+        }
+      } catch (err) { failCount += batch.length; errors.push(`Batch: ${err.message}`); }
+    }
+
+    log(`Importowanie ${values.length} wartosci...`);
+    for (let i = 0; i < values.length; i += batchSize) {
+      const batch = values.slice(i, i + batchSize);
+      const items = batch.map(v => {
+        const parent = srcParams[v.parameterId];
+        const parentName = parent ? getParamNamePl(parent) : '';
+        return {
+          item_text_ids: v.names.map(n => ({ languageId: n.languageId, value: n.value })),
+          type: 'value',
+          names: v.names.map(n => ({ lang_id: n.languageId, value: n.value })),
+          descriptions: (v.descriptions || []).map(d => ({ lang_id: d.languageId, value: d.value })),
+          options: [{ lang_id: 'pol', value: parentName, shop_id: 1 }],
+        };
+      });
+      try {
+        const res = await apiRequest('PUT', buildUrl(domain, '/api/admin/v7/products/parameters'), apiKey, { items });
+        for (let j = 0; j < (res.results || []).length; j++) {
+          const r = res.results[j];
+          if (r.faultCode === 0) successCount++;
+          else { failCount++; errors.push(`"${getParamNamePl(batch[j])}": ${r.faultString}`); log(`  [FAIL] ${getParamNamePl(batch[j])}: ${r.faultString}`); }
+        }
+      } catch (err) { failCount += batch.length; errors.push(`Batch: ${err.message}`); }
+    }
+
+    return { imported: successCount, failed: failCount, errors };
+  }
+
+  // =========================================================================
   // MODULE REGISTRY
   // =========================================================================
 
@@ -526,6 +622,49 @@
         if (matchCount === totalGroups) log('Wszystkie grupy i rozmiary zgodne!');
 
         return { ok: issues.length === 0, matchCount, total: totalGroups, issues };
+      },
+    },
+    {
+      id: 'parameters',
+      label: 'Parametry (Parameters)',
+      icon: '\u2699\uFE0F',
+      run: async (cfg, log) => {
+        log('--- Start migracji parametrow ---');
+
+        const srcParams = await fetchAllParameters(cfg.sourceDomain, cfg.sourceApiKey, log);
+        const srcItems = Object.values(srcParams);
+        const params = srcItems.filter(i => i.type === 'parameter');
+        const vals = srcItems.filter(i => i.type === 'value');
+        const sects = srcItems.filter(i => i.type === 'section');
+        log(`Zrodlo: ${sects.length} sekcji, ${params.length} parametrow, ${vals.length} wartosci`);
+
+        const result = await importParameters(cfg.targetDomain, cfg.targetApiKey, srcParams, log);
+        log(`--- Zakonczono: ${result.imported} OK, ${result.failed} bledow ---`);
+        if (result.errors.length > 0) {
+          log('Bledy:\n' + result.errors.slice(0, 20).join('\n'));
+        }
+
+        // Weryfikacja
+        log('--- Weryfikacja ---');
+        const tgtParams = await fetchAllParameters(cfg.targetDomain, cfg.targetApiKey, log);
+        const tgtNames = new Set(Object.values(tgtParams).map(p => getParamNamePl(p).toLowerCase().trim()));
+        const srcNames = srcItems.filter(i => i.type !== 'section').map(i => getParamNamePl(i));
+
+        let matchCount = 0;
+        const issues = [];
+        for (const name of srcNames) {
+          if (tgtNames.has(name.toLowerCase().trim())) {
+            matchCount++;
+          } else {
+            issues.push(`Brak: "${name}"`);
+          }
+        }
+
+        log(`Weryfikacja: ${matchCount}/${srcNames.length} elementow zgodnych`);
+        if (issues.length > 0) log(`Problemy:\n${issues.join('\n')}`);
+        if (matchCount === srcNames.length) log('Wszystkie parametry zgodne!');
+
+        return { ok: issues.length === 0, matchCount, total: srcNames.length, issues };
       },
     },
   ];
