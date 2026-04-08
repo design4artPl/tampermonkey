@@ -406,21 +406,22 @@
         const tgtAfterByName = new Map(tgtGroupsAfter.map(g => [g.group_name.toLowerCase().trim(), g]));
         const tgtAfterById = new Map(tgtGroupsAfter.map(g => [g.group_id, g]));
 
-        // 4. Map source group_id -> target group_id (by name or same id)
+        // 4. Map source group_id -> target group_id (by name first, then by id)
         const groupIdMapping = new Map();
         for (const sg of srcGroups) {
           if (sg.group_id < 0) {
             groupIdMapping.set(sg.group_id, sg.group_id); // universal group
             continue;
           }
-          if (tgtAfterById.has(sg.group_id)) {
-            groupIdMapping.set(sg.group_id, sg.group_id);
-          } else {
-            const tgt = tgtAfterByName.get(sg.group_name.toLowerCase().trim());
-            if (tgt) {
-              groupIdMapping.set(sg.group_id, tgt.group_id);
-              log(`  Mapowanie: grupa "${sg.group_name}" src:${sg.group_id} -> tgt:${tgt.group_id}`);
+          // Always prefer name-based mapping (IDs differ between panels)
+          const tgtByName = tgtAfterByName.get(sg.group_name.toLowerCase().trim());
+          if (tgtByName) {
+            groupIdMapping.set(sg.group_id, tgtByName.group_id);
+            if (sg.group_id !== tgtByName.group_id) {
+              log(`  Mapowanie: "${sg.group_name}" src:${sg.group_id} -> tgt:${tgtByName.group_id}`);
             }
+          } else if (tgtAfterById.has(sg.group_id)) {
+            groupIdMapping.set(sg.group_id, sg.group_id);
           }
         }
 
