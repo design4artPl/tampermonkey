@@ -697,6 +697,7 @@
       cursor: 'pointer', boxShadow: '0 4px 12px rgba(0,0,0,0.3)',
       transition: 'transform 0.2s',
     });
+    trigger.id = 'migrator-trigger';
     trigger.title = 'IdoSell Panel Migrator';
     trigger.addEventListener('mouseenter', () => trigger.style.transform = 'scale(1.1)');
     trigger.addEventListener('mouseleave', () => trigger.style.transform = 'scale(1)');
@@ -916,6 +917,8 @@
   // =========================================================================
   // INIT
   // =========================================================================
+
+  if (document.getElementById('migrator-trigger')) return; // already initialized
 
   if (document.readyState === 'complete') {
     createUI();
