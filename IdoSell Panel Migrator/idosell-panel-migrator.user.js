@@ -933,29 +933,6 @@
       return { imported: 0, failed: 0, errors: [] };
     }
 
-    // Pre-pass: delete individual descriptions if checkbox is checked
-    const deleteIndividual = document.getElementById('m-delete-individual-descs')?.checked;
-    if (deleteIndividual && toImport.length > 0) {
-      log('Usuwanie indywidualnych opisow/meta...');
-      for (let i = 0; i < toImport.length; i += 50) {
-        const batch = toImport.slice(i, i + 50);
-        const delProducts = batch.map(p => ({ productId: p.productId }));
-        try {
-          await apiRequest('PUT', buildUrl(domain, '/api/admin/v7/products/products'), apiKey, {
-            params: {
-              settings: {
-                settingModificationType: 'edit',
-                settingDeleteIndividualDescriptionsByShopsMask: { shopsMask: targetShopsMask },
-                settingDeleteIndividualMetaByShopsMask: { shopsMask: targetShopsMask },
-              },
-              products: delProducts,
-            },
-          });
-        } catch (e) { log('  Blad usuwania: ' + e.message); }
-      }
-      log('Indywidualne opisy usuniete. Kontynuuje import...');
-    }
-
     log(`Nowych produktow do importu: ${toImport.length}`);
     const batchSize = 10;
     let successCount = 0, failCount = 0;
@@ -968,7 +945,7 @@
       log(`PUT batch ${Math.floor(i / batchSize) + 1}: ${batch.length} produktow`);
       try {
         const url = buildUrl(domain, '/api/admin/v7/products/products');
-        const res = await apiRequest('PUT', url, apiKey, { params: { settings: { settingModificationType: importMode, settingsSkipDuplicatedProducers: true }, products: mapped } });
+        const delIndiv = document.getElementById('m-delete-individual-descs')?.checked; const settings = { settingModificationType: importMode, settingsSkipDuplicatedProducers: true }; if (delIndiv) { settings.settingDeleteIndividualDescriptionsByShopsMask = { shopsMask: targetShopsMask }; settings.settingDeleteIndividualMetaByShopsMask = { shopsMask: targetShopsMask }; } const res = await apiRequest('PUT', url, apiKey, { params: { settings, products: mapped } });
         // Response: { results: { productsResults: [{ faults: [...], productId }] } }
         const prodResults = res?.results?.productsResults || res?.productsResults || [];
         if (Array.isArray(prodResults) && prodResults.length > 0) {
