@@ -29,6 +29,7 @@
       targetDomain: '',
       targetApiKey: '',
       sourceShopId: 1,
+      targetShopIds: '1',
     };
     try {
       const saved = GM_getValue('migratorConfig', null);
@@ -844,7 +845,7 @@
     return all;
   }
 
-  function mapProductForPut(p, brandNameToId, catNameToId, sizeGroupNameToId) {
+  function mapProductForPut(p, brandNameToId, catNameToId, sizeGroupNameToId, targetShopsMask) {
     const langData = (p.productDescriptionsLangData || []).map(ld => ({
       langId: ld.langId || 'pol',
       productName: ld.productName || '',
@@ -876,7 +877,7 @@
       currencyId: p.currencyId || 'PLN',
       productWeight: p.productWeight || 0,
       productType: p.productType || 'product_regular',
-      shopsMask: 1,
+      shopsMask: targetShopsMask,
     };
 
     if (brandId) mapped.producerId = brandId;
@@ -886,7 +887,7 @@
     return mapped;
   }
 
-  async function importProducts(domain, apiKey, products, brandNameToId, catNameToId, sizeGroupNameToId, existingCodes, log) {
+  async function importProducts(domain, apiKey, products, brandNameToId, catNameToId, sizeGroupNameToId, existingCodes, targetShopsMask, log) {
     const toImport = products.filter(p => {
       const code = (p.productDisplayedCode || '').toLowerCase().trim();
       return !code || !existingCodes.has(code);
@@ -904,7 +905,7 @@
 
     for (let i = 0; i < toImport.length; i += batchSize) {
       const batch = toImport.slice(i, i + batchSize);
-      const mapped = batch.map(p => mapProductForPut(p, brandNameToId, catNameToId, sizeGroupNameToId));
+      const mapped = batch.map(p => mapProductForPut(p, brandNameToId, catNameToId, sizeGroupNameToId, targetShopsMask));
 
       log(`PUT batch ${Math.floor(i / batchSize) + 1}: ${batch.length} produktow`);
       try {
@@ -1536,7 +1537,12 @@
         }
         log(`Panel docelowy: ${tgtProducts.length} produktow, ${existingCodes.size} kodow.`);
 
-        const result = await importProducts(cfg.targetDomain, cfg.targetApiKey, srcProducts, brandNameToId, catNameToId, new Map(), existingCodes, log);
+        // Calculate shopsMask from target shop IDs
+        const targetShopIds = (cfg.targetShopIds || '1').split(',').map(s => parseInt(s.trim(), 10)).filter(n => n > 0);
+        const targetShopsMask = targetShopIds.reduce((mask, id) => mask + Math.pow(2, id - 1), 0);
+        log('Sklepy docelowe: ' + targetShopIds.join(', ') + ' (shopsMask=' + targetShopsMask + ')');
+
+        const result = await importProducts(cfg.targetDomain, cfg.targetApiKey, srcProducts, brandNameToId, catNameToId, new Map(), existingCodes, targetShopsMask, log);
         log(`--- Zakonczono: ${result.imported} OK, ${result.failed} bledow ---`);
         if (result.errors.length > 0) log('Bledy:\n' + result.errors.slice(0, 20).join('\n'));
 
@@ -1680,7 +1686,7 @@
       if (mod.id === 'products') {
         const shopRow = document.createElement('div');
         shopRow.style.cssText = 'margin: 4px 0 8px 24px; display:flex; align-items:center; gap:8px;';
-        shopRow.innerHTML = `<label style="font-size:12px; color:#475569;">Shop ID zrodla:</label><input type="number" id="m-src-shop-id" value="${cfg.sourceShopId || 1}" min="1" style="width:60px; padding:4px 6px; border:1px solid #cbd5e1; border-radius:4px; font-size:12px;">`;
+        shopRow.innerHTML = `<label style="font-size:12px; color:#475569;">Shop ID zrodla:</label><input type="number" id="m-src-shop-id" value="${cfg.sourceShopId || 1}" min="1" style="width:60px; padding:4px 6px; border:1px solid #cbd5e1; border-radius:4px; font-size:12px;"> <label style="font-size:12px; color:#475569; margin-left:12px;">Sklepy docelowe (ID):</label><input type="text" id="m-tgt-shop-ids" value="${cfg.targetShopIds || '1'}" placeholder="1,2" style="width:60px; padding:4px 6px; border:1px solid #cbd5e1; border-radius:4px; font-size:12px;">`;
         modulesContainer.appendChild(shopRow);
       }
     });
@@ -1747,6 +1753,7 @@
         targetDomain: modal.querySelector('#m-tgt-domain').value.trim(),
         targetApiKey: modal.querySelector('#m-tgt-key').value.trim(),
         sourceShopId: parseInt(modal.querySelector('#m-src-shop-id')?.value || '1', 10),
+        targetShopIds: modal.querySelector('#m-tgt-shop-ids')?.value?.trim() || '1',
       };
 
       if (!currentCfg.sourceDomain || !currentCfg.sourceApiKey) {
