@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         IdoSell - Panel Migrator
 // @namespace    https://idosell.com/
-// @version      1.8.0
+// @version      1.9.0
 // @description  Migracja danych (marki, i inne) między panelami IdoSell przez API
 // @author       SyncOffer
 // @match        https://*.iai-shop.com/panel/*
@@ -28,6 +28,7 @@
       sourceApiKey: '',
       targetDomain: '',
       targetApiKey: '',
+      sourceShopId: 1,
     };
     try {
       const saved = GM_getValue('migratorConfig', null);
@@ -803,10 +804,143 @@
   }
 
   // =========================================================================
+  // MODULE: PRODUCTS (TOWARY)
+  // =========================================================================
+
+  async function fetchProductIdsByShop(domain, apiKey, shopId, log) {
+    const ids = [];
+    let page = 0;
+    while (true) {
+      const url = buildUrl(domain, '/api/admin/v7/products/products/search');
+      log(`Pobieranie produktow: strona ${page + 1}...`);
+      const data = await apiRequest('POST', url, apiKey, {
+        params: { resultsPage: page, resultsLimit: 100 },
+      });
+      const results = data.results || [];
+      for (const p of results) {
+        const shops = (p.productShops || []).map(s => s.shopId);
+        if (!shopId || shops.includes(Number(shopId))) {
+          ids.push(p.productId);
+        }
+      }
+      const total = data.resultsNumberAll || 0;
+      log(`Strona ${page + 1}: ${results.length} prod., pasujacych: ${ids.length} / ${total}`);
+      if ((page + 1) * 100 >= total) break;
+      page++;
+    }
+    return ids;
+  }
+
+  async function fetchProductDetails(domain, apiKey, productIds, log) {
+    const all = [];
+    const batchSize = 50;
+    for (let i = 0; i < productIds.length; i += batchSize) {
+      const batch = productIds.slice(i, i + batchSize);
+      const url = buildUrl(domain, '/api/admin/v7/products/products?productIds=' + batch.join(','));
+      log(`Pobieranie szczegolow: ${i + 1}-${Math.min(i + batchSize, productIds.length)} / ${productIds.length}`);
+      const data = await apiRequest('GET', url, apiKey);
+      all.push(...(data.results || []));
+    }
+    return all;
+  }
+
+  function mapProductForPut(p, brandNameToId, catNameToId, sizeGroupNameToId) {
+    const langData = (p.productDescriptionsLangData || []).map(ld => ({
+      langId: ld.langId || 'pol',
+      productName: ld.productName || '',
+      productDescription: ld.productDescription || '',
+      productLongDescription: ld.productLongDescription || '',
+      productMetaTitle: ld.productMetaTitle || '',
+      productMetaKeywords: ld.productMetaKeywords || '',
+      productMetaDescription: ld.productMetaDescription || '',
+    }));
+
+    // Map brand by name
+    const brandName = p.producerName || '';
+    const brandId = brandNameToId.get(brandName.toLowerCase().trim());
+
+    // Map category by name
+    const catName = p.categoryName || '';
+    const catId = catNameToId.get(catName.toLowerCase().trim());
+
+    // Map size group by name
+    const sizeGroupId = p.sizesGroupId || -1;
+
+    const mapped = {
+      productId: 'add',
+      productDisplayedCode: p.productDisplayedCode || '',
+      productDescriptionsLangData: langData,
+      productRetailPrice: p.productRetailPrice || 0,
+      productWholesalePrice: p.productWholesalePrice || 0,
+      productVat: p.productVat || 23,
+      currencyId: p.currencyId || 'PLN',
+      productWeight: p.productWeight || 0,
+      productType: p.productType || 'product_regular',
+    };
+
+    if (brandId) mapped.producerId = brandId;
+    else if (brandName) mapped.producerName = brandName;
+    if (catId) mapped.categoryId = catId;
+
+    return mapped;
+  }
+
+  async function importProducts(domain, apiKey, products, brandNameToId, catNameToId, sizeGroupNameToId, existingCodes, log) {
+    const toImport = products.filter(p => {
+      const code = (p.productDisplayedCode || '').toLowerCase().trim();
+      return !code || !existingCodes.has(code);
+    });
+
+    if (toImport.length === 0) {
+      log('Brak nowych produktow do importu.');
+      return { imported: 0, failed: 0, errors: [] };
+    }
+
+    log(`Nowych produktow do importu: ${toImport.length}`);
+    const batchSize = 10;
+    let successCount = 0, failCount = 0;
+    const errors = [];
+
+    for (let i = 0; i < toImport.length; i += batchSize) {
+      const batch = toImport.slice(i, i + batchSize);
+      const mapped = batch.map(p => mapProductForPut(p, brandNameToId, catNameToId, sizeGroupNameToId));
+
+      log(`PUT batch ${Math.floor(i / batchSize) + 1}: ${batch.length} produktow`);
+      try {
+        const url = buildUrl(domain, '/api/admin/v7/products/products');
+        const res = await apiRequest('PUT', url, apiKey, { params: { products: mapped } });
+        const results = res.results || res.productsResults || [];
+        if (Array.isArray(results)) {
+          for (const r of results) {
+            if (r.errors && r.errors.length > 0) {
+              failCount++;
+              errors.push(`${r.productId || '?'}: ${JSON.stringify(r.errors).substring(0, 100)}`);
+            } else {
+              successCount++;
+            }
+          }
+        } else {
+          successCount += batch.length;
+        }
+      } catch (err) {
+        failCount += batch.length;
+        errors.push(`Batch: ${err.message}`);
+        log(`  BLAD: ${err.message}`);
+      }
+
+      log(`Postep: ${successCount} OK, ${failCount} bledow / ${toImport.length}`);
+    }
+
+    return { imported: successCount, failed: failCount, errors };
+  }
+
+  // =========================================================================
   // MODULE REGISTRY
   // =========================================================================
 
   const MODULES = [
+    // --- SEPARATOR: ATTRIBUTES ---
+    { id: '_sep_attributes', label: null, section: 'Atrybuty' },
     {
       id: 'series',
       label: 'Serie (Series)',
@@ -1354,6 +1488,60 @@
         return { ok: issues.length === 0, matchCount, total: srcEntities.length, issues };
       },
     },
+    // --- SEPARATOR: PRODUCTS ---
+    { id: '_sep_products', label: null, section: 'Towary' },
+    {
+      id: 'products',
+      label: 'Towary (Products)',
+      icon: '\uD83D\uDCE6',
+      run: async (cfg, log) => {
+        log('--- Start migracji towarow ---');
+        const shopId = cfg.sourceShopId || 1;
+        log(`Filtrowanie po sklepie zrodlowym: shopId=${shopId}`);
+
+        const srcIds = await fetchProductIdsByShop(cfg.sourceDomain, cfg.sourceApiKey, shopId, log);
+        log(`Znaleziono ${srcIds.length} produktow w sklepie ${shopId}.`);
+        if (srcIds.length === 0) {
+          log('Brak produktow.');
+          return { ok: true, matchCount: 0, total: 0, issues: [] };
+        }
+
+        const srcProducts = await fetchProductDetails(cfg.sourceDomain, cfg.sourceApiKey, srcIds, log);
+        log(`Pobrano szczegoly ${srcProducts.length} produktow.`);
+
+        log('Budowanie mapowania marek i kategorii...');
+        const tgtBrands = await fetchAllBrands(cfg.targetDomain, cfg.targetApiKey, log);
+        const brandNameToId = new Map();
+        for (const b of tgtBrands) brandNameToId.set(b.name.toLowerCase().trim(), b.id);
+
+        const tgtCategories = await fetchAllCategories(cfg.targetDomain, cfg.targetApiKey, log);
+        const catNameToId = new Map();
+        for (const c of tgtCategories) {
+          const name = getCatNamePl(c);
+          if (name) catNameToId.set(name.toLowerCase().trim(), c.id);
+        }
+
+        log('Sprawdzanie istniejacych produktow w celu...');
+        const tgtIds = await fetchProductIdsByShop(cfg.targetDomain, cfg.targetApiKey, null, log);
+        const tgtProducts = tgtIds.length > 0 ? await fetchProductDetails(cfg.targetDomain, cfg.targetApiKey, tgtIds.slice(0, 500), log) : [];
+        const existingCodes = new Set();
+        for (const tp of tgtProducts) {
+          const code = (tp.productDisplayedCode || '').toLowerCase().trim();
+          if (code) existingCodes.add(code);
+        }
+        log(`Panel docelowy: ${tgtProducts.length} produktow, ${existingCodes.size} kodow.`);
+
+        const result = await importProducts(cfg.targetDomain, cfg.targetApiKey, srcProducts, brandNameToId, catNameToId, new Map(), existingCodes, log);
+        log(`--- Zakonczono: ${result.imported} OK, ${result.failed} bledow ---`);
+        if (result.errors.length > 0) log('Bledy:\n' + result.errors.slice(0, 20).join('\n'));
+
+        log('--- Weryfikacja ---');
+        const afterIds = await fetchProductIdsByShop(cfg.targetDomain, cfg.targetApiKey, null, log);
+        log(`Panel docelowy po imporcie: ${afterIds.length} produktow`);
+
+        return { ok: result.failed === 0, matchCount: result.imported, total: srcProducts.length, issues: result.errors };
+      },
+    },
   ];
 
   // =========================================================================
@@ -1468,11 +1656,28 @@
     const modulesContainer = modal.querySelector('#m-modules');
     const badgeRefs = {};
     MODULES.forEach(mod => {
+      // Section separator
+      if (mod.section) {
+        const sep = document.createElement('div');
+        sep.style.cssText = 'font-weight:700; font-size:11px; text-transform:uppercase; letter-spacing:1px; color:#64748b; margin:12px 0 4px; padding-top:8px; border-top:1px solid #e2e8f0;';
+        if (mod.id === '_sep_attributes') sep.style.borderTop = 'none';
+        sep.textContent = mod.section;
+        modulesContainer.appendChild(sep);
+        return;
+      }
       const label = document.createElement('label');
       label.className = 'migrator-checkbox';
       label.innerHTML = `<input type="checkbox" data-module="${mod.id}"> <span>${mod.icon} ${mod.label}</span><span class="migrator-badge" id="badge-${mod.id}" style="display:none;"></span>`;
       modulesContainer.appendChild(label);
       badgeRefs[mod.id] = label.querySelector(`#badge-${mod.id}`);
+
+      // Add shop ID input for products module
+      if (mod.id === 'products') {
+        const shopRow = document.createElement('div');
+        shopRow.style.cssText = 'margin: 4px 0 8px 24px; display:flex; align-items:center; gap:8px;';
+        shopRow.innerHTML = `<label style="font-size:12px; color:#475569;">Shop ID zrodla:</label><input type="number" id="m-src-shop-id" value="${cfg.sourceShopId || 1}" min="1" style="width:60px; padding:4px 6px; border:1px solid #cbd5e1; border-radius:4px; font-size:12px;">`;
+        modulesContainer.appendChild(shopRow);
+      }
     });
 
     function showIssuesPopup(title, issues) {
@@ -1536,6 +1741,7 @@
         sourceApiKey: modal.querySelector('#m-src-key').value.trim(),
         targetDomain: modal.querySelector('#m-tgt-domain').value.trim(),
         targetApiKey: modal.querySelector('#m-tgt-key').value.trim(),
+        sourceShopId: parseInt(modal.querySelector('#m-src-shop-id')?.value || '1', 10),
       };
 
       if (!currentCfg.sourceDomain || !currentCfg.sourceApiKey) {
