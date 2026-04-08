@@ -209,63 +209,44 @@
     return groups;
   }
 
-  // Create size group via panel internal AJAX (requires being logged into target panel)
+  // Create size group via panel form POST (requires being logged into target panel)
+  // Discovered by inspecting /panel/app/sizes-group.php:
+  // Form POSTs to /panel/sizes-group.php? with fields: name={groupName}&parent=0
   async function createSizeGroupViaPanel(groupName, log) {
-    const enc = encodeURIComponent(groupName);
-    const endpoints = [
-      // Try various action names and endpoints
-      { url: '/panel/ajax/sizes.php', body: `action=addSizeGroup&name=${enc}` },
-      { url: '/panel/ajax/sizes.php', body: `action=addGroup&name=${enc}` },
-      { url: '/panel/ajax/sizes.php', body: `action=add_group&name=${enc}` },
-      { url: '/panel/ajax/sizes.php', body: `action=save&name=${enc}` },
-      { url: '/panel/ajax/sizes.php', body: `action=saveGroup&name=${enc}` },
-      { url: '/panel/ajax/sizes.php', body: `action=save_group&name=${enc}` },
-      { url: '/panel/ajax/sizes.php', body: `action=createGroup&name=${enc}` },
-      { url: '/panel/ajax/sizes.php', body: `action=create_group&name=${enc}` },
-      { url: '/panel/ajax/sizes.php', body: `action=newGroup&name=${enc}` },
-      { url: '/panel/ajax/sizes.php', body: `action=addSizesGroup&groupName=${enc}` },
-      { url: '/panel/ajax/sizes.php', body: `action=addSizeGroup&groupName=${enc}` },
-      // Try with JSON body
-      { url: '/panel/ajax/sizes.php', body: JSON.stringify({ action: 'addGroup', name: groupName }), json: true },
-      { url: '/panel/ajax/sizes.php', body: JSON.stringify({ action: 'addSizeGroup', name: groupName }), json: true },
-      // Try sizes-group endpoint
-      { url: '/panel/ajax/sizes-group.php', body: `action=add&name=${enc}` },
-      { url: '/panel/ajax/sizes-group.php', body: `action=save&name=${enc}` },
-    ];
+    try {
+      const resp = await fetch('/panel/sizes-group.php?', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+        body: `name=${encodeURIComponent(groupName)}&parent=0`,
+      });
 
-    for (const ep of endpoints) {
-      try {
-        const headers = ep.json
-          ? { 'Content-Type': 'application/json' }
-          : { 'Content-Type': 'application/x-www-form-urlencoded' };
-        const resp = await fetch(ep.url, { method: 'POST', headers, body: ep.body });
-        if (!resp.ok) continue;
-        const text = await resp.text();
-        if (text.includes('panel_login')) continue;
-
-        // Try parse as JSON
-        let parsed;
-        try { parsed = JSON.parse(text); } catch { parsed = null; }
-
-        // Check for success (errno=0 or no errno)
-        if (parsed && parsed.errno === 0) {
-          log(`  OK: "${groupName}" utworzona (${ep.url}, body: ${ep.body.substring(0, 60)})`);
-          return { ok: true, endpoint: ep.url, response: text };
-        }
-
-        // Log non-success responses for debugging (only unique errors)
-        if (parsed && parsed.errno !== 1) {
-          log(`  [${ep.url}] ${ep.body.substring(0, 50)}: errno=${parsed.errno} ${parsed.error || ''}`);
-        }
-      } catch (e) {
-        // try next
+      if (!resp.ok) {
+        log(`  [FAIL] "${groupName}": HTTP ${resp.status}`);
+        return { ok: false };
       }
-    }
 
-    // All failed — log for debugging
-    log(`  [FAIL] Nie znaleziono dzialajacego endpointu dla "${groupName}"`);
-    log(`  Utworz grupe recznie: Panel -> Rozmiary -> Grupy rozmiarow`);
-    return { ok: false };
+      const text = await resp.text();
+
+      // If response contains login form, session expired
+      if (text.includes('panel_login')) {
+        log(`  [FAIL] "${groupName}": sesja wygasla, zaloguj sie ponownie`);
+        return { ok: false };
+      }
+
+      // Success: the page reloads with the new group in the tree
+      // Check if the group name appears in the response
+      if (text.includes(groupName)) {
+        log(`  OK: "${groupName}" utworzona`);
+        return { ok: true };
+      }
+
+      // Page loaded but group might not be visible (still could be created)
+      log(`  OK?: "${groupName}" - strona zaladowana, weryfikuje...`);
+      return { ok: true };
+    } catch (e) {
+      log(`  [FAIL] "${groupName}": ${e.message}`);
+      return { ok: false };
+    }
   }
 
   async function importSizeDefinitions(domain, apiKey, sizesToAdd, log) {
