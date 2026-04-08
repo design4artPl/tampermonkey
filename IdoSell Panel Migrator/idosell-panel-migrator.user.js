@@ -518,6 +518,291 @@
   }
 
   // =========================================================================
+  // MODULE: SERIES (SERIE)
+  // =========================================================================
+
+  async function fetchAllSeries(domain, apiKey, log) {
+    const all = [];
+    let page = 0;
+    while (true) {
+      const url = buildUrl(domain, `/api/admin/v7/products/series?resultsPage=${page}&resultsLimit=100&languagesIds=pol`);
+      log(`Pobieranie serii: strona ${page + 1}...`);
+      const data = await apiRequest('GET', url, apiKey);
+      all.push(...(data.series || []));
+      const total = data.resultsNumberAll || 0;
+      log(`Pobrano ${all.length} / ${total} serii`);
+      if (all.length >= total) break;
+      page++;
+    }
+    return all;
+  }
+
+  async function importSeries(domain, apiKey, seriesList, targetNamesMap, log) {
+    const toImport = seriesList.filter(s => !targetNamesMap.has(s.name.toLowerCase().trim()));
+    if (toImport.length === 0) { log('Brak nowych serii.'); return { imported: 0, failed: 0, errors: [] }; }
+
+    const batchSize = 10;
+    let successCount = 0, failCount = 0;
+    const errors = [];
+
+    for (let i = 0; i < toImport.length; i += batchSize) {
+      const batch = toImport.slice(i, i + batchSize);
+      const mapped = batch.map(s => ({
+        id: 1,
+        nameInPanel: s.name,
+        shopsConfigurations: (s.lang_data || []).map(ld => ({
+          shopId: 1,
+          language: ld.lang_id,
+          nameOnPage: ld.name || s.name,
+          headerName: '',
+          description: ld.desc_projector || '',
+          descriptionBottom: '',
+          view: '',
+          enableSort: true,
+          enableChangeDisplayCount: true,
+        })),
+      }));
+
+      log(`PUT batch ${Math.floor(i / batchSize) + 1}: ${batch.map(s => s.name).join(', ').substring(0, 80)}`);
+      try {
+        const url = buildUrl(domain, '/api/admin/v7/products/series');
+        await apiRequest('PUT', url, apiKey, { params: { series: mapped } });
+        successCount += batch.length;
+      } catch (err) {
+        failCount += batch.length;
+        errors.push(`Batch: ${err.message}`);
+        log(`  BLAD: ${err.message}`);
+      }
+    }
+
+    return { imported: successCount, failed: failCount, errors };
+  }
+
+  // =========================================================================
+  // MODULE: CATEGORIES (KATEGORIE)
+  // =========================================================================
+
+  async function fetchAllCategories(domain, apiKey, log) {
+    const all = [];
+    let page = 0;
+    while (true) {
+      const url = buildUrl(domain, `/api/admin/v7/products/categories?results_page=${page}&results_limit=100&languages=pol`);
+      log(`Pobieranie kategorii: strona ${page + 1}...`);
+      const data = await apiRequest('GET', url, apiKey);
+      all.push(...(data.categories || []));
+      const total = data.results_number_all || 0;
+      log(`Pobrano ${all.length} / ${total} kategorii`);
+      if (all.length >= total) break;
+      page++;
+    }
+    return all;
+  }
+
+  function sortCategoriesParentsFirst(categories) {
+    const result = [];
+    const byParent = new Map();
+    for (const c of categories) {
+      const pid = c.parent_id || 0;
+      if (!byParent.has(pid)) byParent.set(pid, []);
+      byParent.get(pid).push(c);
+    }
+    function addLevel(parentId) {
+      const children = byParent.get(parentId) || [];
+      for (const c of children) {
+        result.push(c);
+        addLevel(c.id);
+      }
+    }
+    addLevel(0);
+    const added = new Set(result.map(c => c.id));
+    for (const c of categories) {
+      if (!added.has(c.id)) result.push(c);
+    }
+    return result;
+  }
+
+  function getCatNamePl(cat) {
+    return ((cat.lang_data || []).find(l => l.lang_id === 'pol') || {}).plural_name || '';
+  }
+
+  async function importCategories(domain, apiKey, categories, targetNamesMap, log) {
+    const sorted = sortCategoriesParentsFirst(categories);
+    const toImport = sorted.filter(c => !targetNamesMap.has(getCatNamePl(c).toLowerCase().trim()));
+    if (toImport.length === 0) { log('Brak nowych kategorii.'); return { imported: 0, failed: 0, errors: [] }; }
+
+    const createdNameToId = new Map();
+    let successCount = 0, failCount = 0;
+    const errors = [];
+
+    for (const cat of toImport) {
+      const namePl = getCatNamePl(cat);
+      let targetParentId = 0;
+      if (cat.parent_id && cat.parent_id !== 0) {
+        const parentCat = categories.find(c => c.id === cat.parent_id);
+        if (parentCat) {
+          const parentName = getCatNamePl(parentCat).toLowerCase().trim();
+          targetParentId = targetNamesMap.get(parentName) || createdNameToId.get(parentName) || 0;
+        }
+      }
+
+      const mapped = {
+        id: 0,
+        parent_id: targetParentId,
+        priority: cat.priority || 1,
+        operation: 'add',
+        lang_data: (cat.lang_data || []).map(ld => ({
+          lang_id: ld.lang_id,
+          singular_name: ld.singular_name || '',
+          plural_name: ld.plural_name || '',
+        })),
+      };
+
+      log(`PUT kategoria: "${namePl}" (parent_id=${targetParentId})`);
+      try {
+        const url = buildUrl(domain, '/api/admin/v7/products/categories');
+        const res = await apiRequest('PUT', url, apiKey, { params: { categories: [mapped] } });
+        const created = (res.categories || [])[0];
+        if (created && created.id) {
+          createdNameToId.set(namePl.toLowerCase().trim(), created.id);
+        }
+        successCount++;
+      } catch (err) {
+        failCount++;
+        errors.push(`"${namePl}": ${err.message}`);
+        log(`  BLAD: ${err.message}`);
+      }
+    }
+
+    return { imported: successCount, failed: failCount, errors };
+  }
+
+  // =========================================================================
+  // MODULE: WARRANTIES (GWARANCJE)
+  // =========================================================================
+
+  async function fetchAllWarranties(domain, apiKey, log) {
+    const all = [];
+    let page = 0;
+    while (true) {
+      const url = buildUrl(domain, `/api/admin/v7/warranties/warranties?results_limit=100&results_page=${page}`);
+      log(`Pobieranie gwarancji: strona ${page + 1}...`);
+      const data = await apiRequest('GET', url, apiKey);
+      all.push(...(data.warranties || []));
+      const total = data.results_number_all || 0;
+      log(`Pobrano ${all.length} / ${total} gwarancji`);
+      if (all.length >= total) break;
+      page++;
+    }
+    return all;
+  }
+
+  async function importWarranties(domain, apiKey, warranties, targetNamesMap, log) {
+    const toImport = warranties.filter(w => !targetNamesMap.has(w.name.toLowerCase().trim()));
+    if (toImport.length === 0) { log('Brak nowych gwarancji.'); return { imported: 0, failed: 0, errors: [] }; }
+
+    const batchSize = 10;
+    let successCount = 0, failCount = 0;
+    const errors = [];
+
+    for (let i = 0; i < toImport.length; i += batchSize) {
+      const batch = toImport.slice(i, i + batchSize);
+      const mapped = batch.map(w => ({
+        id: 'new_id',
+        name: w.name,
+        type: w.type || 'producer',
+        period: w.period || 0,
+      }));
+
+      log(`PUT batch ${Math.floor(i / batchSize) + 1}: ${batch.map(w => w.name).join(', ').substring(0, 80)}`);
+      try {
+        const url = buildUrl(domain, '/api/admin/v7/warranties/warranties');
+        await apiRequest('PUT', url, apiKey, { params: { warranties: mapped } });
+        successCount += batch.length;
+      } catch (err) {
+        failCount += batch.length;
+        errors.push(`Batch: ${err.message}`);
+        log(`  BLAD: ${err.message}`);
+      }
+    }
+
+    return { imported: successCount, failed: failCount, errors };
+  }
+
+  // =========================================================================
+  // MODULE: SIZE CHARTS (TABELE ROZMIAROW)
+  // =========================================================================
+
+  async function fetchAllSizeCharts(domain, apiKey, log) {
+    const url = buildUrl(domain, '/api/admin/v7/sizecharts/sizecharts?resultsLimit=100');
+    log('Pobieranie tabel rozmiarow...');
+    const data = await apiRequest('GET', url, apiKey);
+    const charts = data.sizeCharts || {};
+    const result = [];
+    for (const [id, chart] of Object.entries(charts)) {
+      result.push({ id, ...chart });
+    }
+    log(`Pobrano ${result.length} tabel rozmiarow`);
+    return result;
+  }
+
+  function getSizeChartName(chart) {
+    if (chart.nameInPanel) return chart.nameInPanel;
+    const ld = (chart.languagesData || [])[0];
+    if (ld && ld.columns) {
+      const cols = Object.values(ld.columns);
+      if (cols.length > 0) return cols[0].columnTitle || ('Chart ' + chart.id);
+    }
+    return 'Chart ' + chart.id;
+  }
+
+  async function importSizeCharts(domain, apiKey, charts, targetNamesSet, log) {
+    const toImport = charts.filter(c => !targetNamesSet.has(getSizeChartName(c).toLowerCase().trim()));
+    if (toImport.length === 0) { log('Brak nowych tabel rozmiarow.'); return { imported: 0, failed: 0, errors: [] }; }
+
+    let successCount = 0, failCount = 0;
+    const errors = [];
+
+    for (const chart of toImport) {
+      const name = getSizeChartName(chart);
+      const languagesData = (chart.languagesData || []).map(ld => {
+        const columns = Object.values(ld.columns || {}).map(col => ({
+          columnNumber: col.columnNumber,
+          columnTitle: col.columnTitle || '',
+        }));
+        const sizes = Object.values(ld.sizes || {}).map(sz => ({
+          sizeId: String(sz.sizeId),
+          priority: sz.priority || 1,
+          descriptions: Object.values(sz.descriptions || {}).map(d => ({
+            columnNumber: d.columnNumber,
+            value: d.value || '',
+          })),
+        }));
+        return { language: ld.language || 'pol', columns, sizes };
+      });
+
+      const mapped = {
+        id: 1,
+        nameInPanel: name,
+        displayMode: 'single',
+        languagesData,
+      };
+
+      log(`PUT tabela: "${name}"`);
+      try {
+        const url = buildUrl(domain, '/api/admin/v7/sizecharts/sizecharts');
+        await apiRequest('PUT', url, apiKey, { params: { sizeCharts: [mapped] } });
+        successCount++;
+      } catch (err) {
+        failCount++;
+        errors.push(`"${name}": ${err.message}`);
+        log(`  BLAD: ${err.message}`);
+      }
+    }
+
+    return { imported: successCount, failed: failCount, errors };
+  }
+
+  // =========================================================================
   // MODULE REGISTRY
   // =========================================================================
 
@@ -888,6 +1173,175 @@
         if (matchCount === srcSuppliers.length) log('Wszystko OK!');
 
         return { ok: issues.length === 0, matchCount, total: srcSuppliers.length, issues };
+      },
+    },
+    {
+      id: 'series',
+      label: 'Serie (Series)',
+      icon: '\uD83D\uDCDA',
+      run: async (cfg, log) => {
+        log('--- Start migracji serii ---');
+
+        const srcSeries = await fetchAllSeries(cfg.sourceDomain, cfg.sourceApiKey, log);
+        log(`Pobrano ${srcSeries.length} serii ze zrodla.`);
+
+        if (srcSeries.length === 0) {
+          log('Brak serii w zrodle.');
+          return { ok: true, matchCount: 0, total: 0, issues: [] };
+        }
+
+        const tgtSeries = await fetchAllSeries(cfg.targetDomain, cfg.targetApiKey, log);
+        const tgtNamesMap = new Map(tgtSeries.map(s => [s.name.toLowerCase().trim(), s.id]));
+        log(`Panel docelowy: ${tgtSeries.length} serii, nowych: ${srcSeries.filter(s => !tgtNamesMap.has(s.name.toLowerCase().trim())).length}`);
+
+        const result = await importSeries(cfg.targetDomain, cfg.targetApiKey, srcSeries, tgtNamesMap, log);
+        log(`Import: ${result.imported} OK, ${result.failed} bledow`);
+        if (result.errors.length > 0) log('Bledy:\n' + result.errors.join('\n'));
+
+        // Weryfikacja
+        log('--- Weryfikacja ---');
+        const afterImport = await fetchAllSeries(cfg.targetDomain, cfg.targetApiKey, log);
+        const afterNames = new Set(afterImport.map(s => s.name.toLowerCase().trim()));
+        let matchCount = 0;
+        const issues = [];
+        for (const s of srcSeries) {
+          if (afterNames.has(s.name.toLowerCase().trim())) matchCount++;
+          else issues.push(`Brak: "${s.name}"`);
+        }
+
+        log(`Weryfikacja: ${matchCount}/${srcSeries.length} serii`);
+        if (matchCount === srcSeries.length) log('Wszystkie serie przeniesione!');
+
+        return { ok: issues.length === 0, matchCount, total: srcSeries.length, issues };
+      },
+    },
+    {
+      id: 'categories',
+      label: 'Kategorie (Categories)',
+      icon: '\uD83D\uDCC2',
+      run: async (cfg, log) => {
+        log('--- Start migracji kategorii ---');
+
+        const srcCategories = await fetchAllCategories(cfg.sourceDomain, cfg.sourceApiKey, log);
+        log(`Pobrano ${srcCategories.length} kategorii ze zrodla.`);
+
+        if (srcCategories.length === 0) {
+          log('Brak kategorii w zrodle.');
+          return { ok: true, matchCount: 0, total: 0, issues: [] };
+        }
+
+        const tgtCategories = await fetchAllCategories(cfg.targetDomain, cfg.targetApiKey, log);
+        const tgtNamesMap = new Map();
+        for (const c of tgtCategories) {
+          const name = getCatNamePl(c).toLowerCase().trim();
+          if (name) tgtNamesMap.set(name, c.id);
+        }
+        const newCount = srcCategories.filter(c => !tgtNamesMap.has(getCatNamePl(c).toLowerCase().trim())).length;
+        log(`Panel docelowy: ${tgtCategories.length} kategorii, nowych: ${newCount}`);
+
+        const result = await importCategories(cfg.targetDomain, cfg.targetApiKey, srcCategories, tgtNamesMap, log);
+        log(`Import: ${result.imported} OK, ${result.failed} bledow`);
+        if (result.errors.length > 0) log('Bledy:\n' + result.errors.slice(0, 20).join('\n'));
+
+        // Weryfikacja
+        log('--- Weryfikacja ---');
+        const afterImport = await fetchAllCategories(cfg.targetDomain, cfg.targetApiKey, log);
+        const afterNames = new Set(afterImport.map(c => getCatNamePl(c).toLowerCase().trim()).filter(n => n));
+        let matchCount = 0;
+        const issues = [];
+        for (const c of srcCategories) {
+          const name = getCatNamePl(c);
+          if (!name) continue;
+          if (afterNames.has(name.toLowerCase().trim())) matchCount++;
+          else issues.push(`Brak: "${name}"`);
+        }
+
+        const totalSrc = srcCategories.filter(c => getCatNamePl(c)).length;
+        log(`Weryfikacja: ${matchCount}/${totalSrc} kategorii`);
+        if (matchCount === totalSrc) log('Wszystkie kategorie przeniesione!');
+
+        return { ok: issues.length === 0, matchCount, total: totalSrc, issues };
+      },
+    },
+    {
+      id: 'warranties',
+      label: 'Gwarancje (Warranties)',
+      icon: '\uD83D\uDEE1\uFE0F',
+      run: async (cfg, log) => {
+        log('--- Start migracji gwarancji ---');
+
+        const srcWarranties = await fetchAllWarranties(cfg.sourceDomain, cfg.sourceApiKey, log);
+        log(`Pobrano ${srcWarranties.length} gwarancji ze zrodla.`);
+
+        if (srcWarranties.length === 0) {
+          log('Brak gwarancji w zrodle.');
+          return { ok: true, matchCount: 0, total: 0, issues: [] };
+        }
+
+        const tgtWarranties = await fetchAllWarranties(cfg.targetDomain, cfg.targetApiKey, log);
+        const tgtNamesMap = new Map(tgtWarranties.map(w => [w.name.toLowerCase().trim(), w.id]));
+        log(`Panel docelowy: ${tgtWarranties.length} gwarancji, nowych: ${srcWarranties.filter(w => !tgtNamesMap.has(w.name.toLowerCase().trim())).length}`);
+
+        const result = await importWarranties(cfg.targetDomain, cfg.targetApiKey, srcWarranties, tgtNamesMap, log);
+        log(`Import: ${result.imported} OK, ${result.failed} bledow`);
+        if (result.errors.length > 0) log('Bledy:\n' + result.errors.join('\n'));
+
+        // Weryfikacja
+        log('--- Weryfikacja ---');
+        const afterImport = await fetchAllWarranties(cfg.targetDomain, cfg.targetApiKey, log);
+        const afterNames = new Set(afterImport.map(w => w.name.toLowerCase().trim()));
+        let matchCount = 0;
+        const issues = [];
+        for (const w of srcWarranties) {
+          if (afterNames.has(w.name.toLowerCase().trim())) matchCount++;
+          else issues.push(`Brak: "${w.name}"`);
+        }
+
+        log(`Weryfikacja: ${matchCount}/${srcWarranties.length} gwarancji`);
+        if (matchCount === srcWarranties.length) log('Wszystkie gwarancje przeniesione!');
+
+        return { ok: issues.length === 0, matchCount, total: srcWarranties.length, issues };
+      },
+    },
+    {
+      id: 'sizecharts',
+      label: 'Tabele rozmiarow (Size Charts)',
+      icon: '\uD83D\uDCCA',
+      run: async (cfg, log) => {
+        log('--- Start migracji tabel rozmiarow ---');
+
+        const srcCharts = await fetchAllSizeCharts(cfg.sourceDomain, cfg.sourceApiKey, log);
+        log(`Pobrano ${srcCharts.length} tabel ze zrodla.`);
+
+        if (srcCharts.length === 0) {
+          log('Brak tabel rozmiarow w zrodle.');
+          return { ok: true, matchCount: 0, total: 0, issues: [] };
+        }
+
+        const tgtCharts = await fetchAllSizeCharts(cfg.targetDomain, cfg.targetApiKey, log);
+        const tgtNamesSet = new Set(tgtCharts.map(c => getSizeChartName(c).toLowerCase().trim()));
+        log(`Panel docelowy: ${tgtCharts.length} tabel, nowych: ${srcCharts.filter(c => !tgtNamesSet.has(getSizeChartName(c).toLowerCase().trim())).length}`);
+
+        const result = await importSizeCharts(cfg.targetDomain, cfg.targetApiKey, srcCharts, tgtNamesSet, log);
+        log(`Import: ${result.imported} OK, ${result.failed} bledow`);
+        if (result.errors.length > 0) log('Bledy:\n' + result.errors.join('\n'));
+
+        // Weryfikacja
+        log('--- Weryfikacja ---');
+        const afterImport = await fetchAllSizeCharts(cfg.targetDomain, cfg.targetApiKey, log);
+        const afterNames = new Set(afterImport.map(c => getSizeChartName(c).toLowerCase().trim()));
+        let matchCount = 0;
+        const issues = [];
+        for (const c of srcCharts) {
+          const name = getSizeChartName(c);
+          if (afterNames.has(name.toLowerCase().trim())) matchCount++;
+          else issues.push(`Brak: "${name}"`);
+        }
+
+        log(`Weryfikacja: ${matchCount}/${srcCharts.length} tabel`);
+        if (matchCount === srcCharts.length) log('Wszystkie tabele rozmiarow przeniesione!');
+
+        return { ok: issues.length === 0, matchCount, total: srcCharts.length, issues };
       },
     },
   ];
