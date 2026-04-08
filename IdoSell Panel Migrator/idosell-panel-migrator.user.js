@@ -845,32 +845,46 @@
     return all;
   }
 
-  function mapProductForPut(p, brandNameToId, catNameToId, sizeGroupNameToId, targetShopsMask) {
-    const langData = (p.productDescriptionsLangData || []).map(ld => ({
-      langId: ld.langId || 'pol',
-      productName: ld.productName || '',
-      productDescription: ld.productDescription || '',
-      productLongDescription: ld.productLongDescription || '',
-      productMetaTitle: ld.productMetaTitle || '',
-      productMetaKeywords: ld.productMetaKeywords || '',
-      productMetaDescription: ld.productMetaDescription || '',
-    }));
+  function mapProductForPut(p, brandNameToId, catNameToId, sizeGroupNameToId, targetShopsMask, targetShopIds) {
+    const langs = p.productDescriptionsLangData || [];
 
-    // Map brand by name
+    // Build per-shop lang data for names, descriptions, meta
+    const namesLD = [], descLD = [], longDescLD = [], metaTitleLD = [], metaDescLD = [], metaKwLD = [];
+    for (const ld of langs) {
+      const lang = ld.langId || 'pol';
+      for (const sid of targetShopIds) {
+        if (ld.productName) namesLD.push({ langId: lang, shopId: sid, productName: ld.productName });
+        if (ld.productDescription) descLD.push({ langId: lang, shopId: sid, productParamDescriptions: ld.productDescription });
+        if (ld.productLongDescription) longDescLD.push({ langId: lang, shopId: sid, productLongDescription: ld.productLongDescription });
+        if (ld.productMetaTitle) metaTitleLD.push({ langId: lang, shopId: sid, productMetaTitle: ld.productMetaTitle });
+        if (ld.productMetaDescription) metaDescLD.push({ langId: lang, shopId: sid, productMetaDescription: ld.productMetaDescription });
+        if (ld.productMetaKeywords) metaKwLD.push({ langId: lang, shopId: sid, productMetaKeyword: ld.productMetaKeywords });
+      }
+    }
+
     const brandName = p.producerName || '';
     const brandId = brandNameToId.get(brandName.toLowerCase().trim());
-
-    // Map category by name
     const catName = p.categoryName || '';
     const catId = catNameToId.get(catName.toLowerCase().trim());
 
-    // Map size group by name
-    const sizeGroupId = p.sizesGroupId || -1;
+    // Images from URLs
+    const pics = (p.productImages || []).map(img => ({
+      productPictureSource: img.productImageLargeUrl || img.productImageMediumUrl || '',
+      shopId: targetShopIds[0] || 1,
+    })).filter(x => x.productPictureSource);
+
+    // Sizes with weights and codes
+    const sizes = (p.productSizes || []).map(s => ({
+      sizeId: s.sizeId,
+      sizePanelName: s.sizePanelName || '',
+      productWeight: s.productWeight || p.productWeight || 0,
+      productSizeCodeExternal: s.productSizeCodeExternal || '',
+      productSizeCodeProducer: s.productSizeCodeProducer || s.productProducerCode || '',
+    }));
 
     const mapped = {
       productId: p.productId,
       productDisplayedCode: p.productDisplayedCode || '',
-      productDescriptionsLangData: langData,
       productRetailPrice: p.productRetailPrice || 0,
       productWholesalePrice: p.productWholesalePrice || 0,
       productVat: p.productVat || 23,
@@ -878,7 +892,18 @@
       productWeight: p.productWeight || 0,
       productType: p.productType || 'product_regular',
       shopsMask: targetShopsMask,
+      responsibleProducerCode: p.responsibleProducerCode || '',
+      responsiblePersonCode: p.responsiblePersonCode || '',
     };
+
+    if (namesLD.length) mapped.productNames = { productNamesLangData: namesLD };
+    if (descLD.length) mapped.productParamDescriptions = { productParamDescriptionsLangData: descLD };
+    if (longDescLD.length) mapped.productLongDescriptions = { productLongDescriptionsLangData: longDescLD };
+    if (metaTitleLD.length) mapped.productMetaTitles = { productMetaTitlesLangData: metaTitleLD };
+    if (metaDescLD.length) mapped.productMetaDescriptions = { productMetaDescriptionsLangData: metaDescLD };
+    if (metaKwLD.length) mapped.productMetaKeywords = { productMetaKeywordsLangData: metaKwLD };
+    if (pics.length) mapped.productPictures = pics;
+    if (sizes.length) mapped.productSizes = sizes;
 
     if (brandId) mapped.producerId = brandId;
     else if (brandName) mapped.producerName = brandName;
@@ -887,7 +912,7 @@
     return mapped;
   }
 
-  async function importProducts(domain, apiKey, products, brandNameToId, catNameToId, sizeGroupNameToId, existingCodes, targetShopsMask, log) {
+  async function importProducts(domain, apiKey, products, brandNameToId, catNameToId, sizeGroupNameToId, existingCodes, targetShopsMask, targetShopIds, log) {
     const toImport = products.filter(p => {
       const code = (p.productDisplayedCode || '').toLowerCase().trim();
       return !code || !existingCodes.has(code);
@@ -905,7 +930,7 @@
 
     for (let i = 0; i < toImport.length; i += batchSize) {
       const batch = toImport.slice(i, i + batchSize);
-      const mapped = batch.map(p => mapProductForPut(p, brandNameToId, catNameToId, sizeGroupNameToId, targetShopsMask));
+      const mapped = batch.map(p => mapProductForPut(p, brandNameToId, catNameToId, sizeGroupNameToId, targetShopsMask, targetShopIds));
 
       log(`PUT batch ${Math.floor(i / batchSize) + 1}: ${batch.length} produktow`);
       try {
@@ -1542,7 +1567,7 @@
         const targetShopsMask = targetShopIds.reduce((mask, id) => mask + Math.pow(2, id - 1), 0);
         log('Sklepy docelowe: ' + targetShopIds.join(', ') + ' (shopsMask=' + targetShopsMask + ')');
 
-        const result = await importProducts(cfg.targetDomain, cfg.targetApiKey, srcProducts, brandNameToId, catNameToId, new Map(), existingCodes, targetShopsMask, log);
+        const result = await importProducts(cfg.targetDomain, cfg.targetApiKey, srcProducts, brandNameToId, catNameToId, new Map(), existingCodes, targetShopsMask, targetShopIds, log);
         log(`--- Zakonczono: ${result.imported} OK, ${result.failed} bledow ---`);
         if (result.errors.length > 0) log('Bledy:\n' + result.errors.slice(0, 20).join('\n'));
 
