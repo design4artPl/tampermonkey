@@ -240,14 +240,24 @@
         return { ok: false };
       }
 
+      // Log first part of response for debugging
+      const titleMatch = text.match(/<title[^>]*>(.*?)<\/title>/i);
+      const pageTitle = titleMatch ? titleMatch[1] : '?';
+      log(`  Odpowiedz: ${text.length} zn, title: "${pageTitle}", URL: ${resp.url}`);
+
       // Check if the group name appears in the response HTML
       if (text.includes(groupName)) {
-        log(`  OK: "${groupName}" utworzona`);
+        log(`  OK: "${groupName}" utworzona (znaleziona w HTML)`);
         return { ok: true };
       }
 
-      log(`  OK?: "${groupName}" - odpowiedz ${text.length} zn, weryfikuje...`);
-      return { ok: true };
+      // Check if the response is just the panel app shell (not the actual sizes page)
+      if (text.includes('sizes-group.php') && text.length > 500000) {
+        log(`  UWAGA: odpowiedz to shell panelu (${text.length} zn) — formularz moze nie dzialac przez fetch`);
+      }
+
+      log(`  NIEPEWNE: "${groupName}" - brak nazwy w odpowiedzi`);
+      return { ok: false };
     } catch (e) {
       log(`  [FAIL] "${groupName}": ${e.message}`);
       return { ok: false };
