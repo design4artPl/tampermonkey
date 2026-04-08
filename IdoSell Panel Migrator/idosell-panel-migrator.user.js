@@ -209,15 +209,21 @@
     return groups;
   }
 
-  // Create size group via panel form POST (requires being logged into target panel)
+  // Create size group via panel form POST
   // Discovered by inspecting /panel/app/sizes-group.php:
   // Form POSTs to /panel/sizes-group.php? with fields: name={groupName}&parent=0
+  // Uses fetch() with current panel session (must run on target panel domain)
   async function createSizeGroupViaPanel(groupName, log) {
+    // Check if we're on the target panel domain
+    const currentHost = window.location.hostname;
+    log(`  POST /panel/sizes-group.php? (host: ${currentHost})`);
+
     try {
       const resp = await fetch('/panel/sizes-group.php?', {
         method: 'POST',
         headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
         body: `name=${encodeURIComponent(groupName)}&parent=0`,
+        credentials: 'include',
       });
 
       if (!resp.ok) {
@@ -227,21 +233,20 @@
 
       const text = await resp.text();
 
-      // If response contains login form, session expired
-      if (text.includes('panel_login')) {
-        log(`  [FAIL] "${groupName}": sesja wygasla, zaloguj sie ponownie`);
+      // If response contains login form, not logged in
+      if (text.includes('panel_login') || text.includes('trigger" type="hidden" value="Login"')) {
+        log(`  [FAIL] "${groupName}": nie zalogowano do panelu docelowego!`);
+        log(`  WAZNE: Skrypt musi dzialac na panelu docelowym (${currentHost})`);
         return { ok: false };
       }
 
-      // Success: the page reloads with the new group in the tree
-      // Check if the group name appears in the response
+      // Check if the group name appears in the response HTML
       if (text.includes(groupName)) {
         log(`  OK: "${groupName}" utworzona`);
         return { ok: true };
       }
 
-      // Page loaded but group might not be visible (still could be created)
-      log(`  OK?: "${groupName}" - strona zaladowana, weryfikuje...`);
+      log(`  OK?: "${groupName}" - odpowiedz ${text.length} zn, weryfikuje...`);
       return { ok: true };
     } catch (e) {
       log(`  [FAIL] "${groupName}": ${e.message}`);
