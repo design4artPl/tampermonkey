@@ -209,67 +209,35 @@
     return groups;
   }
 
-  // Create size group by submitting a form into a hidden iframe.
-  // This mimics exactly what the panel does: POST to /panel/sizes-group.php?
-  // with fields name={groupName}&parent=0, targeting an iframe.
-  function createSizeGroupViaPanel(groupName, log) {
-    return new Promise((resolve) => {
-      const frameName = 'migrator_sizegroup_' + Date.now();
-
-      // Create hidden iframe as form target
-      const iframe = document.createElement('iframe');
-      iframe.name = frameName;
-      iframe.style.cssText = 'position:fixed;left:-9999px;width:1px;height:1px;';
-      document.body.appendChild(iframe);
-
-      // Create form targeting the hidden iframe
-      const form = document.createElement('form');
-      form.method = 'POST';
-      form.action = '/panel/sizes-group.php?';
-      form.target = frameName;
-
-      const nameInput = document.createElement('input');
-      nameInput.type = 'hidden';
-      nameInput.name = 'name';
-      nameInput.value = groupName;
-      form.appendChild(nameInput);
-
-      const parentInput = document.createElement('input');
-      parentInput.type = 'hidden';
-      parentInput.name = 'parent';
-      parentInput.value = '0';
-      form.appendChild(parentInput);
-
-      document.body.appendChild(form);
-
-      // When iframe loads after form submit, check result
-      iframe.onload = () => {
-        try {
-          const doc = iframe.contentDocument || iframe.contentWindow.document;
-          const html = doc.body ? doc.body.innerHTML : '';
-          if (html.includes(groupName)) {
-            log(`  OK: "${groupName}" utworzona`);
-          } else {
-            log(`  Formularz wyslany, "${groupName}" weryfikacja przez API...`);
-          }
-        } catch (e) {
-          log(`  Formularz wyslany (cross-origin), weryfikacja przez API...`);
-        }
-        iframe.remove();
-        form.remove();
-        resolve({ ok: true });
-      };
-
-      setTimeout(() => {
-        iframe.remove();
-        form.remove();
-        log(`  [TIMEOUT] "${groupName}"`);
-        resolve({ ok: false });
-      }, 10000);
-
-      // Submit the form
-      form.submit();
-    });
+  // Create size group via panel AJAX endpoint.
+  // Discovered via network inspection: POST /panel/ajax/sizesview.php
+  // Body: name={name}&parent=0&action=addnode&tree=sizes&lang=pol&shop=undefined&mode=
+  async function createSizeGroupViaPanel(groupName, log) {
+    try {
+      const resp = await fetch('/panel/ajax/sizesview.php', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/x-www-form-urlencoded; charset=UTF-8',
+          'X-Requested-With': 'XMLHttpRequest',
+        },
+        credentials: 'include',
+        body: `name=${encodeURIComponent(groupName)}&parent=0&action=addnode&tree=sizes&lang=pol&shop=undefined&mode=`,
+      });
+      if (!resp.ok) {
+        log(`  [FAIL] "${groupName}": HTTP ${resp.status}`);
+        return { ok: false };
+      }
+      const text = await resp.text();
+      if (text.includes('panel_login') || text.includes('Logowanie')) {
+        log(`  [FAIL] "${groupName}": brak sesji - uruchom skrypt z panelu docelowego`);
+        return { ok: false };
+      }
+      log(`  Odpowiedz: ${text.substring(0, 200)}`);
+      return { ok: true };
+    } catch (e) {
+      log(`  [FAIL] "${groupName}": ${e.message}`);
+      return { ok: false };
+    }
   }
 
   async function importSizeDefinitions(domain, apiKey, sizesToAdd, log) {
