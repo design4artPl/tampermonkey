@@ -1682,12 +1682,71 @@
       modulesContainer.appendChild(label);
       badgeRefs[mod.id] = label.querySelector(`#badge-${mod.id}`);
 
-      // Add shop ID input for products module
+      // Add shop selectors for products module
       if (mod.id === 'products') {
         const shopRow = document.createElement('div');
-        shopRow.style.cssText = 'margin: 4px 0 8px 24px; display:flex; align-items:center; gap:8px;';
-        shopRow.innerHTML = `<label style="font-size:12px; color:#475569;">Shop ID zrodla:</label><input type="number" id="m-src-shop-id" value="${cfg.sourceShopId || 1}" min="1" style="width:60px; padding:4px 6px; border:1px solid #cbd5e1; border-radius:4px; font-size:12px;"> <label style="font-size:12px; color:#475569; margin-left:12px;">Sklepy docelowe (ID):</label><input type="text" id="m-tgt-shop-ids" value="${cfg.targetShopIds || '1'}" placeholder="1,2" style="width:60px; padding:4px 6px; border:1px solid #cbd5e1; border-radius:4px; font-size:12px;">`;
+        shopRow.id = 'migrator-shop-selectors';
+        shopRow.style.cssText = 'margin: 4px 0 8px 24px; font-size:12px; color:#475569;';
+        shopRow.innerHTML = `
+          <div style="margin-bottom:6px;"><strong>Sklep zrodlowy:</strong> <span id="m-src-shops-list"><em>Wpisz dane panelu zrodlowego i kliknij "Pobierz sklepy"</em></span></div>
+          <div style="margin-bottom:6px;"><strong>Sklepy docelowe:</strong> <span id="m-tgt-shops-list"><em>Wpisz dane panelu docelowego i kliknij "Pobierz sklepy"</em></span></div>
+          <button class="migrator-btn migrator-btn-secondary" id="m-fetch-shops-btn" style="padding:4px 10px; font-size:11px;">Pobierz sklepy</button>
+          <input type="hidden" id="m-src-shop-id" value="${cfg.sourceShopId || 1}">
+          <input type="hidden" id="m-tgt-shop-ids" value="${cfg.targetShopIds || '1'}">
+        `;
         modulesContainer.appendChild(shopRow);
+
+        // Fetch shops button handler (deferred to after modal is in DOM)
+        setTimeout(() => {
+          const fetchBtn = document.getElementById('m-fetch-shops-btn');
+          if (!fetchBtn) return;
+          fetchBtn.addEventListener('click', async () => {
+            fetchBtn.disabled = true;
+            fetchBtn.textContent = 'Pobieranie...';
+            const srcDomain = modal.querySelector('#m-src-domain').value.trim();
+            const srcKey = modal.querySelector('#m-src-key').value.trim();
+            const tgtDomain = modal.querySelector('#m-tgt-domain').value.trim();
+            const tgtKey = modal.querySelector('#m-tgt-key').value.trim();
+
+            // Fetch source shops
+            const srcContainer = document.getElementById('m-src-shops-list');
+            if (srcDomain && srcKey) {
+              try {
+                const srcData = await apiRequest('GET', buildUrl(srcDomain, '/api/admin/v7/system/config'), srcKey);
+                const srcShops = srcData.shops || [];
+                const savedSrcId = parseInt(document.getElementById('m-src-shop-id').value, 10) || 1;
+                srcContainer.innerHTML = srcShops.map(s =>
+                  '<label style="margin-right:10px;cursor:pointer;"><input type="radio" name="m-src-shop" value="' + s.shop_id + '"' + (s.shop_id === savedSrcId ? ' checked' : '') + '> ' + s.shop_name + ' (ID:' + s.shop_id + ')</label>'
+                ).join('');
+                srcContainer.querySelectorAll('input[name="m-src-shop"]').forEach(r => {
+                  r.addEventListener('change', () => { document.getElementById('m-src-shop-id').value = r.value; });
+                });
+              } catch (e) { srcContainer.innerHTML = '<em style="color:#ef4444;">Blad: ' + e.message + '</em>'; }
+            }
+
+            // Fetch target shops
+            const tgtContainer = document.getElementById('m-tgt-shops-list');
+            if (tgtDomain && tgtKey) {
+              try {
+                const tgtData = await apiRequest('GET', buildUrl(tgtDomain, '/api/admin/v7/system/config'), tgtKey);
+                const tgtShops = tgtData.shops || [];
+                const savedTgtIds = (document.getElementById('m-tgt-shop-ids').value || '1').split(',').map(Number);
+                tgtContainer.innerHTML = tgtShops.map(s =>
+                  '<label style="margin-right:10px;cursor:pointer;"><input type="checkbox" class="m-tgt-shop-cb" value="' + s.shop_id + '"' + (savedTgtIds.includes(s.shop_id) ? ' checked' : '') + '> ' + s.shop_name + ' (ID:' + s.shop_id + ')</label>'
+                ).join('');
+                tgtContainer.querySelectorAll('.m-tgt-shop-cb').forEach(cb => {
+                  cb.addEventListener('change', () => {
+                    const checked = [...tgtContainer.querySelectorAll('.m-tgt-shop-cb:checked')].map(c => c.value);
+                    document.getElementById('m-tgt-shop-ids').value = checked.join(',') || '1';
+                  });
+                });
+              } catch (e) { tgtContainer.innerHTML = '<em style="color:#ef4444;">Blad: ' + e.message + '</em>'; }
+            }
+
+            fetchBtn.disabled = false;
+            fetchBtn.textContent = 'Pobierz sklepy';
+          });
+        }, 100);
       }
     });
 
