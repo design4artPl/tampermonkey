@@ -209,59 +209,90 @@
     return groups;
   }
 
-  // Create size group via panel form POST
-  // Discovered by inspecting /panel/app/sizes-group.php:
-  // Form POSTs to /panel/sizes-group.php? with fields: name={groupName}&parent=0
-  // Uses fetch() with current panel session (must run on target panel domain)
-  async function createSizeGroupViaPanel(groupName, log) {
-    // Check if we're on the target panel domain
-    const currentHost = window.location.hostname;
-    log(`  POST /panel/sizes-group.php? (host: ${currentHost})`);
+  // Create size group via hidden iframe form submission
+  // The panel's sizes-group.php must be loaded inside an iframe to work correctly.
+  // We create a hidden iframe, load the page, fill the form, and submit it.
+  function createSizeGroupViaPanel(groupName, log) {
+    return new Promise((resolve) => {
+      const iframe = document.createElement('iframe');
+      iframe.style.cssText = 'position:fixed;left:-9999px;width:1px;height:1px;';
+      document.body.appendChild(iframe);
 
-    try {
-      const resp = await fetch('/panel/sizes-group.php?', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
-        body: `name=${encodeURIComponent(groupName)}&parent=0`,
-        credentials: 'include',
-      });
+      let step = 'load'; // load -> submit -> done
 
-      if (!resp.ok) {
-        log(`  [FAIL] "${groupName}": HTTP ${resp.status}`);
-        return { ok: false };
-      }
+      iframe.onload = () => {
+        try {
+          const doc = iframe.contentDocument || iframe.contentWindow.document;
 
-      const text = await resp.text();
+          if (step === 'load') {
+            // Page loaded — fill form and submit
+            const nameInput = doc.getElementById('fg_name') || doc.querySelector('input[name="name"]');
+            const parentInput = doc.querySelector('input[name="parent"]');
+            const submitBtn = doc.getElementById('new_node_submit');
 
-      // If response contains login form, not logged in
-      if (text.includes('panel_login') || text.includes('trigger" type="hidden" value="Login"')) {
-        log(`  [FAIL] "${groupName}": nie zalogowano do panelu docelowego!`);
-        log(`  WAZNE: Skrypt musi dzialac na panelu docelowym (${currentHost})`);
-        return { ok: false };
-      }
+            if (!nameInput) {
+              log(`  [FAIL] "${groupName}": nie znaleziono pola "name" na stronie`);
+              iframe.remove();
+              resolve({ ok: false });
+              return;
+            }
 
-      // Log first part of response for debugging
-      const titleMatch = text.match(/<title[^>]*>(.*?)<\/title>/i);
-      const pageTitle = titleMatch ? titleMatch[1] : '?';
-      log(`  Odpowiedz: ${text.length} zn, title: "${pageTitle}", URL: ${resp.url}`);
+            nameInput.value = groupName;
+            // Trigger input event so validation activates the button
+            nameInput.dispatchEvent(new Event('input', { bubbles: true }));
+            nameInput.dispatchEvent(new Event('change', { bubbles: true }));
+            nameInput.dispatchEvent(new Event('keyup', { bubbles: true }));
 
-      // Check if the group name appears in the response HTML
-      if (text.includes(groupName)) {
-        log(`  OK: "${groupName}" utworzona (znaleziona w HTML)`);
-        return { ok: true };
-      }
+            if (parentInput) parentInput.value = '0';
 
-      // Check if the response is just the panel app shell (not the actual sizes page)
-      if (text.includes('sizes-group.php') && text.length > 500000) {
-        log(`  UWAGA: odpowiedz to shell panelu (${text.length} zn) — formularz moze nie dzialac przez fetch`);
-      }
+            step = 'submit';
 
-      log(`  NIEPEWNE: "${groupName}" - brak nazwy w odpowiedzi`);
-      return { ok: false };
-    } catch (e) {
-      log(`  [FAIL] "${groupName}": ${e.message}`);
-      return { ok: false };
-    }
+            // Submit form (click button or submit form directly)
+            if (submitBtn) {
+              submitBtn.disabled = false;
+              submitBtn.click();
+            } else {
+              const form = nameInput.closest('form');
+              if (form) form.submit();
+            }
+          } else if (step === 'submit') {
+            // Form submitted and page reloaded — check if group exists
+            const html = doc.body ? doc.body.innerHTML : '';
+            if (html.includes(groupName)) {
+              log(`  OK: "${groupName}" utworzona`);
+              iframe.remove();
+              resolve({ ok: true });
+            } else {
+              log(`  NIEPEWNE: "${groupName}" - formularz wyslany, weryfikuje przez API...`);
+              iframe.remove();
+              resolve({ ok: true }); // optimistic — API verify will confirm
+            }
+          }
+        } catch (e) {
+          // Cross-origin or other error
+          log(`  [FAIL] "${groupName}": ${e.message}`);
+          iframe.remove();
+          resolve({ ok: false });
+        }
+      };
+
+      iframe.onerror = () => {
+        log(`  [FAIL] "${groupName}": blad ladowania iframe`);
+        iframe.remove();
+        resolve({ ok: false });
+      };
+
+      // Set timeout
+      setTimeout(() => {
+        if (step !== 'done') {
+          log(`  [TIMEOUT] "${groupName}": timeout po 15s`);
+          iframe.remove();
+          resolve({ ok: false });
+        }
+      }, 15000);
+
+      iframe.src = '/panel/sizes-group.php?';
+    });
   }
 
   async function importSizeDefinitions(domain, apiKey, sizesToAdd, log) {
