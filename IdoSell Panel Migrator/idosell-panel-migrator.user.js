@@ -385,6 +385,77 @@
   }
 
   // =========================================================================
+  // MODULE: RESPONSIBILITY ENTITIES (Producenci i Osoby odpowiedzialne)
+  // =========================================================================
+
+  async function fetchEntities(domain, apiKey, type, log) {
+    const all = [];
+    let page = 0;
+    while (true) {
+      const url = buildUrl(domain, `/api/admin/v7/responsibility/entities?type=${type}&resultsPage=${page}&resultsLimit=100`);
+      log(`Pobieranie ${type}: strona ${page + 1}...`);
+      const data = await apiRequest('GET', url, apiKey);
+      all.push(...(data.results || []));
+      const total = data.pagination?.resultsNumberAll || 0;
+      log(`Pobrano ${all.length} / ${total}`);
+      if (all.length >= total) break;
+      page++;
+    }
+    return all;
+  }
+
+  async function importEntities(domain, apiKey, entities, type, log) {
+    const batchSize = 20;
+    let successCount = 0, failCount = 0;
+    const errors = [];
+
+    for (let i = 0; i < entities.length; i += batchSize) {
+      const batch = entities.slice(i, i + batchSize);
+      const mapped = batch.map(e => ({
+        code: e.code,
+        name: e.name || '',
+        mail: e.mail || '',
+        street: e.street || '-',
+        number: e.number || '-',
+        subnumber: e.subnumber || '',
+        zipcode: e.zipcode || '00-000',
+        city: e.city || '-',
+        country: e.country || 'pl',
+        phone: e.phone || '',
+        description: e.description || '',
+        url: e.url || '',
+      }));
+
+      log(`POST batch ${Math.floor(i / batchSize) + 1}: ${batch.length} ${type}s`);
+      try {
+        const url = buildUrl(domain, '/api/admin/v7/responsibility/entities');
+        const res = await apiRequest('POST', url, apiKey, { params: { entities: mapped, type } });
+        for (const r of (res.results || [])) {
+          if (!r.errors || r.errors.length === 0) {
+            successCount++;
+          } else {
+            // Check if it's a duplicate
+            const isDuplicate = r.errors.some(e => e.code === 'DUPLICATE_CODE');
+            if (isDuplicate) {
+              successCount++; // already exists, that's OK
+            } else {
+              failCount++;
+              errors.push(`${r.code}: ${r.errors.map(e => e.code).join(', ')}`);
+              log(`  [FAIL] ${r.code}: ${r.errors.map(e => e.code).join(', ')}`);
+            }
+          }
+        }
+      } catch (err) {
+        failCount += batch.length;
+        errors.push(`Batch: ${err.message}`);
+        log(`  BLAD: ${err.message}`);
+      }
+    }
+
+    return { imported: successCount, failed: failCount, errors };
+  }
+
+  // =========================================================================
   // MODULE REGISTRY
   // =========================================================================
 
@@ -675,6 +746,46 @@
         if (matchCount === srcNames.length) log('Wszystkie parametry zgodne!');
 
         return { ok: issues.length === 0, matchCount, total: srcNames.length, issues };
+      },
+    },
+    {
+      id: 'entities',
+      label: 'Producenci i Osoby odpowiedzialne',
+      icon: '\uD83C\uDFED',
+      run: async (cfg, log) => {
+        log('--- Start migracji producentow i osob odpowiedzialnych ---');
+        const issues = [];
+        let totalMatch = 0, totalItems = 0;
+
+        for (const type of ['producer', 'person']) {
+          log(`\n=== ${type === 'producer' ? 'Producenci' : 'Osoby odpowiedzialne'} ===`);
+          const srcEntities = await fetchEntities(cfg.sourceDomain, cfg.sourceApiKey, type, log);
+          log(`Pobrano ${srcEntities.length} ${type}s ze zrodla.`);
+
+          if (srcEntities.length === 0) { log('Brak danych.'); continue; }
+
+          const result = await importEntities(cfg.targetDomain, cfg.targetApiKey, srcEntities, type, log);
+          log(`Import: ${result.imported} OK, ${result.failed} bledow`);
+          if (result.errors.length > 0) log('Bledy:\n' + result.errors.slice(0, 10).join('\n'));
+
+          // Weryfikacja
+          const tgtEntities = await fetchEntities(cfg.targetDomain, cfg.targetApiKey, type, log);
+          const tgtCodes = new Set(tgtEntities.map(e => e.code.toLowerCase().trim()));
+          for (const src of srcEntities) {
+            totalItems++;
+            if (tgtCodes.has(src.code.toLowerCase().trim())) {
+              totalMatch++;
+            } else {
+              issues.push(`[${type}] "${src.code}": brak w celu`);
+            }
+          }
+        }
+
+        log(`\n--- Weryfikacja: ${totalMatch}/${totalItems} zgodnych ---`);
+        if (issues.length > 0) log('Problemy:\n' + issues.join('\n'));
+        if (totalMatch === totalItems) log('Wszystkie podmioty przeniesione!');
+
+        return { ok: issues.length === 0, matchCount: totalMatch, total: totalItems, issues };
       },
     },
   ];
