@@ -945,7 +945,7 @@
       log(`PUT batch ${Math.floor(i / batchSize) + 1}: ${batch.length} produktow`);
       try {
         const url = buildUrl(domain, '/api/admin/v7/products/products');
-        const res = await apiRequest('PUT', url, apiKey, { params: { settings: { settingModificationType: importMode, settingsSkipDuplicatedProducers: true }, products: mapped } });
+        const deleteIndividual = document.getElementById('m-delete-individual-descs')?.checked; const settings = { settingModificationType: importMode, settingsSkipDuplicatedProducers: true }; if (deleteIndividual) { settings.settingDeleteIndividualDescriptionsByShopsMask = { shopsMask: targetShopsMask }; settings.settingDeleteIndividualMetaByShopsMask = { shopsMask: targetShopsMask }; } const res = await apiRequest('PUT', url, apiKey, { params: { settings, products: mapped } });
         // Response: { results: { productsResults: [{ faults: [...], productId }] } }
         const prodResults = res?.results?.productsResults || res?.productsResults || [];
         if (Array.isArray(prodResults) && prodResults.length > 0) {
@@ -1731,6 +1731,8 @@
             <label style="margin-left:8px;cursor:pointer;"><input type="radio" name="m-import-mode" value="add" ${(cfg.productImportMode || 'add') === 'add' ? 'checked' : ''}> Dodaj nowe (add)</label>
             <label style="margin-left:8px;cursor:pointer;"><input type="radio" name="m-import-mode" value="edit" ${cfg.productImportMode === 'edit' ? 'checked' : ''}> Edytuj istniejace (edit)</label>
             <label style="margin-left:8px;cursor:pointer;"><input type="radio" name="m-import-mode" value="all" ${cfg.productImportMode === 'all' ? 'checked' : ''}> Dodaj + edytuj (all)</label>
+          </div>
+          <div style="margin-top:6px;"><label style="cursor:pointer;"><input type="checkbox" id="m-delete-individual-descs"> Usun indywidualne opisy/meta (jednorazowe)</label>
           </div>
           <button class="migrator-btn migrator-btn-secondary" id="m-fetch-shops-btn" style="padding:4px 10px; font-size:11px;">Pobierz sklepy</button>
           <input type="hidden" id="m-src-shop-id" value="${cfg.sourceShopId || 1}">
