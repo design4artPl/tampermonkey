@@ -945,7 +945,7 @@
       log(`PUT batch ${Math.floor(i / batchSize) + 1}: ${batch.length} produktow`);
       try {
         const url = buildUrl(domain, '/api/admin/v7/products/products');
-        const res = await apiRequest('PUT', url, apiKey, { params: { settings: { settingModificationType: importMode, settingDeleteIndividualDescriptionsByShopsMask: { shopsMask: targetShopsMask }, settingDeleteIndividualMetaByShopsMask: { shopsMask: targetShopsMask }, settingsSkipDuplicatedProducers: true }, products: mapped } });
+        const res = await apiRequest('PUT', url, apiKey, { params: { settings: { settingModificationType: importMode, settingsSkipDuplicatedProducers: true }, products: mapped } });
         // Response: { results: { productsResults: [{ faults: [...], productId }] } }
         const prodResults = res?.results?.productsResults || res?.productsResults || [];
         if (Array.isArray(prodResults) && prodResults.length > 0) {
