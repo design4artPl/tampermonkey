@@ -209,89 +209,66 @@
     return groups;
   }
 
-  // Create size group via hidden iframe form submission
-  // The panel's sizes-group.php must be loaded inside an iframe to work correctly.
-  // We create a hidden iframe, load the page, fill the form, and submit it.
+  // Create size group by submitting a form into a hidden iframe.
+  // This mimics exactly what the panel does: POST to /panel/sizes-group.php?
+  // with fields name={groupName}&parent=0, targeting an iframe.
   function createSizeGroupViaPanel(groupName, log) {
     return new Promise((resolve) => {
+      const frameName = 'migrator_sizegroup_' + Date.now();
+
+      // Create hidden iframe as form target
       const iframe = document.createElement('iframe');
+      iframe.name = frameName;
       iframe.style.cssText = 'position:fixed;left:-9999px;width:1px;height:1px;';
       document.body.appendChild(iframe);
 
-      let step = 'load'; // load -> submit -> done
+      // Create form targeting the hidden iframe
+      const form = document.createElement('form');
+      form.method = 'POST';
+      form.action = '/panel/sizes-group.php?';
+      form.target = frameName;
 
+      const nameInput = document.createElement('input');
+      nameInput.type = 'hidden';
+      nameInput.name = 'name';
+      nameInput.value = groupName;
+      form.appendChild(nameInput);
+
+      const parentInput = document.createElement('input');
+      parentInput.type = 'hidden';
+      parentInput.name = 'parent';
+      parentInput.value = '0';
+      form.appendChild(parentInput);
+
+      document.body.appendChild(form);
+
+      // When iframe loads after form submit, check result
       iframe.onload = () => {
         try {
           const doc = iframe.contentDocument || iframe.contentWindow.document;
-
-          if (step === 'load') {
-            // Page loaded — fill form and submit
-            const nameInput = doc.getElementById('fg_name') || doc.querySelector('input[name="name"]');
-            const parentInput = doc.querySelector('input[name="parent"]');
-            const submitBtn = doc.getElementById('new_node_submit');
-
-            if (!nameInput) {
-              log(`  [FAIL] "${groupName}": nie znaleziono pola "name" na stronie`);
-              iframe.remove();
-              resolve({ ok: false });
-              return;
-            }
-
-            nameInput.value = groupName;
-            // Trigger input event so validation activates the button
-            nameInput.dispatchEvent(new Event('input', { bubbles: true }));
-            nameInput.dispatchEvent(new Event('change', { bubbles: true }));
-            nameInput.dispatchEvent(new Event('keyup', { bubbles: true }));
-
-            if (parentInput) parentInput.value = '0';
-
-            step = 'submit';
-
-            // Submit form (click button or submit form directly)
-            if (submitBtn) {
-              submitBtn.disabled = false;
-              submitBtn.click();
-            } else {
-              const form = nameInput.closest('form');
-              if (form) form.submit();
-            }
-          } else if (step === 'submit') {
-            // Form submitted and page reloaded — check if group exists
-            const html = doc.body ? doc.body.innerHTML : '';
-            if (html.includes(groupName)) {
-              log(`  OK: "${groupName}" utworzona`);
-              iframe.remove();
-              resolve({ ok: true });
-            } else {
-              log(`  NIEPEWNE: "${groupName}" - formularz wyslany, weryfikuje przez API...`);
-              iframe.remove();
-              resolve({ ok: true }); // optimistic — API verify will confirm
-            }
+          const html = doc.body ? doc.body.innerHTML : '';
+          if (html.includes(groupName)) {
+            log(`  OK: "${groupName}" utworzona`);
+          } else {
+            log(`  Formularz wyslany, "${groupName}" weryfikacja przez API...`);
           }
         } catch (e) {
-          // Cross-origin or other error
-          log(`  [FAIL] "${groupName}": ${e.message}`);
-          iframe.remove();
-          resolve({ ok: false });
+          log(`  Formularz wyslany (cross-origin), weryfikacja przez API...`);
         }
-      };
-
-      iframe.onerror = () => {
-        log(`  [FAIL] "${groupName}": blad ladowania iframe`);
         iframe.remove();
-        resolve({ ok: false });
+        form.remove();
+        resolve({ ok: true });
       };
 
-      // Set timeout
       setTimeout(() => {
-        if (step !== 'done') {
-          log(`  [TIMEOUT] "${groupName}": timeout po 15s`);
-          iframe.remove();
-          resolve({ ok: false });
-        }
-      }, 15000);
+        iframe.remove();
+        form.remove();
+        log(`  [TIMEOUT] "${groupName}"`);
+        resolve({ ok: false });
+      }, 10000);
 
-      iframe.src = '/panel/sizes-group.php?';
+      // Submit the form
+      form.submit();
     });
   }
 
