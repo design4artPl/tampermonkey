@@ -385,6 +385,68 @@
   }
 
   // =========================================================================
+  // MODULE: SUPPLIERS (DOSTAWCY)
+  // =========================================================================
+
+  async function fetchAllSuppliers(domain, apiKey, log) {
+    const all = [];
+    let page = 0;
+    while (true) {
+      const url = buildUrl(domain, `/api/admin/v7/wms/suppliers/suppliers?resultsPage=${page}&resultsLimit=100`);
+      log(`Pobieranie dostawcow: strona ${page + 1}...`);
+      const data = await apiRequest('GET', url, apiKey);
+      all.push(...(data.suppliers || []));
+      const total = data.resultsNumberAll || 0;
+      log(`Pobrano ${all.length} / ${total}`);
+      if (all.length >= total) break;
+      page++;
+    }
+    return all;
+  }
+
+  async function importSuppliers(domain, apiKey, suppliers, targetNames, log) {
+    const toImport = suppliers.filter(s => !targetNames.has(s.name.toLowerCase().trim()));
+    if (toImport.length === 0) { log('Brak nowych dostawcow.'); return { imported: 0, failed: 0, errors: [] }; }
+
+    const batchSize = 20;
+    let successCount = 0, failCount = 0;
+    const errors = [];
+
+    for (let i = 0; i < toImport.length; i += batchSize) {
+      const batch = toImport.slice(i, i + batchSize);
+      const mapped = batch.map(s => ({
+        id: 0,
+        name: s.name || '',
+        email: s.email || '',
+        phone: s.phone || '',
+        fax: s.fax || '',
+        street: s.street || '',
+        zipCode: s.zipCode || '',
+        city: s.city || '',
+        country: s.country || 1,
+        taxCode: s.taxCode || '',
+        description: s.description || '',
+      }));
+
+      log(`PUT batch ${Math.floor(i / batchSize) + 1}: ${batch.length} dostawcow`);
+      try {
+        const url = buildUrl(domain, '/api/admin/v7/wms/suppliers/suppliers');
+        const res = await apiRequest('PUT', url, apiKey, { params: { suppliers: mapped } });
+        for (const r of (res.suppliersResponse || [])) {
+          if (r.id && r.id > 0) successCount++;
+          else { failCount++; errors.push(`${r.name}: blad`); }
+        }
+      } catch (err) {
+        failCount += batch.length;
+        errors.push(`Batch: ${err.message}`);
+        log(`  BLAD: ${err.message}`);
+      }
+    }
+
+    return { imported: successCount, failed: failCount, errors };
+  }
+
+  // =========================================================================
   // MODULE: RESPONSIBILITY ENTITIES (Producenci i Osoby odpowiedzialne)
   // =========================================================================
 
@@ -786,6 +848,46 @@
         if (totalMatch === totalItems) log('Wszystkie podmioty przeniesione!');
 
         return { ok: issues.length === 0, matchCount: totalMatch, total: totalItems, issues };
+      },
+    },
+    {
+      id: 'suppliers',
+      label: 'Dostawcy (Suppliers)',
+      icon: '\uD83D\uDE9A',
+      run: async (cfg, log) => {
+        log('--- Start migracji dostawcow ---');
+
+        const srcSuppliers = await fetchAllSuppliers(cfg.sourceDomain, cfg.sourceApiKey, log);
+        log(`Pobrano ${srcSuppliers.length} dostawcow ze zrodla.`);
+
+        if (srcSuppliers.length === 0) {
+          log('Brak dostawcow w zrodle.');
+          return { ok: true, matchCount: 0, total: 0, issues: [] };
+        }
+
+        const tgtSuppliers = await fetchAllSuppliers(cfg.targetDomain, cfg.targetApiKey, log);
+        const tgtNames = new Set(tgtSuppliers.map(s => s.name.toLowerCase().trim()));
+        log(`Panel docelowy: ${tgtSuppliers.length} dostawcow, nowych do importu: ${srcSuppliers.filter(s => !tgtNames.has(s.name.toLowerCase().trim())).length}`);
+
+        const result = await importSuppliers(cfg.targetDomain, cfg.targetApiKey, srcSuppliers, tgtNames, log);
+        log(`Import: ${result.imported} OK, ${result.failed} bledow`);
+        if (result.errors.length > 0) log('Bledy:\n' + result.errors.join('\n'));
+
+        // Weryfikacja
+        log('--- Weryfikacja ---');
+        const afterImport = await fetchAllSuppliers(cfg.targetDomain, cfg.targetApiKey, log);
+        const afterNames = new Set(afterImport.map(s => s.name.toLowerCase().trim()));
+        let matchCount = 0;
+        const issues = [];
+        for (const s of srcSuppliers) {
+          if (afterNames.has(s.name.toLowerCase().trim())) matchCount++;
+          else issues.push(`Brak: "${s.name}"`);
+        }
+
+        log(`Weryfikacja: ${matchCount}/${srcSuppliers.length} dostawcow`);
+        if (matchCount === srcSuppliers.length) log('Wszystko OK!');
+
+        return { ok: issues.length === 0, matchCount, total: srcSuppliers.length, issues };
       },
     },
   ];
