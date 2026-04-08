@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         IdoSell - Panel Migrator
 // @namespace    https://idosell.com/
-// @version      1.0.0
+// @version      1.1.0
 // @description  Migracja danych (marki, i inne) między panelami IdoSell przez API
 // @author       SyncOffer
 // @match        https://*.iai-shop.com/panel/*
@@ -158,33 +158,45 @@
     // Filter out the default "id=0" brand
     const toImport = producers.filter(p => p.id !== 0);
     const batchSize = 10;
-    let imported = 0;
+    let successCount = 0;
+    let failCount = 0;
     const errors = [];
 
     for (let i = 0; i < toImport.length; i += batchSize) {
       const batch = toImport.slice(i, i + batchSize);
       const mapped = batch.map(mapBrandForImport);
+      const batchNum = Math.floor(i / batchSize) + 1;
+      const batchNames = batch.map(b => b.name).join(', ');
 
-      log(`Importowanie marek ${i + 1}-${Math.min(i + batchSize, toImport.length)} z ${toImport.length}...`);
+      log(`Batch ${batchNum}: importowanie ${batch.length} marek (${batchNames.substring(0, 80)})...`);
 
       try {
         const url = buildUrl(domain, '/api/admin/v7/products/brands');
+        log(`  POST -> ${url}`);
         const res = await apiRequest('POST', url, apiKey, {
           params: { producers: mapped },
         });
 
+        log(`  Odpowiedz: ${JSON.stringify(res).substring(0, 300)}`);
+
         if (res.errors && res.errors.length > 0) {
-          res.errors.forEach(e => errors.push(`${batch[0]?.name || '?'}: ${JSON.stringify(e)}`));
+          res.errors.forEach(e => {
+            errors.push(`${batch[0]?.name || '?'}: ${JSON.stringify(e)}`);
+            failCount++;
+          });
+        } else {
+          successCount += batch.length;
         }
       } catch (err) {
-        errors.push(`Batch ${i / batchSize + 1}: ${err.message}`);
+        failCount += batch.length;
+        errors.push(`Batch ${batchNum} (${batchNames.substring(0, 40)}): ${err.message}`);
+        log(`  BLAD: ${err.message}`);
       }
 
-      imported += batch.length;
-      log(`Zaimportowano ${imported} / ${toImport.length}`);
+      log(`Postep: ${successCount} OK, ${failCount} bledow / ${toImport.length} lacznie`);
     }
 
-    return { imported, errors };
+    return { imported: successCount, failed: failCount, errors };
   }
 
   // =========================================================================
@@ -202,9 +214,9 @@
         log(`Pobrano ${producers.length} marek ze zrodla.`);
 
         const result = await importBrands(cfg.targetDomain, cfg.targetApiKey, producers, log);
-        log(`--- Zakonczono: ${result.imported} zaimportowanych ---`);
+        log(`--- Zakonczono: ${result.imported} OK, ${result.failed} bledow ---`);
         if (result.errors.length > 0) {
-          log('Bledy:\n' + result.errors.join('\n'));
+          log('Szczegoly bledow:\n' + result.errors.join('\n'));
         }
       },
     },
