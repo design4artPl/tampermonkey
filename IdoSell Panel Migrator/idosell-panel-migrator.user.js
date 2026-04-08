@@ -306,6 +306,10 @@
     return (item.names || []).find(n => n.languageId === 'pol')?.value || '?';
   }
 
+  // item_text_ids format:
+  //   "SectionName"           -> creates section
+  //   "ParamName\"            -> creates parameter (trailing backslash)
+  //   "ParamName\ValueName"   -> creates value under parameter
   async function importParameters(domain, apiKey, srcParams, log) {
     const parameters = Object.values(srcParams).filter(p => p.type === 'parameter');
     const values = Object.values(srcParams).filter(p => p.type === 'value');
@@ -313,62 +317,68 @@
     let successCount = 0, failCount = 0;
     const errors = [];
     const batchSize = 20;
+    const apiUrl = buildUrl(domain, '/api/admin/v7/products/parameters');
 
+    // Helper to build item_text_ids with backslash convention
+    function buildTextId(name, langId) { return { languageId: langId, value: name }; }
+
+    // 1. Import sections (just name, no backslash)
     if (sections.length > 0) {
       log(`Importowanie ${sections.length} sekcji...`);
       const items = sections.map(s => ({
-        item_text_ids: s.names.map(n => ({ languageId: n.languageId, value: n.value })),
-        type: 'section',
+        item_text_ids: s.names.map(n => buildTextId(n.value, n.languageId)),
         names: s.names.map(n => ({ lang_id: n.languageId, value: n.value })),
         descriptions: (s.descriptions || []).map(d => ({ lang_id: d.languageId, value: d.value })),
       }));
       try {
-        const res = await apiRequest('PUT', buildUrl(domain, '/api/admin/v7/products/parameters'), apiKey, { items });
+        const res = await apiRequest('PUT', apiUrl, apiKey, { items });
         for (const r of (res.results || [])) { if (r.faultCode === 0) successCount++; else { failCount++; errors.push(`Section: ${r.faultString}`); } }
       } catch (err) { failCount += sections.length; errors.push(`Sections: ${err.message}`); }
     }
 
+    // 2. Import parameters (name + trailing backslash)
     log(`Importowanie ${parameters.length} parametrow...`);
     for (let i = 0; i < parameters.length; i += batchSize) {
       const batch = parameters.slice(i, i + batchSize);
       const items = batch.map(p => ({
-        item_text_ids: p.names.map(n => ({ languageId: n.languageId, value: n.value })),
-        type: 'parameter',
+        item_text_ids: p.names.map(n => buildTextId(n.value + '\\', n.languageId)),
         names: p.names.map(n => ({ lang_id: n.languageId, value: n.value })),
         descriptions: (p.descriptions || []).map(d => ({ lang_id: d.languageId, value: d.value })),
       }));
       try {
-        const res = await apiRequest('PUT', buildUrl(domain, '/api/admin/v7/products/parameters'), apiKey, { items });
+        const res = await apiRequest('PUT', apiUrl, apiKey, { items });
         for (let j = 0; j < (res.results || []).length; j++) {
           const r = res.results[j];
           if (r.faultCode === 0) successCount++;
           else { failCount++; errors.push(`"${getParamNamePl(batch[j])}": ${r.faultString}`); log(`  [FAIL] ${getParamNamePl(batch[j])}: ${r.faultString}`); }
         }
-      } catch (err) { failCount += batch.length; errors.push(`Batch: ${err.message}`); }
+      } catch (err) { failCount += batch.length; errors.push(`Params: ${err.message}`); }
     }
 
+    // 3. Import values (ParamName\ValueName)
     log(`Importowanie ${values.length} wartosci...`);
     for (let i = 0; i < values.length; i += batchSize) {
       const batch = values.slice(i, i + batchSize);
       const items = batch.map(v => {
         const parent = srcParams[v.parameterId];
-        const parentName = parent ? getParamNamePl(parent) : '';
+        const parentNamePl = parent ? getParamNamePl(parent) : '';
         return {
-          item_text_ids: v.names.map(n => ({ languageId: n.languageId, value: n.value })),
-          type: 'value',
+          item_text_ids: v.names.map(n => {
+            const pName = parent ? ((parent.names || []).find(pn => pn.languageId === n.languageId)?.value || parentNamePl) : parentNamePl;
+            return buildTextId(pName + '\\' + n.value, n.languageId);
+          }),
           names: v.names.map(n => ({ lang_id: n.languageId, value: n.value })),
           descriptions: (v.descriptions || []).map(d => ({ lang_id: d.languageId, value: d.value })),
-          options: [{ lang_id: 'pol', value: parentName, shop_id: 1 }],
         };
       });
       try {
-        const res = await apiRequest('PUT', buildUrl(domain, '/api/admin/v7/products/parameters'), apiKey, { items });
+        const res = await apiRequest('PUT', apiUrl, apiKey, { items });
         for (let j = 0; j < (res.results || []).length; j++) {
           const r = res.results[j];
           if (r.faultCode === 0) successCount++;
           else { failCount++; errors.push(`"${getParamNamePl(batch[j])}": ${r.faultString}`); log(`  [FAIL] ${getParamNamePl(batch[j])}: ${r.faultString}`); }
         }
-      } catch (err) { failCount += batch.length; errors.push(`Batch: ${err.message}`); }
+      } catch (err) { failCount += batch.length; errors.push(`Values: ${err.message}`); }
     }
 
     return { imported: successCount, failed: failCount, errors };
