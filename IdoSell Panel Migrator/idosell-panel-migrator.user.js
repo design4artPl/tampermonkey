@@ -514,7 +514,7 @@
           const tgtSizeNames = new Set(tg.sizes.map(s => s.size_name.toLowerCase().trim()));
           const missingSizes = [...srcSizeNames].filter(n => !tgtSizeNames.has(n));
           if (missingSizes.length > 0) {
-            issues.push(`Grupa "${sg.group_name}": brak ${missingSizes.length} rozmiarow`);
+            issues.push(`Grupa "${sg.group_name}" (src:${sg.group_id}->tgt:${tg.group_id}): brak ${missingSizes.length} rozmiarow: ${missingSizes.join(', ')}`);
           } else {
             matchCount++;
           }
