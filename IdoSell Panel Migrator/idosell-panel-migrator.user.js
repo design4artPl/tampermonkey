@@ -867,7 +867,7 @@
     const sizeGroupId = p.sizesGroupId || -1;
 
     const mapped = {
-      productId: 'add',
+      productId: p.productId,
       productDisplayedCode: p.productDisplayedCode || '',
       productDescriptionsLangData: langData,
       productRetailPrice: p.productRetailPrice || 0,
@@ -876,6 +876,7 @@
       currencyId: p.currencyId || 'PLN',
       productWeight: p.productWeight || 0,
       productType: p.productType || 'product_regular',
+      shopsMask: 1,
     };
 
     if (brandId) mapped.producerId = brandId;
@@ -909,17 +910,21 @@
       try {
         const url = buildUrl(domain, '/api/admin/v7/products/products');
         const res = await apiRequest('PUT', url, apiKey, { params: { products: mapped } });
-        const results = res.results || res.productsResults || [];
-        if (Array.isArray(results)) {
-          for (const r of results) {
-            if (r.errors && r.errors.length > 0) {
+        // Response: { results: { productsResults: [{ faults: [...], productId }] } }
+        const prodResults = res?.results?.productsResults || res?.productsResults || [];
+        if (Array.isArray(prodResults) && prodResults.length > 0) {
+          for (const r of prodResults) {
+            if (r.faults && r.faults.length > 0) {
               failCount++;
-              errors.push(`${r.productId || '?'}: ${JSON.stringify(r.errors).substring(0, 100)}`);
+              const err = r.faults.map(f => f.faultCode).join(', ');
+              errors.push(`ID ${r.productId}: ${err}`);
+              log(`  [FAIL] ID ${r.productId}: ${err}`);
             } else {
               successCount++;
             }
           }
         } else {
+          // No detailed results — assume success
           successCount += batch.length;
         }
       } catch (err) {
