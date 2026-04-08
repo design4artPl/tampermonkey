@@ -425,9 +425,17 @@
           }
         }
 
-        // 5. Build sizes to add/edit
+        // 5. Build global map of all existing sizes in target (across all groups)
+        const allTargetSizes = new Map(); // size_name_lower -> { size_id, group_id }
+        for (const g of tgtGroupsAfter) {
+          for (const s of (g.sizes || [])) {
+            allTargetSizes.set(s.size_name.toLowerCase().trim(), { size_id: s.size_id, group_id: g.group_id });
+          }
+        }
+
         const sizesToImport = [];
         const unmappedGroups = [];
+        let skippedExisting = 0;
 
         for (const sg of srcGroups) {
           if (sg.group_id < 0) continue; // skip universal
@@ -438,24 +446,38 @@
             continue;
           }
 
-          // Check which sizes already exist in target group
-          const tgtGroup = tgtAfterById.get(targetGroupId) || tgtAfterByName.get(sg.group_name.toLowerCase().trim());
-          const existingSizeNames = new Set((tgtGroup?.sizes || []).map(s => s.size_name.toLowerCase().trim()));
-
           for (const size of sg.sizes) {
-            const exists = existingSizeNames.has(size.size_name.toLowerCase().trim());
-            sizesToImport.push({
-              group_id: targetGroupId,
-              id: exists ? size.size_id : undefined,
-              name: size.size_name,
-              description: '',
-              operation: exists ? 'edit' : 'add',
-              lang_data: (size.lang_data || []).map(ld => ({
-                lang_id: ld.lang_id,
-                name: ld.name,
-              })),
-            });
+            const key = size.size_name.toLowerCase().trim();
+            const existing = allTargetSizes.get(key);
+
+            if (existing && existing.group_id === targetGroupId) {
+              // Exists in correct group — edit with its ID
+              sizesToImport.push({
+                group_id: targetGroupId,
+                id: existing.size_id,
+                name: size.size_name,
+                description: '',
+                operation: 'edit',
+                lang_data: (size.lang_data || []).map(ld => ({ lang_id: ld.lang_id, name: ld.name })),
+              });
+            } else if (existing) {
+              // Exists in wrong group — skip (can't add duplicate name)
+              skippedExisting++;
+            } else {
+              // New size — add
+              sizesToImport.push({
+                group_id: targetGroupId,
+                name: size.size_name,
+                description: '',
+                operation: 'add',
+                lang_data: (size.lang_data || []).map(ld => ({ lang_id: ld.lang_id, name: ld.name })),
+              });
+            }
           }
+        }
+
+        if (skippedExisting > 0) {
+          log(`Pominieto ${skippedExisting} rozmiarow (istnieja w innych grupach z poprzedniego importu)`);
         }
 
         if (unmappedGroups.length > 0) {
