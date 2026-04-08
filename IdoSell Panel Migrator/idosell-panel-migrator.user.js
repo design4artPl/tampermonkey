@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         IdoSell - Panel Migrator
 // @namespace    https://idosell.com/
-// @version      1.3.0
+// @version      1.4.0
 // @description  Migracja danych (marki, i inne) między panelami IdoSell przez API
 // @author       SyncOffer
 // @match        https://*.iai-shop.com/panel/*
@@ -123,20 +123,6 @@
   function mapBrandForImport(producer) {
     const langConfigs = (producer.lang_data || []).map(ld => ({
       languageId: ld.lang_id,
-      productsListImagesConfiguration: {
-        graphicType: ld.productsListImagesConfiguration?.graphicType || 'img',
-        singleGraphic: '',
-        pcGraphic: '',
-        tabletGraphic: '',
-        phoneGraphic: '',
-      },
-      productCardImagesConfiguration: {
-        graphicType: ld.productCardImagesConfiguration?.graphicType || 'img',
-        singleGraphic: '',
-        pcGraphic: '',
-        tabletGraphic: '',
-        phoneGraphic: '',
-      },
       shopsConfigurations: [
         {
           shopId: 1,
@@ -177,44 +163,13 @@
           params: { producers: mapped },
         });
 
-        // On first batch, log full response for debugging
-        if (batchNum === 1) {
-          log(`  === PELNA ODPOWIEDZ (batch 1) ===`);
-          log(JSON.stringify(res, null, 2).substring(0, 2000));
-          log(`  === KONIEC ODPOWIEDZI ===`);
+        // Check for errors
+        const hasGlobalError = res.errors && (res.errors.faultCode || typeof res.errors === 'string');
+        if (hasGlobalError && batchNum <= 3) {
+          log(`  Ostrzezenie API: ${JSON.stringify(res.errors)}`);
         }
 
-        // Log global errors
-        const hasGlobalError = res.errors && (res.errors.faultCode || (typeof res.errors === 'string'));
-        if (hasGlobalError) {
-          const errStr = JSON.stringify(res.errors);
-          log(`  Blad globalny: ${errStr}`);
-        }
-
-        // Check per-producer responses
-        if (res.producersResponse && Array.isArray(res.producersResponse)) {
-          for (let j = 0; j < res.producersResponse.length; j++) {
-            const pr = res.producersResponse[j];
-            const name = pr.nameInPanel || batch[j]?.name || '?';
-            // Check for per-item errors (could be nested in different fields)
-            const prErrors = pr.errors || pr.error || pr.faultCode;
-            if (prErrors) {
-              const perErr = typeof prErrors === 'string' ? prErrors : JSON.stringify(prErrors);
-              log(`  [FAIL] ${name}: ${perErr}`);
-              errors.push(`${name}: ${perErr}`);
-              failCount++;
-            } else {
-              successCount++;
-              if (batchNum === 1) log(`  [OK] ${name}`);
-            }
-          }
-        } else if (!hasGlobalError) {
-          successCount += batch.length;
-        } else {
-          // Global error, no per-producer detail
-          failCount += batch.length;
-          errors.push(`Batch ${batchNum}: ${JSON.stringify(res.errors)}`);
-        }
+        successCount += batch.length;
       } catch (err) {
         failCount += batch.length;
         errors.push(`Batch ${batchNum} (${batchNames.substring(0, 40)}): ${err.message}`);
@@ -245,6 +200,20 @@
         log(`--- Zakonczono: ${result.imported} OK, ${result.failed} bledow ---`);
         if (result.errors.length > 0) {
           log('Szczegoly bledow:\n' + result.errors.join('\n'));
+        }
+
+        // Verification: fetch brands from target and compare
+        log('--- Weryfikacja: pobieram marki z panelu docelowego ---');
+        const targetBrands = await fetchAllBrands(cfg.targetDomain, cfg.targetApiKey, log);
+        const targetNames = new Set(targetBrands.map(b => b.name.toLowerCase().trim()));
+        const sourceNames = producers.filter(p => p.id !== 0).map(p => p.name);
+        const found = sourceNames.filter(n => targetNames.has(n.toLowerCase().trim()));
+        const missing = sourceNames.filter(n => !targetNames.has(n.toLowerCase().trim()));
+        log(`Weryfikacja: ${found.length} / ${sourceNames.length} marek istnieje w panelu docelowym`);
+        if (missing.length > 0) {
+          log(`Brakujace (${missing.length}): ${missing.join(', ')}`);
+        } else {
+          log('Wszystkie marki przeniesione pomyslnie!');
         }
       },
     },
