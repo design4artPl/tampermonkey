@@ -29,6 +29,7 @@
       targetDomain: '',
       targetApiKey: '',
       sourceShopId: 1,
+      productImportMode: 'add',
       targetShopIds: '1',
     };
     try {
@@ -912,11 +913,22 @@
     return mapped;
   }
 
-  async function importProducts(domain, apiKey, products, brandNameToId, catNameToId, sizeGroupNameToId, existingCodes, targetShopsMask, targetShopIds, log) {
-    const toImport = products.filter(p => {
-      const code = (p.productDisplayedCode || '').toLowerCase().trim();
-      return !code || !existingCodes.has(code);
-    });
+  async function importProducts(domain, apiKey, products, brandNameToId, catNameToId, sizeGroupNameToId, existingCodes, targetShopsMask, targetShopIds, importMode, log) {
+    let toImport;
+    if (importMode === 'edit') {
+      toImport = products.filter(p => {
+        const code = (p.productDisplayedCode || '').toLowerCase().trim();
+        return code && existingCodes.has(code);
+      });
+    } else if (importMode === 'all') {
+      toImport = [...products];
+    } else {
+      // add mode - skip existing
+      toImport = products.filter(p => {
+        const code = (p.productDisplayedCode || '').toLowerCase().trim();
+        return !code || !existingCodes.has(code);
+      });
+    }
 
     if (toImport.length === 0) {
       log('Brak nowych produktow do importu.');
@@ -935,7 +947,7 @@
       log(`PUT batch ${Math.floor(i / batchSize) + 1}: ${batch.length} produktow`);
       try {
         const url = buildUrl(domain, '/api/admin/v7/products/products');
-        const res = await apiRequest('PUT', url, apiKey, { params: { products: mapped } });
+        const res = await apiRequest('PUT', url, apiKey, { params: { settings: { settingModificationType: importMode }, products: mapped } });
         // Response: { results: { productsResults: [{ faults: [...], productId }] } }
         const prodResults = res?.results?.productsResults || res?.productsResults || [];
         if (Array.isArray(prodResults) && prodResults.length > 0) {
@@ -1567,7 +1579,9 @@
         const targetShopsMask = targetShopIds.reduce((mask, id) => mask + Math.pow(2, id - 1), 0);
         log('Sklepy docelowe: ' + targetShopIds.join(', ') + ' (shopsMask=' + targetShopsMask + ')');
 
-        const result = await importProducts(cfg.targetDomain, cfg.targetApiKey, srcProducts, brandNameToId, catNameToId, new Map(), existingCodes, targetShopsMask, targetShopIds, log);
+        const importMode = cfg.productImportMode || 'add';
+        log('Tryb importu: ' + importMode);
+        const result = await importProducts(cfg.targetDomain, cfg.targetApiKey, srcProducts, brandNameToId, catNameToId, new Map(), existingCodes, targetShopsMask, targetShopIds, importMode, log);
         log(`--- Zakonczono: ${result.imported} OK, ${result.failed} bledow ---`);
         if (result.errors.length > 0) log('Bledy:\n' + result.errors.slice(0, 20).join('\n'));
 
@@ -1715,6 +1729,11 @@
         shopRow.innerHTML = `
           <div style="margin-bottom:6px;"><strong>Sklep zrodlowy:</strong> <span id="m-src-shops-list"><em>Wpisz dane panelu zrodlowego i kliknij "Pobierz sklepy"</em></span></div>
           <div style="margin-bottom:6px;"><strong>Sklepy docelowe:</strong> <span id="m-tgt-shops-list"><em>Wpisz dane panelu docelowego i kliknij "Pobierz sklepy"</em></span></div>
+          <div style="margin-top:8px;"><strong>Tryb importu:</strong>
+            <label style="margin-left:8px;cursor:pointer;"><input type="radio" name="m-import-mode" value="add" ${(cfg.productImportMode || 'add') === 'add' ? 'checked' : ''}> Dodaj nowe (add)</label>
+            <label style="margin-left:8px;cursor:pointer;"><input type="radio" name="m-import-mode" value="edit" ${cfg.productImportMode === 'edit' ? 'checked' : ''}> Edytuj istniejace (edit)</label>
+            <label style="margin-left:8px;cursor:pointer;"><input type="radio" name="m-import-mode" value="all" ${cfg.productImportMode === 'all' ? 'checked' : ''}> Dodaj + edytuj (all)</label>
+          </div>
           <button class="migrator-btn migrator-btn-secondary" id="m-fetch-shops-btn" style="padding:4px 10px; font-size:11px;">Pobierz sklepy</button>
           <input type="hidden" id="m-src-shop-id" value="${cfg.sourceShopId || 1}">
           <input type="hidden" id="m-tgt-shop-ids" value="${cfg.targetShopIds || '1'}">
@@ -1838,6 +1857,7 @@
         targetApiKey: modal.querySelector('#m-tgt-key').value.trim(),
         sourceShopId: parseInt(modal.querySelector('#m-src-shop-id')?.value || '1', 10),
         targetShopIds: modal.querySelector('#m-tgt-shop-ids')?.value?.trim() || '1',
+        productImportMode: modal.querySelector('input[name="m-import-mode"]:checked')?.value || 'add',
       };
 
       if (!currentCfg.sourceDomain || !currentCfg.sourceApiKey) {
