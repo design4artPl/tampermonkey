@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         IdoSell - Panel Migrator
 // @namespace    https://idosell.com/
-// @version      1.5.0
+// @version      1.6.0
 // @description  Migracja danych (marki, i inne) między panelami IdoSell przez API
 // @author       SyncOffer
 // @match        https://*.iai-shop.com/panel/*
@@ -225,6 +225,56 @@
         if (result.errors.length > 0) {
           log('Szczegoly bledow:\n' + result.errors.join('\n'));
         }
+
+        // Weryfikacja: porownanie danych zrodlo vs cel
+        log('--- Weryfikacja po imporcie ---');
+        const sourceList = producers.filter(p => p.id !== 0);
+        const afterImport = await fetchAllBrands(cfg.targetDomain, cfg.targetApiKey, log);
+        const afterMap = new Map();
+        for (const b of afterImport) {
+          afterMap.set(b.name.toLowerCase().trim(), b);
+        }
+
+        let matchCount = 0;
+        const mismatches = [];
+        const missing = [];
+
+        for (const src of sourceList) {
+          const key = src.name.toLowerCase().trim();
+          const tgt = afterMap.get(key);
+          if (!tgt) {
+            missing.push(src.name);
+            continue;
+          }
+          let brandOk = true;
+          for (const srcLang of (src.lang_data || [])) {
+            const tgtLang = (tgt.lang_data || []).find(l => l.lang_id === srcLang.lang_id);
+            if (!tgtLang) {
+              mismatches.push(`${src.name} [${srcLang.lang_id}]: brak jezyka w celu`);
+              brandOk = false;
+              continue;
+            }
+            const srcText = (srcLang.text || '').trim();
+            const tgtText = (tgtLang.text || '').trim();
+            if (srcText !== tgtText) {
+              mismatches.push(`${src.name} [${srcLang.lang_id}]: opis rozni sie (zrodlo: ${srcText.length} zn, cel: ${tgtText.length} zn)`);
+              brandOk = false;
+            }
+          }
+          if (brandOk) matchCount++;
+        }
+
+        const totalIssues = mismatches.length + missing.length;
+        log(`Weryfikacja: ${matchCount} zgodnych, ${mismatches.length} roznic, ${missing.length} brakujacych`);
+        if (missing.length > 0) log(`Brakujace: ${missing.join(', ')}`);
+        if (mismatches.length > 0) {
+          log(`Roznice (max 20):\n${mismatches.slice(0, 20).join('\n')}`);
+          if (mismatches.length > 20) log(`...i ${mismatches.length - 20} wiecej`);
+        }
+        if (matchCount === sourceList.length) log('Wszystkie marki zgodne 1:1!');
+
+        // Return validation result for UI badge
+        return { ok: totalIssues === 0, matchCount, total: sourceList.length, issues: [...missing.map(m => `BRAK: ${m}`), ...mismatches] };
       },
     },
     // Future modules go here, e.g.:
@@ -288,7 +338,15 @@
       .migrator-btn-secondary:hover { background: #cbd5e1; }
       .migrator-checkbox { display: flex; align-items: center; gap: 8px; padding: 8px 0; cursor: pointer; }
       .migrator-checkbox input { width: 16px; height: 16px; accent-color: #2563eb; cursor: pointer; }
+      .migrator-checkbox .migrator-badge { margin-left: auto; font-size: 12px; padding: 2px 8px; border-radius: 10px; cursor: pointer; font-weight: 600; }
+      .migrator-badge-ok { background: #dcfce7; color: #166534; }
+      .migrator-badge-fail { background: #fee2e2; color: #991b1b; }
       .migrator-log { background: #0f172a; color: #e2e8f0; padding: 12px; border-radius: 6px; font-family: "Cascadia Code", "Fira Code", monospace; font-size: 12px; max-height: 250px; overflow-y: auto; white-space: pre-wrap; margin-top: 12px; line-height: 1.6; }
+      .migrator-issues-popup { position: fixed; inset: 0; z-index: 1000001; background: rgba(0,0,0,0.5); display: flex; align-items: center; justify-content: center; }
+      .migrator-issues-inner { background: #fff; border-radius: 10px; padding: 20px; width: 480px; max-height: 70vh; overflow-y: auto; font-size: 13px; }
+      .migrator-issues-inner h3 { margin: 0 0 12px; font-size: 15px; }
+      .migrator-issues-inner ul { margin: 0; padding: 0 0 0 18px; }
+      .migrator-issues-inner li { padding: 3px 0; color: #991b1b; }
     `;
     const style = document.createElement('style');
     style.textContent = css;
@@ -333,12 +391,50 @@
 
     // Render module checkboxes
     const modulesContainer = modal.querySelector('#m-modules');
+    const badgeRefs = {};
     MODULES.forEach(mod => {
       const label = document.createElement('label');
       label.className = 'migrator-checkbox';
-      label.innerHTML = `<input type="checkbox" data-module="${mod.id}"> <span>${mod.icon} ${mod.label}</span>`;
+      label.innerHTML = `<input type="checkbox" data-module="${mod.id}"> <span>${mod.icon} ${mod.label}</span><span class="migrator-badge" id="badge-${mod.id}" style="display:none;"></span>`;
       modulesContainer.appendChild(label);
+      badgeRefs[mod.id] = label.querySelector(`#badge-${mod.id}`);
     });
+
+    function showIssuesPopup(title, issues) {
+      const popup = document.createElement('div');
+      popup.className = 'migrator-issues-popup';
+      const inner = document.createElement('div');
+      inner.className = 'migrator-issues-inner';
+      inner.innerHTML = `<div style="display:flex;justify-content:space-between;align-items:center;"><h3>${title}</h3><span style="cursor:pointer;font-size:20px;color:#94a3b8;" id="close-issues">&times;</span></div>`;
+      const ul = document.createElement('ul');
+      issues.forEach(issue => {
+        const li = document.createElement('li');
+        li.textContent = issue;
+        ul.appendChild(li);
+      });
+      inner.appendChild(ul);
+      popup.appendChild(inner);
+      document.body.appendChild(popup);
+      inner.querySelector('#close-issues').addEventListener('click', () => popup.remove());
+      popup.addEventListener('click', e => { if (e.target === popup) popup.remove(); });
+    }
+
+    function setBadge(modId, validationResult) {
+      const badge = badgeRefs[modId];
+      if (!badge || !validationResult) return;
+      badge.style.display = 'inline-block';
+      if (validationResult.ok) {
+        badge.className = 'migrator-badge migrator-badge-ok';
+        badge.textContent = `${validationResult.matchCount}/${validationResult.total}`;
+        badge.title = 'Weryfikacja OK - kliknij po szczegoly';
+        badge.onclick = (e) => { e.preventDefault(); e.stopPropagation(); showIssuesPopup(`${modId} - weryfikacja OK`, [`Zgodne: ${validationResult.matchCount}/${validationResult.total}`]); };
+      } else {
+        badge.className = 'migrator-badge migrator-badge-fail';
+        badge.textContent = `${validationResult.issues.length} problem(ow)`;
+        badge.title = 'Bledy walidacji - kliknij po szczegoly';
+        badge.onclick = (e) => { e.preventDefault(); e.stopPropagation(); showIssuesPopup(`${modId} - problemy walidacji`, validationResult.issues); };
+      }
+    }
 
     // Events
     const open = () => { overlay.style.display = 'flex'; };
@@ -406,9 +502,11 @@
         const mod = MODULES.find(m => m.id === modId);
         if (!mod) continue;
         try {
-          await mod.run(currentCfg, log);
+          const validationResult = await mod.run(currentCfg, log);
+          setBadge(mod.id, validationResult);
         } catch (err) {
           log(`BLAD w module ${mod.label}: ${err.message}`);
+          setBadge(mod.id, { ok: false, matchCount: 0, total: 0, issues: [`Blad: ${err.message}`] });
         }
       }
 
