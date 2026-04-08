@@ -853,14 +853,12 @@
     const namesLD = [], descLD = [], longDescLD = [], metaTitleLD = [], metaDescLD = [], metaKwLD = [];
     for (const ld of langs) {
       const lang = ld.langId || 'pol';
-      for (const sid of targetShopIds) {
-        if (ld.productName) namesLD.push({ langId: lang, shopId: sid, productName: ld.productName });
-        if (ld.productDescription) descLD.push({ langId: lang, shopId: sid, productParamDescriptions: ld.productDescription });
-        if (ld.productLongDescription) longDescLD.push({ langId: lang, shopId: sid, productLongDescription: ld.productLongDescription });
-        if (ld.productMetaTitle) metaTitleLD.push({ langId: lang, shopId: sid, productMetaTitle: ld.productMetaTitle });
-        if (ld.productMetaDescription) metaDescLD.push({ langId: lang, shopId: sid, productMetaDescription: ld.productMetaDescription });
-        if (ld.productMetaKeywords) metaKwLD.push({ langId: lang, shopId: sid, productMetaKeyword: ld.productMetaKeywords });
-      }
+      if (ld.productName) namesLD.push({ langId: lang, shopId: 0, productName: ld.productName });
+      if (ld.productDescription) descLD.push({ langId: lang, shopId: 0, productParamDescriptions: ld.productDescription });
+      if (ld.productLongDescription) longDescLD.push({ langId: lang, shopId: 0, productLongDescription: ld.productLongDescription });
+      if (ld.productMetaTitle) metaTitleLD.push({ langId: lang, shopId: 0, productMetaTitle: ld.productMetaTitle });
+      if (ld.productMetaDescription) metaDescLD.push({ langId: lang, shopId: 0, productMetaDescription: ld.productMetaDescription });
+      if (ld.productMetaKeywords) metaKwLD.push({ langId: lang, shopId: 0, productMetaKeyword: ld.productMetaKeywords });
     }
 
     const brandName = p.producerName || '';
@@ -947,7 +945,7 @@
       log(`PUT batch ${Math.floor(i / batchSize) + 1}: ${batch.length} produktow`);
       try {
         const url = buildUrl(domain, '/api/admin/v7/products/products');
-        const res = await apiRequest('PUT', url, apiKey, { params: { settings: { settingModificationType: importMode }, products: mapped } });
+        const res = await apiRequest('PUT', url, apiKey, { params: { settings: { settingModificationType: importMode, settingDeleteIndividualDescriptionsByShopsMask: { shopsMask: targetShopsMask }, settingDeleteIndividualMetaByShopsMask: { shopsMask: targetShopsMask }, settingsSkipDuplicatedProducers: true }, products: mapped } });
         // Response: { results: { productsResults: [{ faults: [...], productId }] } }
         const prodResults = res?.results?.productsResults || res?.productsResults || [];
         if (Array.isArray(prodResults) && prodResults.length > 0) {
