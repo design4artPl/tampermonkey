@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         IdoSell - Szablony odpowiedzi w ticketach
 // @namespace    idosell-ticket-templates
-// @version      1.1
+// @version      1.1.1
 // @description  System szablonów odpowiedzi i podpisów dla ticketów IdoSell
 // @match        *://*.iai-system.com/panel/tickets.php*
 // @match        *://*.iai-shop.com/panel/tickets.php*
@@ -773,8 +773,6 @@
                 overflow: hidden !important;
             }
             #tt-modal .tt-m-header {
-                background: ${ACCENT_COLOR};
-                color: #fff;
                 padding: 12px 16px;
                 display: flex;
                 justify-content: space-between;
@@ -783,7 +781,7 @@
                 font-weight: 700;
             }
             #tt-modal .tt-m-header button {
-                background: none; border: none; color: #fff;
+                background: none; border: none; color: #000;
                 font-size: 22px; cursor: pointer; padding: 0 4px; line-height: 1;
             }
             #tt-modal .tt-m-header button:hover { opacity: 0.7; }
@@ -791,7 +789,8 @@
             /* Zakładki */
             #tt-modal .tt-m-tabs {
                 display: flex;
-                border-bottom: 2px solid #e0e0e0;
+                border-top: 1px solid #e0e0e0;
+                border-bottom: 1px solid #e0e0e0;
                 background: #fafafa;
             }
             #tt-modal .tt-m-tab {
@@ -1442,7 +1441,7 @@
         overlay.innerHTML = `
             <div id="tt-modal" style="width:550px;">
                 <div class="tt-m-header">
-                    <span>Podgląd: ${escHtml(tpl.name)}</span>
+                    <span style="color:#000;font-weight:600;">Podgląd: ${escHtml(tpl.name)}</span>
                     <button type="button" class="tt-preview-close">&times;</button>
                 </div>
                 <div class="tt-m-content">
@@ -1472,7 +1471,7 @@
         // Header
         const header = document.createElement('div');
         header.className = 'tt-m-header';
-        header.innerHTML = '<span>Zarządzanie szablonami</span>';
+        header.innerHTML = '<span style="color:#000;font-weight:600;">Zarządzanie szablonami</span>';
         const closeBtn = btn();
         closeBtn.textContent = '\u00D7';
         closeBtn.onclick = () => overlay.remove();
