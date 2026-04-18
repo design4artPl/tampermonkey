@@ -6318,6 +6318,7 @@ li.tp-row--selected > div {
         rowCb.addEventListener('change', function () {
           li.classList.toggle('tp-row--selected', rowCb.checked);
           li.classList.toggle('panel-pro--selected', rowCb.checked);
+          updateSectionsSelection();
         });
       }
 
@@ -6384,6 +6385,7 @@ li.tp-row--selected > div {
       var cb = li.querySelector('input.tp-checkbox');
       if (cb) { cb.checked = !!on; _setSectionRowSelected(li, on); }
     });
+    updateSectionsSelection();
   }
 
   function invertSectionsSelection(doc) {
@@ -6394,6 +6396,36 @@ li.tp-row--selected > div {
       var cb = li.querySelector('input.tp-checkbox');
       if (cb) { cb.checked = !cb.checked; _setSectionRowSelected(li, cb.checked); }
     });
+    updateSectionsSelection();
+  }
+
+  function updateSectionsSelection() {
+    if (!_sectionsMount || !_sectionsMount.listEl || !_sectionsMount.panel) return;
+    var n = _sectionsMount.listEl.querySelectorAll(':scope > li input.tp-checkbox:checked').length;
+    _sectionsMount.panel.setSelection(n);
+  }
+
+  async function bulkDeleteSelectedSections(doc) {
+    if (!_sectionsMount || !_sectionsMount.listEl) return;
+    var items = Array.from(_sectionsMount.listEl.querySelectorAll(':scope > li'));
+    var selected = items.filter(function (li) {
+      var cb = li.querySelector('input.tp-checkbox');
+      return cb && cb.checked;
+    }).map(function (li) {
+      return { id: li.dataset.sectionId, name: (li.querySelector('.tp-sec-name') || {}).textContent || '' };
+    });
+    if (selected.length === 0) return;
+    if (!confirm('Usunąć ' + selected.length + ' sekcji? Jeśli któraś jest przypisana do produktów, skrypt odepnie ją najpierw.')) return;
+    var ok = 0, fail = 0;
+    for (var i = 0; i < selected.length; i++) {
+      var sec = selected[i];
+      try {
+        var r = await forceDeleteNode(doc, sec.id, '0', sec.name, true, function (msg) { if (_panel) _panel.showStatus(msg); });
+        if (r) ok++; else fail++;
+      } catch (e) { fail++; }
+    }
+    if (_panel) _panel.showStatus('Usunięto ' + ok + ' sekcji' + (fail ? ' (' + fail + ' błędów)' : ''));
+    refreshSectionsPanel(doc);
   }
 
   // v4.5.32: export sections (selected or all visible) to JSON/CSV
