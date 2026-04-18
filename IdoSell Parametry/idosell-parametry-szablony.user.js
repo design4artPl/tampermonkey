@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         IdoSell - Parametry Toolbar
 // @namespace    https://idosell.com/
-// @version      4.5.38
+// @version      4.5.39
 // @description  Toolbar do grupowej edycji parametrow: panel-pro v1.2.4 inline + new-panel support, checkboxy, zaznaczanie, rozwijanie/zwijanie, grupowe usuwanie/edycja, import CSV
 // @author       SyncOffer
 // @match        https://*.iai-shop.com/panel/app/parameters.php*
@@ -6270,12 +6270,13 @@ li.tp-row--selected > div {
         ]
       },
       columns: [
-        { id: 'drag',    label: '',             width: '24px' },
-        { id: 'check',   label: '',             width: '40px' },
-        { id: 'expand',  label: '',             width: '32px' },
-        { id: 'name',    label: 'Nazwa sekcji', width: '1fr' },
-        { id: 'id',      label: 'ID',           width: '80px' },
-        { id: 'actions', label: 'Akcje',        width: '160px' }
+        { id: 'drag',     label: '',             width: '24px' },
+        { id: 'check',    label: '',             width: '40px' },
+        { id: 'expand',   label: '',             width: '32px' },
+        { id: 'name',     label: 'Nazwa sekcji', width: '1fr' },
+        { id: 'id',       label: 'ID',           width: '80px' },
+        { id: 'products', label: 'Produktów', width: '110px' },
+        { id: 'actions',  label: 'Akcje',        width: '160px' }
       ],
       selectionBar: {
         selectedLabel: 'Wybrano {n} sekcji',
@@ -6316,6 +6317,7 @@ li.tp-row--selected > div {
     getAllSections(doc).then(function (sections) {
       renderSectionRows(doc, sectionsPanel, ul, sections);
       sectionsPanel.setCounter('Sekcje: <span class="panel-pro__counter--total">' + sections.length + '</span>');
+      loadSectionsProductCountsInBackground(doc, sections);
     }).catch(function (e) {
       sectionsPanel.setCounter('Sekcje: <span class="panel-pro__counter--total">b\u0142\u0105d</span>');
       console.error('[parametry] sections load failed:', e);
@@ -6336,6 +6338,7 @@ li.tp-row--selected > div {
         '<div style="display:flex;align-items:center;justify-content:center"><span class="material-symbols-outlined" style="color:#1d4ed8;font-size:20px" title="Sekcja">folder_special</span></div>' +
         '<div style="display:flex;align-items:center;gap:6px"><span class="tp-sec-name" style="font-weight:500;cursor:pointer" title="Dwuklik = zmiana nazwy">' + escapeHtml(sec.name) + '</span></div>' +
         '<div style="text-align:center;font-family:Roboto Mono,monospace;font-size:12px;color:#5f6368">' + sec.id + '</div>' +
+        '<div class="tp-sec-products" data-section-id="' + sec.id + '" style="text-align:center;color:#5f6368">…</div>' +
         '<div style="display:flex;align-items:center;justify-content:center;gap:6px">' +
           '<span class="material-symbols-outlined" data-act="products" title="Poka\u017c produkty u\u017cywaj\u0105ce sekcji" style="cursor:pointer;color:#5f6368;font-size:20px">inventory_2</span>' +
           '<span class="material-symbols-outlined" data-act="rename" title="Zmie\u0144 nazw\u0119" style="cursor:pointer;color:#5f6368;font-size:20px">edit</span>' +
@@ -6564,6 +6567,41 @@ li.tp-row--selected > div {
     mountSectionsPanel(doc);
   }
 
+  // v4.5.39: background loader for section product counts (numberOfOccurrence works on real panels)
+  async function loadSectionsProductCountsInBackground(doc, sections) {
+    if (!_sectionsMount || !_sectionsMount.listEl) return;
+    var BATCH = 5;
+    for (var i = 0; i < sections.length; i += BATCH) {
+      var batch = sections.slice(i, i + BATCH);
+      await Promise.all(batch.map(async function (sec) {
+        try {
+          var r = await fetchAjax('action=numberOfOccurrence&id=' + encodeURIComponent(sec.id));
+          var count = (r && r.data && r.data.numberOfProduct) ? Number(r.data.numberOfProduct) : 0;
+          var productsRaw = r && r.data && r.data.products ? r.data.products : null;
+          var productIds = [];
+          if (Array.isArray(productsRaw)) productIds = productsRaw.map(function (p) { return String(typeof p === 'object' ? (p.id || p.product_id) : p); });
+          else if (productsRaw && typeof productsRaw === 'object') productIds = Object.values(productsRaw).map(function (p) { return String(typeof p === 'object' ? (p.id || p.product_id) : p); });
+          sec.productCount = count;
+          sec.products = productIds;
+          var cell = _sectionsMount.listEl.querySelector('.tp-sec-products[data-section-id="' + sec.id + '"]');
+          if (!cell) return;
+          cell.textContent = '';
+          if (count > 0) {
+            var link = doc.createElement('a');
+            link.href = 'javascript:void(0)';
+            link.textContent = String(count);
+            link.title = 'Poka\u017c produkty u\u017cywaj\u0105ce sekcji';
+            link.style.cssText = 'color:#2563eb;text-decoration:none;font-weight:500;cursor:pointer';
+            link.addEventListener('click', function (e) { e.stopPropagation(); showSectionProductsModal(doc, sec); });
+            cell.appendChild(link);
+          } else {
+            cell.textContent = '0';
+          }
+        } catch (e) { /* leave placeholder */ }
+      }));
+    }
+  }
+
   // v4.5.27: modal listing products using a section
   // v4.5.31: fetch product list on demand (sections panel no longer preloads)
   function showSectionProductsModal(doc, sec) {
@@ -6734,7 +6772,7 @@ li.tp-row--selected > div {
       ],
       pagination: { perPage: 50 },
       footer: {
-        version: 'v4.5.38',
+        version: 'v4.5.39',
         links: [
           { label: 'Propozycja', icon: 'star', tooltip: 'Zaproponuj funkcjonalność', variant: 'feature', href: 'https://github.com/design4artPl/tampermonkey/issues/new?labels=enhancement', target: '_blank' },
           { label: 'Zgłoś błąd', icon: 'bug_report', tooltip: 'Zgłoś błąd', variant: 'bug', href: 'https://github.com/design4artPl/tampermonkey/issues/new?labels=bug', target: '_blank' }
