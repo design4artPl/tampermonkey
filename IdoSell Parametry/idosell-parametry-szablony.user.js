@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         IdoSell - Parametry Toolbar
 // @namespace    https://idosell.com/
-// @version      4.5.37
+// @version      4.5.38
 // @description  Toolbar do grupowej edycji parametrow: panel-pro v1.2.4 inline + new-panel support, checkboxy, zaznaczanie, rozwijanie/zwijanie, grupowe usuwanie/edycja, import CSV
 // @author       SyncOffer
 // @match        https://*.iai-shop.com/panel/app/parameters.php*
@@ -6246,6 +6246,17 @@ li.tp-row--selected > div {
         { id: 'id',      label: 'ID',           width: '80px' },
         { id: 'actions', label: 'Akcje',        width: '160px' }
       ],
+      selectionBar: {
+        selectedLabel: 'Wybrano {n} sekcji',
+        actions: [
+          { icon: 'delete', label: 'Usu\u0144', tooltip: 'Usu\u0144 zaznaczone sekcje', variant: 'danger', onClick: function () { bulkDeleteSelectedSections(doc); } }
+        ],
+        extraActions: [
+          { icon: 'download',     label: 'Eksport JSON', tooltip: 'Eksport zaznaczonych do JSON', onClick: function () { exportSections(doc, 'json'); } },
+          { icon: 'table_chart',  label: 'Eksport CSV',  tooltip: 'Eksport zaznaczonych do CSV',  onClick: function () { exportSections(doc, 'csv'); } }
+        ],
+        onClear: function () { toggleAllSections(doc, false); }
+      },
       footer: {
         version: '',
         links: []
@@ -6660,7 +6671,7 @@ li.tp-row--selected > div {
       ],
       pagination: { perPage: 50 },
       footer: {
-        version: 'v4.5.37',
+        version: 'v4.5.38',
         links: [
           { label: 'Propozycja', icon: 'star', tooltip: 'Zaproponuj funkcjonalność', variant: 'feature', href: 'https://github.com/design4artPl/tampermonkey/issues/new?labels=enhancement', target: '_blank' },
           { label: 'Zgłoś błąd', icon: 'bug_report', tooltip: 'Zgłoś błąd', variant: 'bug', href: 'https://github.com/design4artPl/tampermonkey/issues/new?labels=bug', target: '_blank' }
