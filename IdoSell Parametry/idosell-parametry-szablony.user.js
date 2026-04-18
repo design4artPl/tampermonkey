@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         IdoSell - Parametry Toolbar
 // @namespace    https://idosell.com/
-// @version      4.5.39
+// @version      4.5.40
 // @description  Toolbar do grupowej edycji parametrow: panel-pro v1.2.4 inline + new-panel support, checkboxy, zaznaczanie, rozwijanie/zwijanie, grupowe usuwanie/edycja, import CSV
 // @author       SyncOffer
 // @match        https://*.iai-shop.com/panel/app/parameters.php*
@@ -6361,7 +6361,8 @@ li.tp-row--selected > div {
           e.stopPropagation();
           var act = btn.dataset.act;
           if (act === 'products') {
-            showSectionProductsModal(doc, sec);
+            try { window.top.location.assign('products-list.php?trait=' + encodeURIComponent(sec.id)); }
+            catch (err) { window.location.assign('products-list.php?trait=' + encodeURIComponent(sec.id)); }
           } else if (act === 'rename') {
             var newName = prompt('Nowa nazwa sekcji:', sec.name);
             if (!newName || newName === sec.name) return;
@@ -6592,7 +6593,13 @@ li.tp-row--selected > div {
             link.textContent = String(count);
             link.title = 'Poka\u017c produkty u\u017cywaj\u0105ce sekcji';
             link.style.cssText = 'color:#2563eb;text-decoration:none;font-weight:500;cursor:pointer';
-            link.addEventListener('click', function (e) { e.stopPropagation(); showSectionProductsModal(doc, sec); });
+            (function (secId) {
+              link.addEventListener('click', function (e) {
+                e.stopPropagation();
+                try { window.top.location.assign('products-list.php?trait=' + encodeURIComponent(secId)); }
+                catch (err) { window.location.assign('products-list.php?trait=' + encodeURIComponent(secId)); }
+              });
+            })(sec.id);
             cell.appendChild(link);
           } else {
             cell.textContent = '0';
@@ -6772,7 +6779,7 @@ li.tp-row--selected > div {
       ],
       pagination: { perPage: 50 },
       footer: {
-        version: 'v4.5.39',
+        version: 'v4.5.40',
         links: [
           { label: 'Propozycja', icon: 'star', tooltip: 'Zaproponuj funkcjonalność', variant: 'feature', href: 'https://github.com/design4artPl/tampermonkey/issues/new?labels=enhancement', target: '_blank' },
           { label: 'Zgłoś błąd', icon: 'bug_report', tooltip: 'Zgłoś błąd', variant: 'bug', href: 'https://github.com/design4artPl/tampermonkey/issues/new?labels=bug', target: '_blank' }
