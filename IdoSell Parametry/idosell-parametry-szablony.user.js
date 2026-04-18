@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         IdoSell - Parametry Toolbar
 // @namespace    https://idosell.com/
-// @version      4.5.33
+// @version      4.5.34
 // @description  Toolbar do grupowej edycji parametrow: panel-pro v1.2.4 inline + new-panel support, checkboxy, zaznaczanie, rozwijanie/zwijanie, grupowe usuwanie/edycja, import CSV
 // @author       SyncOffer
 // @match        https://*.iai-shop.com/panel/app/parameters.php*
@@ -97,10 +97,9 @@
     '.panel-pro__dropdown__item .material-symbols-outlined { font-size: 16px; width: 16px; opacity: 0; }',
     '.panel-pro__dropdown__item.panel-pro--active .material-symbols-outlined { opacity: 1; }',
 
-    /* Tooltip */
-    '[data-pp-tooltip] { position: relative; }',
-    '[data-pp-tooltip]::after { content: attr(data-pp-tooltip); position: absolute; bottom: calc(100% + 8px); left: 50%; transform: translateX(-50%); background: #323232; color: #fff; font-size: 12px; padding: 6px 10px; border-radius: 6px; white-space: nowrap; box-shadow: 0 2px 8px rgba(0,0,0,0.2); opacity: 0; visibility: hidden; transition: opacity 0.15s, visibility 0.15s; pointer-events: none; z-index: 99999; text-transform: none; letter-spacing: 0; font-weight: 400; font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; }',
-    '[data-pp-tooltip]:hover::after { opacity: 1; visibility: visible; }',
+    /* Tooltip (portal: rendered into <body>, escapes overflow:hidden ancestors) */
+    '.panel-pro__tooltip { position: fixed; background: #323232; color: #fff; font-size: 12px; padding: 6px 10px; border-radius: 6px; max-width: 320px; box-shadow: 0 2px 8px rgba(0,0,0,0.2); pointer-events: none; z-index: 2147483647; text-transform: none; letter-spacing: 0; font-weight: 400; line-height: 1.35; font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; opacity: 0; transition: opacity 0.12s; }',
+    '.panel-pro__tooltip--visible { opacity: 1; }',
 
     /* Header wrapper holds thead + selection bar overlay */
     '.panel-pro__header-wrapper { position: relative; overflow: hidden; }',
@@ -188,6 +187,74 @@
     style.id = STYLE_ID;
     style.textContent = CSS;
     doc.head.appendChild(style);
+  }
+
+  // v1.2.5: portal tooltip — attach once per document so tooltips escape overflow:hidden ancestors
+  var _tooltipEl = null, _tooltipTarget = null, _tooltipShowTimer = null, _tooltipHideTimer = null;
+  function installPortalTooltips(doc) {
+    if (doc.defaultView && doc.defaultView.__panelProTooltipsInstalled) return;
+    if (doc.defaultView) doc.defaultView.__panelProTooltipsInstalled = true;
+
+    function ensureEl() {
+      if (_tooltipEl && _tooltipEl.isConnected) return _tooltipEl;
+      _tooltipEl = doc.createElement('div');
+      _tooltipEl.className = 'panel-pro__tooltip';
+      doc.body.appendChild(_tooltipEl);
+      return _tooltipEl;
+    }
+
+    function positionFor(target) {
+      var rect = target.getBoundingClientRect();
+      var tEl = ensureEl();
+      tEl.style.top = '-9999px'; tEl.style.left = '-9999px';
+      tEl.textContent = target.getAttribute('data-pp-tooltip') || '';
+      // measure
+      var tw = tEl.offsetWidth, th = tEl.offsetHeight;
+      var vw = (doc.defaultView || window).innerWidth;
+      var left = rect.left + (rect.width / 2) - (tw / 2);
+      if (left < 6) left = 6;
+      if (left + tw > vw - 6) left = vw - tw - 6;
+      var top = rect.top - th - 8;
+      if (top < 6) top = rect.bottom + 8;
+      tEl.style.left = Math.round(left) + 'px';
+      tEl.style.top = Math.round(top) + 'px';
+    }
+
+    function show(target) {
+      if (!target || !target.getAttribute) return;
+      var txt = target.getAttribute('data-pp-tooltip');
+      if (!txt) return;
+      _tooltipTarget = target;
+      clearTimeout(_tooltipHideTimer);
+      clearTimeout(_tooltipShowTimer);
+      _tooltipShowTimer = setTimeout(function () {
+        if (_tooltipTarget !== target) return;
+        var tEl = ensureEl();
+        tEl.textContent = txt;
+        positionFor(target);
+        tEl.classList.add('panel-pro__tooltip--visible');
+      }, 120);
+    }
+
+    function hide() {
+      _tooltipTarget = null;
+      clearTimeout(_tooltipShowTimer);
+      clearTimeout(_tooltipHideTimer);
+      _tooltipHideTimer = setTimeout(function () {
+        if (_tooltipEl) _tooltipEl.classList.remove('panel-pro__tooltip--visible');
+      }, 60);
+    }
+
+    doc.addEventListener('mouseover', function (e) {
+      var t = e.target && e.target.closest ? e.target.closest('[data-pp-tooltip]') : null;
+      if (t) show(t);
+    }, true);
+    doc.addEventListener('mouseout', function (e) {
+      var t = e.target && e.target.closest ? e.target.closest('[data-pp-tooltip]') : null;
+      if (t && t === _tooltipTarget) hide();
+    }, true);
+    doc.addEventListener('scroll', function () { hide(); }, true);
+    doc.addEventListener('click', function () { hide(); }, true);
   }
 
   function injectMaterialFont(doc) {
