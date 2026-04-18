@@ -571,6 +571,7 @@
 
     injectStyles(doc);
     injectMaterialFont(doc);
+    installPortalTooltips(doc);
 
     var columns = options.columns || [];
     var gridTemplate = gridTemplateFromColumns(columns);
@@ -6644,7 +6645,7 @@ li.tp-row--selected > div {
       ],
       pagination: { perPage: 50 },
       footer: {
-        version: 'v4.5.33',
+        version: 'v4.5.34',
         links: [
           { label: 'Propozycja', icon: 'star', tooltip: 'Zaproponuj funkcjonalność', variant: 'feature', href: 'https://github.com/design4artPl/tampermonkey/issues/new?labels=enhancement', target: '_blank' },
           { label: 'Zgłoś błąd', icon: 'bug_report', tooltip: 'Zgłoś błąd', variant: 'bug', href: 'https://github.com/design4artPl/tampermonkey/issues/new?labels=bug', target: '_blank' }
