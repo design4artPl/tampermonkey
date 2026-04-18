@@ -115,6 +115,7 @@
     /* Selection bar — display toggle */
     '.panel-pro__selection-bar { position: absolute; top: 0; left: 0; width: 100%; height: 100%; background: #eff6ff; border-bottom: 1px solid #bfdbfe; display: none; column-gap: 10px; align-items: center; z-index: 5; box-sizing: border-box; }',
     '.panel-pro__selection-bar.panel-pro--visible { display: grid; }',
+    '.panel-pro__selection-bar--floating { position: fixed !important; top: 0 !important; height: auto !important; min-height: 48px; padding: 6px 0; z-index: 1000; box-shadow: 0 2px 8px rgba(0,0,0,0.15); border-radius: 0 0 8px 8px; }',
     '.panel-pro__selection-bar > div { padding: 0 8px; min-width: 0; }',
     '.panel-pro__selection-bar__check { display: flex; align-items: center; justify-content: center; }',
     '.panel-pro__selection-bar__check input { accent-color: #1a73e8; width: 16px; height: 16px; cursor: pointer; }',
@@ -647,6 +648,35 @@
 
     if (options.treeRoot) body.appendChild(options.treeRoot);
 
+    // v1.2.5: floating selection bar when the card scrolls off the top of the viewport
+    var _floatAttached = false;
+    function updateSelectionBarFloat() {
+      if (!selectionBar) return;
+      if (!selectionBar.classList.contains('panel-pro--visible')) {
+        if (_floatAttached) {
+          selectionBar.classList.remove('panel-pro__selection-bar--floating');
+          selectionBar.style.left = ''; selectionBar.style.width = ''; selectionBar.style.top = '';
+          _floatAttached = false;
+        }
+        return;
+      }
+      var rect = cardEl.getBoundingClientRect();
+      var shouldFloat = rect.top < 0 && rect.bottom > 60;
+      if (shouldFloat) {
+        selectionBar.classList.add('panel-pro__selection-bar--floating');
+        selectionBar.style.left = Math.round(rect.left) + 'px';
+        selectionBar.style.width = Math.round(rect.width) + 'px';
+        _floatAttached = true;
+      } else if (_floatAttached) {
+        selectionBar.classList.remove('panel-pro__selection-bar--floating');
+        selectionBar.style.left = ''; selectionBar.style.width = '';
+        _floatAttached = false;
+      }
+    }
+    var _ppWin = doc.defaultView || window;
+    _ppWin.addEventListener('scroll', updateSelectionBarFloat, true);
+    _ppWin.addEventListener('resize', updateSelectionBarFloat);
+
     var api = {
       version: VERSION,
       root: cardEl,
@@ -672,6 +702,7 @@
         } else {
           selectionBar.classList.remove('panel-pro--visible');
         }
+        updateSelectionBarFloat();
       },
       findToolbarBtn: function (id) { return cardEl.querySelector('.panel-pro__btn[data-pp-id="' + id + '"]') || cardEl.querySelector('.panel-pro__opsbar-btn[data-pp-id="' + id + '"]'); },
       destroy: function () {
