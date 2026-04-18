@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         IdoSell - Parametry Toolbar
 // @namespace    https://idosell.com/
-// @version      4.5.36
+// @version      4.5.37
 // @description  Toolbar do grupowej edycji parametrow: panel-pro v1.2.4 inline + new-panel support, checkboxy, zaznaczanie, rozwijanie/zwijanie, grupowe usuwanie/edycja, import CSV
 // @author       SyncOffer
 // @match        https://*.iai-shop.com/panel/app/parameters.php*
@@ -6300,6 +6300,16 @@ li.tp-row--selected > div {
           '<span class="material-symbols-outlined" data-act="delete" title="Usu\u0144 sekcj\u0119" style="cursor:pointer;color:#dc2626;font-size:20px">delete</span>' +
         '</div>';
 
+      // v4.5.37: checkbox drives row highlight (same classes parameters use)
+      var rowCb = li.querySelector('input.tp-checkbox');
+      if (rowCb) {
+        rowCb.addEventListener('click', function (e) { e.stopPropagation(); });
+        rowCb.addEventListener('change', function () {
+          li.classList.toggle('tp-row--selected', rowCb.checked);
+          li.classList.toggle('panel-pro--selected', rowCb.checked);
+        });
+      }
+
       li.querySelectorAll('[data-act]').forEach(function (btn) {
         btn.addEventListener('click', function (e) {
           e.stopPropagation();
@@ -6350,13 +6360,18 @@ li.tp-row--selected > div {
     });
   }
 
+  function _setSectionRowSelected(li, on) {
+    li.classList.toggle('tp-row--selected', !!on);
+    li.classList.toggle('panel-pro--selected', !!on);
+  }
+
   function toggleAllSections(doc, on) {
     if (!_sectionsMount || !_sectionsMount.listEl) return;
     var items = _sectionsMount.listEl.querySelectorAll(':scope > li');
     items.forEach(function (li) {
       if (li.classList.contains('panel-pro--filter-hidden')) return;
       var cb = li.querySelector('input.tp-checkbox');
-      if (cb) cb.checked = !!on;
+      if (cb) { cb.checked = !!on; _setSectionRowSelected(li, on); }
     });
   }
 
@@ -6366,7 +6381,7 @@ li.tp-row--selected > div {
     items.forEach(function (li) {
       if (li.classList.contains('panel-pro--filter-hidden')) return;
       var cb = li.querySelector('input.tp-checkbox');
-      if (cb) cb.checked = !cb.checked;
+      if (cb) { cb.checked = !cb.checked; _setSectionRowSelected(li, cb.checked); }
     });
   }
 
@@ -6645,7 +6660,7 @@ li.tp-row--selected > div {
       ],
       pagination: { perPage: 50 },
       footer: {
-        version: 'v4.5.36',
+        version: 'v4.5.37',
         links: [
           { label: 'Propozycja', icon: 'star', tooltip: 'Zaproponuj funkcjonalność', variant: 'feature', href: 'https://github.com/design4artPl/tampermonkey/issues/new?labels=enhancement', target: '_blank' },
           { label: 'Zgłoś błąd', icon: 'bug_report', tooltip: 'Zgłoś błąd', variant: 'bug', href: 'https://github.com/design4artPl/tampermonkey/issues/new?labels=bug', target: '_blank' }
