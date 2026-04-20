@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         IdoSell - Parametry Toolbar
 // @namespace    https://idosell.com/
-// @version      4.5.41
+// @version      4.5.42
 // @description  Toolbar do grupowej edycji parametrow: panel-pro v1.2.4 inline + new-panel support, checkboxy, zaznaczanie, rozwijanie/zwijanie, grupowe usuwanie/edycja, import CSV
 // @author       SyncOffer
 // @match        https://*.iai-shop.com/panel/app/parameters.php*
@@ -6772,7 +6772,7 @@ li.tp-row--selected > div {
       ],
       pagination: { perPage: 50 },
       footer: {
-        version: 'v4.5.41',
+        version: 'v4.5.42',
         links: [
           { label: 'Propozycja', icon: 'star', tooltip: 'Zaproponuj funkcjonalność', variant: 'feature', href: 'https://github.com/design4artPl/tampermonkey/issues/new?labels=enhancement', target: '_blank' },
           { label: 'Zgłoś błąd', icon: 'bug_report', tooltip: 'Zgłoś błąd', variant: 'bug', href: 'https://github.com/design4artPl/tampermonkey/issues/new?labels=bug', target: '_blank' }
@@ -6848,9 +6848,16 @@ li.tp-row--selected > div {
     try {
       var r = await fetchAjax('action=numberOfOccurrence&id=' + encodeURIComponent(valueId));
       var n = (r && r.data && r.data.numberOfProduct) ? Number(r.data.numberOfProduct) : 0;
-      var ids = (r && r.data && Array.isArray(r.data.products))
-        ? r.data.products.map(function (p) { return String(typeof p === 'object' ? (p.id || p.product_id) : p); })
-        : [];
+      var raw = r && r.data ? r.data.products : null;
+      var ids = [];
+      if (Array.isArray(raw)) {
+        ids = raw.map(function (p) { return String(typeof p === 'object' ? (p.id || p.product_id) : p); });
+      } else if (raw && typeof raw === 'object') {
+        ids = Object.keys(raw).map(function (k) {
+          var p = raw[k];
+          return String(typeof p === 'object' ? (p.id || p.product_id) : p);
+        });
+      }
       return { count: n, productIds: ids };
     } catch (e) { return { count: 0, productIds: [] }; }
   }
