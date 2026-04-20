@@ -4579,6 +4579,7 @@ li.tp-row--selected > div {
     { key: 'priority', label: 'Priorytet (globalny)', type: 'number' },
     { key: 'auction_template_hide', label: 'Ukryty dla szablonow aukcji', options: [['y', 'Tak'], ['n', 'Nie']] },
     { key: 'price_config', label: 'Parametr konfiguratora cen', options: [['y', 'Tak'], ['n', 'Nie']] },
+    { key: 'group_distinction', label: 'Parametr rozrozniajacy towary w grupie', options: [['y', 'Tak'], ['n', 'Nie']] },
   ];
 
   function showBulkEditModal(doc) {
@@ -4919,7 +4920,7 @@ li.tp-row--selected > div {
     }
 
     // These operations are per-product (saveParametersChanges), not global (setSettings)
-    const PER_PRODUCT_OPS = ['distinction', 'projector_hide', 'auction_template_hide', 'price_config'];
+    const PER_PRODUCT_OPS = ['distinction', 'projector_hide', 'auction_template_hide', 'price_config', 'group_distinction'];
     const perProductOverrides = {};
     const globalOverrides = {};
     for (const [key, val] of Object.entries(overrides)) {
