@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         IdoSell - Masowe stany magazynowe
 // @namespace    https://idosell.com/
-// @version      1.5.3
+// @version      1.5.4
 // @description  Masowe ustawianie trybu gospodarki, stanu JEST/NIEMA, ilości na magazynach. Z uploadem CSV/XML (z size_id/size_name).
 // @author       SyncOffer
 // @match        https://*.iai-shop.com/panel/app/products-list.php*
@@ -110,6 +110,55 @@
         const body = 'products=' + encodeURIComponent(JSON.stringify(products))
             + '&types=' + encodeURIComponent(JSON.stringify(types));
         return ajaxPost(win, '/panel/ajax/product-reservations.php?action=cleanQuantity', body);
+    }
+
+    /** Pobiera aktualne stany ilościowe per sizeId dla danego towaru i magazynu.
+     *  Parsuje toplayer addStocksQuantity — input.stock-value[size-id] + sąsiedni <span> z aktualną wartością. */
+    async function getCurrentQuantities(win, productId, stockId) {
+        const url = `/panel/ajax/product-edit-aceform-toplayers.php?name=addStocksQuantity&idt=${productId}&stock=${stockId}`;
+        const html = await rawPost(win, url, `id=stocksQuantity&stock=${stockId}`);
+        const doc = new DOMParser().parseFromString(html, 'text/html');
+        const out = {};
+        doc.querySelectorAll('input.stock-value').forEach(inp => {
+            const sid = inp.getAttribute('size-id');
+            if (!sid) return;
+            // current value is in next td > span
+            const td = inp.closest('td');
+            const nextTd = td && td.nextElementSibling;
+            const span = nextTd && nextTd.querySelector('span');
+            const cur = span ? Number(String(span.textContent).trim()) : 0;
+            out[sid] = isNaN(cur) ? 0 : cur;
+        });
+        return out;
+    }
+
+    /** Zapisuje operację dodania/odjęcia ilości magazynowych.
+     *  operation: 'add' | 'substract', quantities: {sizeId: liczba} */
+    function saveStockQuantity(win, productId, stockId, quantities, operation) {
+        const params = new URLSearchParams();
+        params.append('product', productId);
+        params.append('stock', String(stockId));
+        params.append('operation', operation);
+        params.append('note', '');
+        params.append('sizegroup', '');
+        params.append('ulamki', '');
+        for (const [sid, qty] of Object.entries(quantities)) {
+            params.append(`quantity[${sid}]`, String(qty));
+        }
+        return ajaxPost(win, '/panel/product-edit-quantity.php?action=save', params.toString());
+    }
+
+    /** Ustawia docelową ilość: czyta aktualny stan, wylicza różnicę, wywołuje add/substract. */
+    async function setTargetQuantity(win, productId, stockId, sizeId, targetQty) {
+        const target = Number(targetQty);
+        if (isNaN(target) || target < 0) throw new Error(`zła ilość docelowa: ${targetQty}`);
+        const cur = await getCurrentQuantities(win, productId, stockId);
+        const currentQty = cur[sizeId] !== undefined ? cur[sizeId] : 0;
+        const diff = target - currentQty;
+        if (diff === 0) return { changed: false, current: currentQty, target };
+        const op = diff > 0 ? 'add' : 'substract';
+        const r = await saveStockQuantity(win, productId, stockId, { [sizeId]: Math.abs(diff) }, op);
+        return { changed: true, current: currentQty, target, op, diff: Math.abs(diff), response: r };
     }
 
     /** Pobiera rozmiary produktu z parami {id, name} */
@@ -872,6 +921,9 @@
             if (state.mode === 'auto') {
                 intro.textContent = 'Plik powinien zawierać identyfikator towaru, identyfikator magazynu, identyfikator lub nazwę rozmiaru oraz ilość — po jednym wpisie na linię.';
                 spec.innerHTML = `CSV: <code>id_towaru;id_magazynu;id_lub_nazwa_rozmiaru;ilość</code><br>XML: <code>&lt;item id="123" warehouse="0" size="M" qty="10"/&gt;</code> <span style="color:#b0b8c9;margin-left:6px">(rozmiar: <code>uniw</code> dla towarów bez rozmiarów)</span>`;
+            } else if (state.mode === 'skip') {
+                intro.textContent = 'Plik powinien zawierać identyfikator towaru, identyfikator magazynu, identyfikator lub nazwę rozmiaru oraz wartość — po jednym wpisie na linię.';
+                spec.innerHTML = `CSV: <code>id_towaru;id_magazynu;id_lub_nazwa_rozmiaru;wartość</code><br><span style="color:#b0b8c9">Wartość: <code>0</code> lub <code>1</code> → stan ręczny (NIEMA / JEST); liczba ≥ 2 → ilość (tryb auto). Rozmiar <code>uniw</code> dla towarów bez rozmiarów.</span><br>XML: <code>&lt;item id="123" warehouse="0" size="M" qty="10"/&gt;</code> lub <code>&lt;item ... available="1"/&gt;</code>`;
             } else {
                 intro.textContent = 'Plik powinien zawierać identyfikator towaru, identyfikator magazynu, identyfikator lub nazwę rozmiaru oraz stan (1=JEST, 0=NIEMA) — po jednym wpisie na linię.';
                 spec.innerHTML = `CSV: <code>id_towaru;id_magazynu;id_lub_nazwa_rozmiaru;stan</code> <span style="color:#b0b8c9;margin-left:6px">(stan: 1 = JEST, 0 = NIEMA; rozmiar: <code>uniw</code> dla towarów bez rozmiarów)</span><br>XML: <code>&lt;item id="123" warehouse="0" size="M" available="1"/&gt;</code>`;
@@ -991,7 +1043,7 @@
                 c.innerHTML = `<div id="ms-finite-file-zone"></div>
                     <div class="ms-format-info">
                         <div class="ms-format-title">Wymagany format pliku</div>
-                        <div class="ms-format-line">CSV: <code>id_towaru;id_magazynu;ilość</code> &middot; XML: <code>&lt;item id="123" warehouse="0" qty="10"/&gt;</code></div>
+                        <div class="ms-format-line">CSV: <code>id_towaru;id_magazynu;id_lub_nazwa_rozmiaru;ilość</code> &middot; XML: <code>&lt;item id="123" warehouse="0" size="M" qty="10"/&gt;</code></div>
                     </div>`;
                 renderFiniteFileZone();
             }
@@ -1185,8 +1237,36 @@
 
         // Krok 2c: tryb auto + finite + value
         if (state.mode === 'auto' && state.stock === 'finite' && state.finiteMode === 'value') {
-            log(`Ustawianie ilości = ${state.quantity} szt. dla magazynów [${state.warehouses.filter(w => targetStocks.includes(w.stockId)).map(w => w.code).join(', ')}]`, 'info');
-            log(`UWAGA: Funkcja w przygotowaniu — ustawianie konkretnej ilości w trybie auto wymaga implementacji POST do product-edit-quantity. Na razie tylko zmiana trybu została wykonana.`, 'warn');
+            const target = Number(state.quantity);
+            const codes = state.warehouses.filter(w => targetStocks.includes(w.stockId)).map(w => w.code).join(', ');
+            log(`Ustawianie ilości = ${target} szt. dla magazynów [${codes}]`, 'info');
+
+            let i = 0;
+            for (const pid of productIds) {
+                i++;
+                onProgress(30 + Math.round((i / productIds.length) * 70));
+                try {
+                    const sd = await fetchProductSizes(win, pid);
+                    if (!sd.sizes.length) { log(`Towar ${pid} → brak rozmiarów`, 'warn'); continue; }
+                    let ok = 0, err = 0, noChange = 0;
+                    for (const stockId of targetStocks) {
+                        for (const sizeObj of sd.sizes) {
+                            try {
+                                const r = await setTargetQuantity(win, pid, stockId, sizeObj.id, target);
+                                if (!r.changed) noChange++;
+                                else ok++;
+                            } catch (e) { err++; }
+                            await sleep(60);
+                        }
+                    }
+                    const cls = err ? 'error' : (ok ? 'success' : 'warn');
+                    const ncMsg = noChange ? ` (${noChange} bez zmian)` : '';
+                    log(`Towar ${pid} → ${ok} OK / ${err} bł.${ncMsg}`, cls);
+                } catch (e) {
+                    log(`Towar ${pid} → BŁĄD: ${e.message}`, 'error');
+                }
+                await sleep(120);
+            }
         }
 
         // Krok 2d: tryb auto + finite + file
@@ -1236,10 +1316,17 @@
                     continue;
                 }
 
-                if (state.mode === 'manual' || state.mode === 'skip') {
-                    // stan ręczny: 1 = JEST (-1), 0 = NIEMA (0)
-                    const v = String(row.value).trim().toLowerCase();
-                    if (v !== '0' && v !== '1' && v !== 'y' && v !== 'n' && v !== 'true' && v !== 'false') {
+                // Decyzja semantyki wartości:
+                // - tryb 'manual' → zawsze stan (1=JEST, 0=NIEMA)
+                // - tryb 'auto'   → zawsze ilość liczbowa
+                // - tryb 'skip'   → autodetekcja po wartości: 0/1/y/n/true/false → stan, inaczej → ilość
+                const v = String(row.value).trim().toLowerCase();
+                const isStateVal = (v === '0' || v === '1' || v === 'y' || v === 'n' || v === 'true' || v === 'false');
+                const treatAsState = state.mode === 'manual' || (state.mode === 'skip' && isStateVal);
+                const treatAsQty = state.mode === 'auto' || (state.mode === 'skip' && !isStateVal);
+
+                if (treatAsState) {
+                    if (!isStateVal) {
                         err++;
                         log(`Wiersz ${i} (towar ${pid}): zła wartość "${row.value}" — w trybie ręcznym oczekiwane 0 lub 1`, 'error');
                         continue;
@@ -1258,9 +1345,26 @@
                             log(`Wiersz ${i}: towar ${pid} mag=${stockId} rozm=${resolvedSizeId} → bez zmian (już ustawione)`, 'warn');
                         }
                     } catch (e) { err++; log(`Wiersz ${i}: ${e.message}`, 'error'); }
-                } else {
-                    // auto + qty — placeholder
-                    log(`Towar ${pid} mag=${stockId} rozm=${resolvedSizeId} qty=${row.value}: ustawianie ilości w przygotowaniu`, 'warn');
+                } else if (treatAsQty) {
+                    const target = Number(row.value);
+                    if (isNaN(target) || target < 0 || !Number.isInteger(target)) {
+                        err++;
+                        log(`Wiersz ${i} (towar ${pid}): zła ilość "${row.value}" — oczekiwana liczba całkowita ≥ 0`, 'error');
+                        continue;
+                    }
+                    try {
+                        const r = await setTargetQuantity(win, pid, stockId, resolvedSizeId, target);
+                        if (!r.changed) {
+                            noChange++;
+                            log(`Wiersz ${i}: towar ${pid} mag=${stockId} rozm=${resolvedSizeId} → ${target} szt. (bez zmian)`, 'warn');
+                        } else {
+                            ok++;
+                            log(`Wiersz ${i}: towar ${pid} mag=${stockId} rozm=${resolvedSizeId} → ${target} szt. (${r.op} ${r.diff} z ${r.current})`, 'success');
+                        }
+                    } catch (e) {
+                        err++;
+                        log(`Wiersz ${i} (towar ${pid} mag=${stockId} rozm=${resolvedSizeId}): ${e.message}`, 'error');
+                    }
                 }
             } catch (e) {
                 err++;
