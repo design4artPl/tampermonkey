@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         IdoSell - Masowe stany magazynowe
 // @namespace    https://idosell.com/
-// @version      1.5.7
+// @version      1.5.8
 // @description  Masowe ustawianie trybu gospodarki, stanu JEST/NIEMA, ilości na magazynach. Z uploadem CSV/XML (z size_id/size_name).
 // @author       SyncOffer
 // @match        https://*.iai-shop.com/panel/app/products-list.php*
@@ -246,6 +246,9 @@
                 const code = cells[0].textContent.trim();
                 const name = cells[1].textContent.trim();
                 if (!code || !code.match(/^M[\dA-Z]+$/)) return;
+                // MM = magazyn przesunięć, MP = magazyn przedsprzedaży —
+                // do tych magazynów nie można wstawiać stanów.
+                if (code === 'MM' || code === 'MP') return;
 
                 let stockId = null;
                 const editLink = row.querySelector('a[href*="stock.php?action=edit"]');
