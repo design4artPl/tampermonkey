@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         IdoSell - Masowe stany magazynowe
 // @namespace    https://idosell.com/
-// @version      1.5.4
+// @version      1.5.5
 // @description  Masowe ustawianie trybu gospodarki, stanu JEST/NIEMA, ilości na magazynach. Z uploadem CSV/XML (z size_id/size_name).
 // @author       SyncOffer
 // @match        https://*.iai-shop.com/panel/app/products-list.php*
@@ -348,17 +348,26 @@
         @import url('https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;600&display=swap');
 
         .ms-overlay {
-            position:fixed;inset:0;background:rgba(26,26,46,.45);
-            z-index:100000;display:flex;align-items:flex-start;justify-content:center;
-            padding:30px 16px;backdrop-filter:blur(2px);overflow-y:auto;
+            position:fixed;inset:0;background:rgba(26,26,46,.35);
+            z-index:100000;
             font-family:'DM Sans',sans-serif;
+            opacity:0; transition:opacity .25s ease;
+            pointer-events:auto;
         }
+        .ms-overlay.ms-open { opacity:1; }
         .ms-modal {
-            width:100%;max-width:620px;background:#f4f5f7;
-            border-radius:18px;box-shadow:0 20px 60px rgba(0,0,0,.25),0 4px 12px rgba(0,0,0,.08);
-            overflow:hidden;color:#1a1a2e;
+            position:fixed; top:0; right:0; bottom:0;
+            width:100%; max-width:540px;
+            background:#f4f5f7;
+            box-shadow:-12px 0 50px rgba(0,0,0,.1),-2px 0 6px rgba(0,0,0,.04);
+            border-radius:16px 0 0 16px;
+            overflow:hidden; color:#1a1a2e;
+            display:flex; flex-direction:column;
+            transform:translateX(100%);
+            transition:transform .35s cubic-bezier(.16,1,.3,1);
         }
-        .ms-hdr {
+        .ms-overlay.ms-open .ms-modal { transform:translateX(0); }
+        .ms-hdr { flex-shrink:0;
             padding:18px 22px;background:#fff;
             display:flex;align-items:center;justify-content:space-between;
             border-bottom:1px solid #eef0f4;
@@ -379,7 +388,7 @@
         }
         .ms-hdr-close:hover { background:#f0f2f5;color:#344054; }
 
-        .ms-body { padding:14px 16px 6px; }
+        .ms-body { padding:14px 16px 6px; flex:1; overflow-y:auto; }
 
         .ms-card {
             background:#fff;border-radius:14px;border:1px solid #eef0f4;
@@ -574,7 +583,7 @@
         .ms-log-line.ms-done { color:#4f8cff; }
         .ms-log-line.ms-warn { color:#ff9800; }
 
-        .ms-ft {
+        .ms-ft { flex-shrink:0;
             padding:14px 22px;background:#fff;border-top:1px solid #eef0f4;
             display:flex;align-items:center;justify-content:flex-end;gap:8px;
         }
@@ -780,11 +789,16 @@
         ov.className = 'ms-overlay';
         ov.innerHTML = modalHtml(productIds.length);
         doc.body.appendChild(ov);
+        // Animacja wjazdu drawera
+        requestAnimationFrame(() => ov.classList.add('ms-open'));
 
         const $ = (sel) => ov.querySelector(sel);
         const $$ = (sel) => Array.from(ov.querySelectorAll(sel));
 
-        const close = () => ov.remove();
+        const close = () => {
+            ov.classList.remove('ms-open');
+            setTimeout(() => ov.remove(), 320);
+        };
         $('#ms-close').onclick = close;
         $('#ms-cancel').onclick = close;
         ov.addEventListener('click', e => { if (e.target === ov) close(); });
@@ -1376,66 +1390,112 @@
     }
 
     /* ═══════════════════════════════════════════
-       PASEK PANELPRO + PRZYCISK
+       PŁYWAJĄCY TAB PANELPRO (slim trigger po prawej)
        ═══════════════════════════════════════════ */
-    function getOrCreatePanelProBar(doc) {
-        let bar = doc.querySelector('#panelpro-bar');
-        if (bar) return bar;
+    const TAB_CSS = `
+        #pp-tab {
+            position:fixed; right:0; top:50%; transform:translateY(-50%);
+            height:38px; border:1px solid #e0e3ea; border-right:none;
+            background:#fff; padding:0 10px;
+            color:#98a2b3; cursor:pointer;
+            display:flex; align-items:center; gap:0;
+            border-radius:8px 0 0 8px;
+            box-shadow:-2px 0 10px rgba(0,0,0,.05);
+            transition:right .35s cubic-bezier(.16,1,.3,1), background .15s, color .15s, border-color .15s, gap .2s, padding .2s;
+            z-index:99990;
+            overflow:hidden; white-space:nowrap;
+            font-family:'DM Sans',-apple-system,BlinkMacSystemFont,'Segoe UI',Arial,sans-serif;
+        }
+        #pp-tab:hover:not(:disabled) {
+            background:#f5f8ff; color:#4f8cff; border-color:#c0cfff;
+            gap:8px; padding-right:14px;
+        }
+        #pp-tab:hover:not(:disabled) #pp-tab-label {
+            max-width:240px; opacity:1;
+        }
+        #pp-tab:disabled {
+            cursor:not-allowed; opacity:.6;
+        }
+        #pp-tab svg { width:16px; height:16px; flex-shrink:0; }
+        #pp-tab-label {
+            max-width:0; opacity:0; overflow:hidden;
+            font-size:12px; font-weight:600;
+            transition:max-width .25s ease, opacity .2s ease;
+        }
+        #pp-tab-badge {
+            margin-left:6px; min-width:18px; padding:0 6px; height:18px;
+            background:#4f8cff; color:#fff; font-size:11px; font-weight:700;
+            border-radius:9px;
+            display:none; align-items:center; justify-content:center; line-height:1;
+        }
+        #pp-tab-badge.pp-show { display:inline-flex; }
+    `;
 
-        const bottomMenu = doc.querySelector('#bottom_menu_products');
-        if (!bottomMenu) return null;
+    const ICON_BOX = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M21 16V8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16z"/><polyline points="3.27 6.96 12 12.01 20.73 6.96"/><line x1="12" y1="22.08" x2="12" y2="12"/></svg>';
 
-        if (!doc.querySelector('#panelpro-bar-css')) {
+    function injectFloatingWidget(doc) {
+        if (doc.querySelector('#pp-tab')) return;
+
+        if (!doc.querySelector('#pp-tab-css')) {
             const style = doc.createElement('style');
-            style.id = 'panelpro-bar-css';
-            style.textContent = `
-                #panelpro-bar { display:flex;flex-wrap:wrap;gap:8px;align-items:center;background:#fff;padding:10px 16px;border:1px solid #e2e8f0;border-radius:6px;box-shadow:0 1px 2px rgba(0,0,0,0.04);margin-top:6px; }
-                #panelpro-bar .pp-label { color:#e67e22;font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:0.5px;margin-right:4px; }
-                #panelpro-bar .pp-btn { display:inline-flex;align-items:center;gap:5px;padding:5px 12px;border:1px solid #e2e8f0;border-radius:4px;background:#fff;color:#334155;font-size:13px;font-weight:600;cursor:pointer;text-decoration:none;white-space:nowrap;transition:.15s;font-family:inherit; }
-                #panelpro-bar .pp-btn:hover { background:#f8fafc;border-color:#cbd5e1; }
-                #panelpro-bar .pp-btn:disabled { opacity:0.5;cursor:not-allowed; }
-                #panelpro-bar .pp-btn .fa { font-size:14px;color:#64748b; }
-            `;
+            style.id = 'pp-tab-css';
+            style.textContent = TAB_CSS;
             doc.head.appendChild(style);
         }
 
-        bar = doc.createElement('div');
-        bar.id = 'panelpro-bar';
-        const label = doc.createElement('span');
-        label.className = 'pp-label';
-        label.textContent = 'PanelPro:';
-        bar.appendChild(label);
-        bottomMenu.parentNode.insertBefore(bar, bottomMenu.nextSibling);
-        return bar;
-    }
+        const tab = doc.createElement('button');
+        tab.id = 'pp-tab';
+        tab.type = 'button';
+        tab.disabled = true;
+        tab.innerHTML = `${ICON_BOX}<span id="pp-tab-label">Zmiana stanów magazynowych<span id="pp-tab-badge">0</span></span>`;
+        doc.body.appendChild(tab);
 
-    function injectStockButton(doc) {
-        if (doc.querySelector('#bs-stockAction')) return;
-        const bar = getOrCreatePanelProBar(doc);
-        if (!bar) return;
+        const badge = doc.querySelector('#pp-tab-badge');
 
-        const btn = doc.createElement('button');
-        btn.id = 'bs-stockAction';
-        btn.className = 'pp-btn';
-        btn.disabled = true;
-        btn.innerHTML = '<i class="fa fa-archive"></i> Stany magazynowe';
-        btn.addEventListener('click', () => {
+        tab.addEventListener('click', () => {
             const win = getIframeWin();
             const ids = getSelectedProductIds(doc, win);
             if (!ids.length) return;
             openModal(doc, win, ids);
         });
-        bar.appendChild(btn);
 
-        const win = getIframeWin();
-        if (win && win.IAI && win.IAI.Table && win.IAI.Table.actualizeLabelAndButtons) {
-            const orig = win.IAI.Table.actualizeLabelAndButtons;
-            win.IAI.Table.actualizeLabelAndButtons = function () {
-                orig.apply(this, arguments);
-                const ids = getSelectedProductIds(doc, win);
-                btn.disabled = ids.length === 0;
-            };
+        // Niezawodna detekcja zaznaczenia: hook IAI.Table + click delegation +
+        // fallback polling co 800ms (na wypadek gdyby panel nie wywołał aktualizacji).
+        function refreshSelection() {
+            const win = getIframeWin();
+            const ids = getSelectedProductIds(doc, win);
+            const n = ids.length;
+            tab.disabled = n === 0;
+            badge.textContent = n > 99 ? '99+' : String(n);
+            badge.classList.toggle('pp-show', n > 0);
+            tab.title = n === 0 ? 'PanelPro — zaznacz towary' : `PanelPro — ${n} zaznaczonych`;
         }
+        refreshSelection();
+
+        function hookSelectionEvents() {
+            const win = getIframeWin();
+            // 1) IAI.Table label update
+            if (win && win.IAI && win.IAI.Table && win.IAI.Table.actualizeLabelAndButtons && !win.IAI.Table.__ppHooked) {
+                const orig = win.IAI.Table.actualizeLabelAndButtons;
+                win.IAI.Table.actualizeLabelAndButtons = function () {
+                    orig.apply(this, arguments);
+                    refreshSelection();
+                };
+                win.IAI.Table.__ppHooked = true;
+            }
+            // 2) Bezpośredni click na checkboxach + change na #select_all
+            doc.addEventListener('click', (e) => {
+                const t = e.target;
+                if (!t) return;
+                if (t.matches && (t.matches('input[type=checkbox]') || t.closest('input[type=checkbox]') || t.closest('tr.iai-table-row'))) {
+                    setTimeout(refreshSelection, 50);
+                }
+            }, true);
+        }
+        hookSelectionEvents();
+
+        // 3) Fallback polling — działa nawet gdy żaden hook nie zadziała.
+        setInterval(refreshSelection, 800);
     }
 
     /* ═══════════════════════════════════════════
@@ -1464,7 +1524,7 @@
                     startPolling();
                     return;
                 }
-                if (cur.querySelector('#bottom_menu_products') && !cur.querySelector('#bs-stockAction')) {
+                if (cur.querySelector('#bottom_menu_products') && !cur.querySelector('#pp-tab')) {
                     injected = false;
                     tryInject();
                 }
@@ -1488,7 +1548,7 @@
     }
 
     waitForIframe(doc => {
-        injectStockButton(doc);
+        injectFloatingWidget(doc);
     });
 
 })();
