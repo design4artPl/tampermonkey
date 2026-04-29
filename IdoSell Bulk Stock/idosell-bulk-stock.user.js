@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         IdoSell - Masowe stany magazynowe
 // @namespace    https://idosell.com/
-// @version      1.5.8
+// @version      1.5.9
 // @description  Masowe ustawianie trybu gospodarki, stanu JEST/NIEMA, ilości na magazynach. Z uploadem CSV/XML (z size_id/size_name).
 // @author       SyncOffer
 // @match        https://*.iai-shop.com/panel/app/products-list.php*
@@ -130,6 +130,23 @@
             out[sid] = isNaN(cur) ? 0 : cur;
         });
         return out;
+    }
+
+    /** Ustawia magazyn M0 (Magazyn obcy) jako nieskończony dla podanych rozmiarów.
+     *  W panelu IdoSell stock=0 z infinity[sizeId]=y i quantity[sizeId]=-1 oznacza nieograniczone stany. */
+    function saveStockUnlimited(win, productId, sizeIds) {
+        const params = new URLSearchParams();
+        params.append('product', productId);
+        params.append('stock', '0');
+        params.append('operation', 'add');
+        params.append('note', '');
+        params.append('sizegroup', '');
+        params.append('ulamki', '');
+        for (const sid of sizeIds) {
+            params.append(`quantity[${sid}]`, '-1');
+            params.append(`infinity[${sid}]`, 'y');
+        }
+        return ajaxPost(win, '/panel/product-edit-quantity.php?action=save', params.toString());
     }
 
     /** Zapisuje operację dodania/odjęcia ilości magazynowych.
@@ -435,6 +452,14 @@
         .ms-radio-text { flex:1; }
         .ms-radio-label { font-size:13.5px;font-weight:600;color:#1a1a2e; }
         .ms-radio-desc { font-size:12px;color:#98a2b3;margin-top:1px; }
+        .ms-unlimited-warn {
+            display:flex;align-items:flex-start;gap:8px;
+            margin-top:8px;padding:10px 12px;
+            background:#fff7e6;border:1px solid #ffd591;border-radius:8px;
+            font-size:12px;color:#8a4d00;line-height:1.45;
+        }
+        .ms-unlimited-warn-icon { font-size:14px;flex-shrink:0;line-height:1.2; }
+        .ms-unlimited-warn code { font-family:'JetBrains Mono',monospace;font-size:11.5px;background:#ffe7ba;padding:1px 5px;border-radius:3px;color:#7a3e00; }
 
         .ms-wh-list {
             margin-top:8px;background:#f8f9fb;border-radius:10px;
@@ -977,6 +1002,31 @@
                         </div>
                     </label>`;
             } else if (state.mode === 'auto') {
+                // "Stan nieskończony" tylko gdy M0 jest wśród docelowych magazynów.
+                const targetStocks = state.scope === 'all'
+                    ? state.warehouses.map(w => w.stockId)
+                    : state.selectedWh;
+                const showUnlimited = targetStocks.includes(0);
+                const otherWh = state.warehouses.filter(w => targetStocks.includes(w.stockId) && w.stockId !== 0);
+                const otherCodes = otherWh.map(w => w.code).join(', ');
+                const ownWarning = showUnlimited && otherWh.length ? `
+                    <div class="ms-unlimited-warn" id="ms-unlimited-warn">
+                        <span class="ms-unlimited-warn-icon">⚠</span>
+                        <div>
+                            <strong>Uwaga:</strong> stan nieskończony można ustawić tylko na magazynie obcym (M0).
+                            Dla magazynów własnych (${escapeHtml(otherCodes)}) zostanie ustawiona ilość <code>99999</code>.
+                        </div>
+                    </div>` : '';
+                const unlimitedHtml = showUnlimited ? `
+                    <label class="ms-radio" data-stock="unlimited">
+                        <span class="ms-radio-dot"></span>
+                        <input type="radio" name="ms-stock" value="unlimited">
+                        <div class="ms-radio-text">
+                            <div class="ms-radio-label">Stan nieskończony</div>
+                            <div class="ms-radio-desc">Magazyn M0 — towar zawsze dostępny, bez limitu</div>
+                        </div>
+                    </label>
+                    ${ownWarning}` : '';
                 body.innerHTML = `
                     <label class="ms-radio" data-stock="infinite">
                         <span class="ms-radio-dot"></span>
@@ -990,10 +1040,11 @@
                         <span class="ms-radio-dot"></span>
                         <input type="radio" name="ms-stock" value="finite">
                         <div class="ms-radio-text">
-                            <div class="ms-radio-label">Skończony</div>
+                            <div class="ms-radio-label">Stan skończony</div>
                             <div class="ms-radio-desc">Ustaw konkretną ilość lub załaduj z pliku</div>
                         </div>
                     </label>
+                    ${unlimitedHtml}
                     <div id="ms-finite-box" class="ms-hidden"></div>`;
             } else {
                 body.innerHTML = '';
@@ -1116,6 +1167,11 @@
                 row.querySelector('.ms-toggle').classList.toggle('ms-on');
                 $('#ms-wh-count').textContent = state.selectedWh.length;
                 $('#ms-wh-summary').classList.toggle('ms-hidden', state.selectedWh.length === 0);
+                // Re-render państw — opcja "Stan nieskończony" zależy od obecności M0
+                if (state.mode === 'auto' && state.scope === 'selected') {
+                    if (stockId === 0 && state.stock === 'unlimited') state.stock = null;
+                    renderStateSection();
+                }
                 updateApplyBtn();
             };
         });
@@ -1249,6 +1305,56 @@
                 log(`Wyzerowano ${r.stock_quantity || '?'} towarów, rezerwacje: ${r.reservations || 0}`, 'success');
             } catch (e) {
                 log(`BŁĄD: ${e.message}`, 'error');
+            }
+        }
+
+        // Krok 2b': tryb auto + nieskończony — M0: unlimited, inne magazyny: ilość 99999
+        if (state.mode === 'auto' && state.stock === 'unlimited') {
+            if (!targetStocks.includes(0)) {
+                log(`Stan nieskończony wymaga magazynu M0 wśród docelowych`, 'warn');
+            } else {
+                const ownStocks = targetStocks.filter(id => id !== 0);
+                const ownCodes = state.warehouses.filter(w => ownStocks.includes(w.stockId)).map(w => w.code).join(', ');
+                log(`Stan nieskończony: M0 → unlimited${ownStocks.length ? `, magazyny własne [${ownCodes}] → ilość 99999` : ''}`, 'info');
+                const FAKE_INFINITE = 99999;
+                let i = 0;
+                for (const pid of productIds) {
+                    i++;
+                    onProgress(30 + Math.round((i / productIds.length) * 70));
+                    try {
+                        const sd = await fetchProductSizes(win, pid);
+                        if (!sd.sizes.length) { log(`Towar ${pid} → brak rozmiarów`, 'warn'); continue; }
+                        let m0ok = false, m0err = null;
+                        let ownOk = 0, ownErr = 0, ownNoChange = 0;
+                        // M0 → unlimited
+                        try {
+                            const r = await saveStockUnlimited(win, pid, sd.sizes.map(s => s.id));
+                            if (r && r.errno !== undefined && r.errno !== 0) m0err = `errno=${r.errno} ${r.error || ''}`;
+                            else m0ok = true;
+                        } catch (e) { m0err = e.message; }
+                        await sleep(80);
+                        // Inne magazyny → ilość 99999 (per rozmiar, diff vs aktualna)
+                        for (const stockId of ownStocks) {
+                            for (const sizeObj of sd.sizes) {
+                                try {
+                                    const r = await setTargetQuantity(win, pid, stockId, sizeObj.id, FAKE_INFINITE);
+                                    if (!r.changed) ownNoChange++;
+                                    else ownOk++;
+                                } catch (e) { ownErr++; }
+                                await sleep(60);
+                            }
+                        }
+                        const parts = [];
+                        if (m0ok) parts.push(`M0 unlim. OK`);
+                        if (m0err) parts.push(`M0 BŁĄD: ${m0err}`);
+                        if (ownStocks.length) parts.push(`własne: ${ownOk} OK / ${ownErr} bł.${ownNoChange ? ` / ${ownNoChange} bez zmian` : ''}`);
+                        const cls = (m0err || ownErr) ? 'error' : 'success';
+                        log(`Towar ${pid} → ${parts.join(', ')}`, cls);
+                    } catch (e) {
+                        log(`Towar ${pid} → BŁĄD: ${e.message}`, 'error');
+                    }
+                    await sleep(100);
+                }
             }
         }
 
