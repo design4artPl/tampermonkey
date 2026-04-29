@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         IdoSell - Masowe stany magazynowe
 // @namespace    https://idosell.com/
-// @version      1.5.6
+// @version      1.5.7
 // @description  Masowe ustawianie trybu gospodarki, stanu JEST/NIEMA, ilości na magazynach. Z uploadem CSV/XML (z size_id/size_name).
 // @author       SyncOffer
 // @match        https://*.iai-shop.com/panel/app/products-list.php*
@@ -1400,21 +1400,22 @@
         'a[title*="zukaj" i]', '[class*="search-toggle"]',
         '[class*="search-icon"]', '[class*="lupa"]', '[class*="lupka"]',
     ];
-    const PP_TAB_FALLBACK_TOP = 200;
-    const PP_TAB_FALLBACK_SIZE = 40;
+    const PP_TAB_FALLBACK_TOP = 100;
+    const PP_TAB_FALLBACK_W = 50;
+    const PP_TAB_FALLBACK_H = 46;
 
     const TAB_CSS = `
         #pp-tab {
             position:fixed; right:0;
-            width:${PP_TAB_FALLBACK_SIZE}px; height:${PP_TAB_FALLBACK_SIZE}px;
+            width:${PP_TAB_FALLBACK_W}px; height:${PP_TAB_FALLBACK_H}px;
             top:${PP_TAB_FALLBACK_TOP}px;
-            border:1px solid #e0e3ea; border-right:none;
+            border:1px solid #e0e3ea;
             background:#fff; padding:0;
             color:#98a2b3; cursor:pointer;
             display:flex; align-items:center; justify-content:center;
             border-radius:0;
-            box-shadow:-2px 0 10px rgba(0,0,0,.05);
-            transition:background .15s, color .15s, border-color .15s, width .25s ease, padding .2s ease;
+            box-shadow:0 2px 6px rgba(0,0,0,.08);
+            transition:background .15s, color .15s, border-color .15s, width .25s ease, padding .2s ease, box-shadow .2s ease;
             z-index:99990;
             overflow:hidden; white-space:nowrap;
             font-family:'DM Sans',-apple-system,BlinkMacSystemFont,'Segoe UI',Arial,sans-serif;
@@ -1474,9 +1475,9 @@
             openModal(doc, win, ids);
         });
 
-        // Dopasuj pozycję / wymiary taba do lupki (10px poniżej, ten sam rozmiar).
-        // Sprawdza zarówno doc panelu jak i top-level window, bo lupka może być
-        // poza iframem.
+        // Dopasuj pozycję / wymiary / styl do lupki — szerokość i wysokość
+        // kopiowane 1:1, top = bottom lupki + 10px, border-color i box-shadow
+        // przejmowane z computed style.
         function alignToLupka() {
             const candidates = [doc, document];
             for (const d of candidates) {
@@ -1485,13 +1486,20 @@
                     let el;
                     try { el = d.querySelector(sel); } catch (e) { continue; }
                     if (!el) continue;
+                    const win = d.defaultView || window;
                     const r = el.getBoundingClientRect();
                     if (r.width < 16 || r.height < 16) continue;
-                    if (r.right < (d.defaultView || window).innerWidth - 80) continue;
-                    const size = Math.round(Math.max(r.width, r.height));
-                    tab.style.width = size + 'px';
-                    tab.style.height = size + 'px';
+                    if (r.right < win.innerWidth - 80) continue;
+                    const cs = win.getComputedStyle(el);
+                    tab.style.width = Math.round(r.width) + 'px';
+                    tab.style.height = Math.round(r.height) + 'px';
                     tab.style.top = Math.round(r.bottom + 10) + 'px';
+                    if (cs.borderColor && cs.borderColor !== 'rgba(0, 0, 0, 0)') {
+                        tab.style.borderColor = cs.borderColor;
+                    }
+                    if (cs.boxShadow && cs.boxShadow !== 'none') {
+                        tab.style.boxShadow = cs.boxShadow;
+                    }
                     return true;
                 }
             }
