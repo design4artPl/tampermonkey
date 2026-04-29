@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         IdoSell - Masowe stany magazynowe
 // @namespace    https://idosell.com/
-// @version      1.5.5
+// @version      1.5.6
 // @description  Masowe ustawianie trybu gospodarki, stanu JEST/NIEMA, ilości na magazynach. Z uploadem CSV/XML (z size_id/size_name).
 // @author       SyncOffer
 // @match        https://*.iai-shop.com/panel/app/products-list.php*
@@ -1392,38 +1392,53 @@
     /* ═══════════════════════════════════════════
        PŁYWAJĄCY TAB PANELPRO (slim trigger po prawej)
        ═══════════════════════════════════════════ */
+    // Selektory ikonki lupki w panelu IdoSell — pierwsze dopasowanie wyznacza
+    // pozycję i rozmiar PanelPro taba (10px poniżej, identyczny rozmiar).
+    const LUPKA_SELECTORS = [
+        '#globalSearch', '#topSearch', '.global-search-button',
+        '[data-action*="search"]', 'button[title*="zukaj" i]',
+        'a[title*="zukaj" i]', '[class*="search-toggle"]',
+        '[class*="search-icon"]', '[class*="lupa"]', '[class*="lupka"]',
+    ];
+    const PP_TAB_FALLBACK_TOP = 200;
+    const PP_TAB_FALLBACK_SIZE = 40;
+
     const TAB_CSS = `
         #pp-tab {
-            position:fixed; right:0; top:50%; transform:translateY(-50%);
-            height:38px; border:1px solid #e0e3ea; border-right:none;
-            background:#fff; padding:0 10px;
+            position:fixed; right:0;
+            width:${PP_TAB_FALLBACK_SIZE}px; height:${PP_TAB_FALLBACK_SIZE}px;
+            top:${PP_TAB_FALLBACK_TOP}px;
+            border:1px solid #e0e3ea; border-right:none;
+            background:#fff; padding:0;
             color:#98a2b3; cursor:pointer;
-            display:flex; align-items:center; gap:0;
-            border-radius:8px 0 0 8px;
+            display:flex; align-items:center; justify-content:center;
+            border-radius:0;
             box-shadow:-2px 0 10px rgba(0,0,0,.05);
-            transition:right .35s cubic-bezier(.16,1,.3,1), background .15s, color .15s, border-color .15s, gap .2s, padding .2s;
+            transition:background .15s, color .15s, border-color .15s, width .25s ease, padding .2s ease;
             z-index:99990;
             overflow:hidden; white-space:nowrap;
             font-family:'DM Sans',-apple-system,BlinkMacSystemFont,'Segoe UI',Arial,sans-serif;
         }
         #pp-tab:hover:not(:disabled) {
             background:#f5f8ff; color:#4f8cff; border-color:#c0cfff;
-            gap:8px; padding-right:14px;
+            width:auto; padding:0 14px 0 10px; gap:8px;
+            justify-content:flex-start;
         }
         #pp-tab:hover:not(:disabled) #pp-tab-label {
-            max-width:240px; opacity:1;
+            max-width:260px; opacity:1;
         }
         #pp-tab:disabled {
-            cursor:not-allowed; opacity:.6;
+            cursor:not-allowed; opacity:.55;
         }
-        #pp-tab svg { width:16px; height:16px; flex-shrink:0; }
+        #pp-tab svg { width:18px; height:18px; flex-shrink:0; }
         #pp-tab-label {
             max-width:0; opacity:0; overflow:hidden;
             font-size:12px; font-weight:600;
             transition:max-width .25s ease, opacity .2s ease;
+            display:inline-flex; align-items:center; gap:6px;
         }
         #pp-tab-badge {
-            margin-left:6px; min-width:18px; padding:0 6px; height:18px;
+            min-width:18px; padding:0 6px; height:18px;
             background:#4f8cff; color:#fff; font-size:11px; font-weight:700;
             border-radius:9px;
             display:none; align-items:center; justify-content:center; line-height:1;
@@ -1458,6 +1473,37 @@
             if (!ids.length) return;
             openModal(doc, win, ids);
         });
+
+        // Dopasuj pozycję / wymiary taba do lupki (10px poniżej, ten sam rozmiar).
+        // Sprawdza zarówno doc panelu jak i top-level window, bo lupka może być
+        // poza iframem.
+        function alignToLupka() {
+            const candidates = [doc, document];
+            for (const d of candidates) {
+                if (!d) continue;
+                for (const sel of LUPKA_SELECTORS) {
+                    let el;
+                    try { el = d.querySelector(sel); } catch (e) { continue; }
+                    if (!el) continue;
+                    const r = el.getBoundingClientRect();
+                    if (r.width < 16 || r.height < 16) continue;
+                    if (r.right < (d.defaultView || window).innerWidth - 80) continue;
+                    const size = Math.round(Math.max(r.width, r.height));
+                    tab.style.width = size + 'px';
+                    tab.style.height = size + 'px';
+                    tab.style.top = Math.round(r.bottom + 10) + 'px';
+                    return true;
+                }
+            }
+            return false;
+        }
+        // Uruchom kilka razy — lupka może załadować się asynchronicznie.
+        alignToLupka();
+        setTimeout(alignToLupka, 500);
+        setTimeout(alignToLupka, 1500);
+        setTimeout(alignToLupka, 3000);
+        // Re-align przy resize okna
+        (doc.defaultView || window).addEventListener('resize', alignToLupka);
 
         // Niezawodna detekcja zaznaczenia: hook IAI.Table + click delegation +
         // fallback polling co 800ms (na wypadek gdyby panel nie wywołał aktualizacji).
