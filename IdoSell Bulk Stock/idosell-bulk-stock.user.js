@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         IdoSell - Masowe stany magazynowe
 // @namespace    https://idosell.com/
-// @version      1.5.9
+// @version      1.5.10
 // @description  Masowe ustawianie trybu gospodarki, stanu JEST/NIEMA, ilości na magazynach. Z uploadem CSV/XML (z size_id/size_name).
 // @author       SyncOffer
 // @match        https://*.iai-shop.com/panel/app/products-list.php*
@@ -589,6 +589,8 @@
             display:flex;align-items:center;justify-content:space-between;margin-bottom:6px;
         }
         .ms-progress-label { font-size:12px;font-weight:600; }
+        .ms-progress-meta { display:inline-flex;align-items:center;gap:10px; }
+        .ms-progress-count { font-size:11.5px;font-weight:600;color:#667085;font-family:'JetBrains Mono',monospace; }
         .ms-progress-pct { font-size:12px;font-weight:700;font-family:'JetBrains Mono',monospace; }
         .ms-progress-bar { width:100%;height:8px;border-radius:4px;background:#f0f2f5;overflow:hidden; }
         .ms-progress-fill {
@@ -597,6 +599,14 @@
         }
         .ms-progress-fill.ms-done { background:linear-gradient(135deg,#34a853,#2d7a41); }
         .ms-progress-fill.ms-error { background:linear-gradient(135deg,#e74c3c,#c0392b); }
+        .ms-progress-fill.ms-paused { background:linear-gradient(135deg,#f59e0b,#d97706); animation:ms-paused-pulse 1.4s ease-in-out infinite; }
+        @keyframes ms-paused-pulse { 0%,100% { opacity:1; } 50% { opacity:.55; } }
+        .ms-progress-actions { display:flex;justify-content:flex-end;gap:8px;margin-top:12px; }
+        .ms-progress-actions.ms-hidden { display:none; }
+        .ms-btn-warn { background:#fff7e6;color:#a16207;border:1px solid #fde68a; }
+        .ms-btn-warn:hover:not(:disabled) { background:#fef3c7; }
+        .ms-btn-danger { background:#fef2f2;color:#b91c1c;border:1px solid #fecaca; }
+        .ms-btn-danger:hover:not(:disabled) { background:#fee2e2; }
 
         .ms-log {
             background:#1a1a2e;border-radius:10px;padding:14px 16px;
@@ -767,9 +777,16 @@
                     <div class="ms-card-body">
                         <div class="ms-progress-row">
                             <span class="ms-progress-label" id="ms-progress-label">Gotowy do uruchomienia</span>
-                            <span class="ms-progress-pct" id="ms-progress-pct">0%</span>
+                            <span class="ms-progress-meta">
+                                <span class="ms-progress-count" id="ms-progress-count"></span>
+                                <span class="ms-progress-pct" id="ms-progress-pct">0%</span>
+                            </span>
                         </div>
                         <div class="ms-progress-bar"><div class="ms-progress-fill" id="ms-progress-fill"></div></div>
+                        <div class="ms-progress-actions ms-hidden" id="ms-progress-actions">
+                            <button class="ms-btn ms-btn-warn" id="ms-pause" type="button">⏸ Pauza</button>
+                            <button class="ms-btn ms-btn-danger" id="ms-cancel-run" type="button">✖ Przerwij</button>
+                        </div>
                     </div>
                 </div>
 
@@ -1197,35 +1214,102 @@
         }
 
         // === PROGRESS ===
-        function setProgress(pct, status) {
+        function setProgress(pct, status, processed, total) {
             $('#ms-progress-pct').textContent = `${pct}%`;
             $('#ms-progress-fill').style.width = `${pct}%`;
-            $('#ms-progress-fill').classList.remove('ms-done', 'ms-error');
+            $('#ms-progress-fill').classList.remove('ms-done', 'ms-error', 'ms-paused');
             const lab = $('#ms-progress-label');
             const fill = $('#ms-progress-fill');
-            if (status === 'running') { lab.textContent = 'Przetwarzanie...'; lab.style.color = '#4f8cff'; }
-            else if (status === 'done') { lab.textContent = 'Zakończono'; lab.style.color = '#2d7a41'; fill.classList.add('ms-done'); }
-            else if (status === 'error') { lab.textContent = 'Wystąpił błąd'; lab.style.color = '#d32f2f'; fill.classList.add('ms-error'); }
-            else { lab.textContent = 'Gotowy do uruchomienia'; lab.style.color = '#98a2b3'; }
+            const cnt = $('#ms-progress-count');
+            if (status === 'running')        { lab.textContent = 'Przetwarzanie...'; lab.style.color = '#4f8cff'; }
+            else if (status === 'paused')    { lab.textContent = 'Wstrzymano'; lab.style.color = '#a16207'; fill.classList.add('ms-paused'); }
+            else if (status === 'done')      { lab.textContent = 'Zakończono'; lab.style.color = '#2d7a41'; fill.classList.add('ms-done'); }
+            else if (status === 'cancelled') { lab.textContent = 'Przerwano'; lab.style.color = '#b91c1c'; fill.classList.add('ms-error'); }
+            else if (status === 'error')     { lab.textContent = 'Wystąpił błąd'; lab.style.color = '#d32f2f'; fill.classList.add('ms-error'); }
+            else                             { lab.textContent = 'Gotowy do uruchomienia'; lab.style.color = '#98a2b3'; }
             $('#ms-progress-pct').style.color = lab.style.color;
+            if (cnt) cnt.textContent = (total !== undefined && total > 0) ? `${processed}/${total} towarów` : '';
         }
+
+        // === RUN CONTROL (pauza / wznów / przerwij) ===
+        const runCtl = {
+            paused: false,
+            cancelled: false,
+            _pauseResolve: null,
+            pause() { if (!this.cancelled) this.paused = true; },
+            resume() {
+                if (!this.paused) return;
+                this.paused = false;
+                if (this._pauseResolve) { this._pauseResolve(); this._pauseResolve = null; }
+            },
+            cancel() { this.cancelled = true; if (this.paused) this.resume(); },
+            reset() { this.paused = false; this.cancelled = false; this._pauseResolve = null; },
+            async checkpoint() {
+                if (this.cancelled) throw new Error('__cancelled__');
+                if (this.paused) {
+                    await new Promise(res => { this._pauseResolve = res; });
+                    if (this.cancelled) throw new Error('__cancelled__');
+                }
+            },
+        };
+
+        let _processed = 0, _total = 0;
+        const pauseBtn = $('#ms-pause');
+        const cancelRunBtn = $('#ms-cancel-run');
+        pauseBtn.onclick = () => {
+            const pct = parseInt($('#ms-progress-pct').textContent) || 0;
+            if (runCtl.paused) {
+                runCtl.resume();
+                pauseBtn.textContent = '⏸ Pauza';
+                setProgress(pct, 'running', _processed, _total);
+                log('Wznowiono operację', 'info');
+            } else {
+                runCtl.pause();
+                pauseBtn.textContent = '▶ Wznów';
+                setProgress(pct, 'paused', _processed, _total);
+                log('Wstrzymano operację', 'warn');
+            }
+        };
+        cancelRunBtn.onclick = () => {
+            if (!confirm('Przerwać operację? Już wykonane zmiany zostaną zachowane.')) return;
+            runCtl.cancel();
+            log('Przerywanie operacji…', 'warn');
+        };
 
         // === APPLY ===
         $('#ms-apply').onclick = async () => {
+            runCtl.reset();
+            _processed = 0; _total = productIds.length;
             $('#ms-apply').disabled = true;
             $('#ms-cancel').textContent = 'Anuluj';
             $('#ms-card-progress').classList.remove('ms-hidden');
             $('#ms-card-log').classList.remove('ms-hidden');
-            setProgress(0, 'running');
+            $('#ms-progress-actions').classList.remove('ms-hidden');
+            pauseBtn.textContent = '⏸ Pauza';
+            setProgress(0, 'running', 0, _total);
 
             try {
-                await runOperation(win, productIds, state, log, (pct) => setProgress(pct, 'running'));
-                setProgress(100, 'done');
+                await runOperation(win, productIds, state, log,
+                    (pct, processed, total) => {
+                        if (processed !== undefined) _processed = processed;
+                        if (total !== undefined) _total = total;
+                        const status = runCtl.paused ? 'paused' : 'running';
+                        setProgress(pct, status, _processed, _total);
+                    },
+                    runCtl);
+                setProgress(100, 'done', _total, _total);
                 log('Gotowe', 'done');
             } catch (e) {
-                setProgress(100, 'error');
-                log('BŁĄD: ' + e.message, 'error');
+                if (e.message === '__cancelled__') {
+                    const pct = parseInt($('#ms-progress-pct').textContent) || 0;
+                    setProgress(pct, 'cancelled', _processed, _total);
+                    log(`Operacja przerwana przez użytkownika (${_processed}/${_total})`, 'error');
+                } else {
+                    setProgress(100, 'error', _processed, _total);
+                    log('BŁĄD: ' + e.message, 'error');
+                }
             } finally {
+                $('#ms-progress-actions').classList.add('ms-hidden');
                 $('#ms-cancel').textContent = 'Zamknij';
             }
         };
@@ -1234,14 +1318,16 @@
     /* ═══════════════════════════════════════════
        RUN OPERATION
        ═══════════════════════════════════════════ */
-    async function runOperation(win, productIds, state, log, onProgress) {
+    async function runOperation(win, productIds, state, log, onProgress, runCtl) {
+        const cp = runCtl ? () => runCtl.checkpoint() : async () => {};
         // Krok 1: zmiana trybu
         if (state.mode === 'manual' || state.mode === 'auto') {
             log(`Zmiana trybu na: ${state.mode === 'manual' ? 'ręczny' : 'automatyczny'}`, 'info');
             let i = 0;
             for (const pid of productIds) {
+                await cp();
                 i++;
-                onProgress(Math.round((i / productIds.length) * 30));
+                onProgress(Math.round((i / productIds.length) * 30), i, productIds.length);
                 try {
                     const r = await setManagementType(win, pid, state.mode);
                     if (r.errno === 0 || r.errno === undefined) log(`Towar ${pid} → tryb ${state.mode} OK`, 'success');
@@ -1255,7 +1341,7 @@
 
         // Krok 2: scope
         if (state.scope === 'fromFile' && state.file) {
-            await runFromFile(win, state, log, onProgress);
+            await runFromFile(win, state, log, onProgress, runCtl);
             return;
         }
 
@@ -1270,8 +1356,9 @@
 
             let i = 0;
             for (const pid of productIds) {
+                await cp();
                 i++;
-                onProgress(30 + Math.round((i / productIds.length) * 70));
+                onProgress(30 + Math.round((i / productIds.length) * 70), i, productIds.length);
                 try {
                     const sd = await fetchProductSizes(win, pid);
                     if (!sd.sizes.length) { log(`Towar ${pid} → brak rozmiarów`, 'warn'); continue; }
@@ -1319,8 +1406,9 @@
                 const FAKE_INFINITE = 99999;
                 let i = 0;
                 for (const pid of productIds) {
+                    await cp();
                     i++;
-                    onProgress(30 + Math.round((i / productIds.length) * 70));
+                    onProgress(30 + Math.round((i / productIds.length) * 70), i, productIds.length);
                     try {
                         const sd = await fetchProductSizes(win, pid);
                         if (!sd.sizes.length) { log(`Towar ${pid} → brak rozmiarów`, 'warn'); continue; }
@@ -1366,8 +1454,9 @@
 
             let i = 0;
             for (const pid of productIds) {
+                await cp();
                 i++;
-                onProgress(30 + Math.round((i / productIds.length) * 70));
+                onProgress(30 + Math.round((i / productIds.length) * 70), i, productIds.length);
                 try {
                     const sd = await fetchProductSizes(win, pid);
                     if (!sd.sizes.length) { log(`Towar ${pid} → brak rozmiarów`, 'warn'); continue; }
@@ -1394,11 +1483,12 @@
 
         // Krok 2d: tryb auto + finite + file
         if (state.mode === 'auto' && state.stock === 'finite' && state.finiteMode === 'file' && state.file) {
-            await runFromFile(win, state, log, onProgress);
+            await runFromFile(win, state, log, onProgress, runCtl);
         }
     }
 
-    async function runFromFile(win, state, log, onProgress) {
+    async function runFromFile(win, state, log, onProgress, runCtl) {
+        const cp = runCtl ? () => runCtl.checkpoint() : async () => {};
         log(`Wczytywanie pliku: ${state.file.name}`, 'info');
         const text = await state.file.text();
         const isXml = /\.xml$/i.test(state.file.name) || text.trim().startsWith('<');
@@ -1420,8 +1510,9 @@
         let ok = 0, err = 0, noChange = 0;
         let i = 0;
         for (const row of rows) {
+            await cp();
             i++;
-            onProgress(30 + Math.round((i / rows.length) * 70));
+            onProgress(30 + Math.round((i / rows.length) * 70), i, rows.length);
             const pid = row.productId;
             const stockId = parseInt(row.warehouse);
             if (isNaN(stockId)) { err++; log(`Wiersz ${i}: zły stockId "${row.warehouse}"`, 'error'); continue; }
