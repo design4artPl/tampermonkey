@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         IdoSell - Masowe stany magazynowe
 // @namespace    https://idosell.com/
-// @version      1.5.15
+// @version      1.5.16
 // @description  Masowe ustawianie trybu gospodarki, stanu JEST/NIEMA, ilości na magazynach. Z uploadem CSV/XML (z size_id/size_name).
 // @author       Maciej Dobroń
 // @match        https://*.iai-shop.com/panel/app/products-list.php*
@@ -186,15 +186,32 @@
             xhr.send(params.toString());
         });
 
-        // 4) Wyciągnij login (applicationN) z URL ?id= albo z tekstu
+        // 4) Wyciągnij login (applicationN) — wiele wariantów: URL, X-API-KEY w body, plain text.
         const url = respText.url || '';
+        const text = respText.text || '';
         let login = (url.match(/[?&]id=(application\d+)/) || [])[1];
-        if (!login) login = (respText.text.match(/Username\s*[:=]?\s*<[^>]*>\s*(application\d+)/) || [])[1];
-        if (!login) login = (respText.text.match(/\b(application\d+)\b/) || [])[1];
+        if (!login) login = (url.match(/[?&]editid=(application\d+)/) || [])[1];
+        if (!login) login = (url.match(/[?&]username=(application\d+)/) || [])[1];
+        if (!login) login = (text.match(/Username[\s\S]{0,80}?(application\d+)/i) || [])[1];
+        if (!login) {
+            const m2 = text.match(/X-API-KEY[\s:]*([A-Za-z0-9+/=]{20,})/i);
+            if (m2) {
+                try {
+                    const decoded = atob(m2[1]);
+                    const lm = decoded.match(/(application\d+):/);
+                    if (lm) login = lm[1];
+                } catch (e) {}
+            }
+        }
+        if (!login) login = (text.match(/(application\d+)/) || [])[1];
 
-        // 5) Sprawdź błąd "max 2 klucze"
-        if (!login || /maksymalnie dwa|too many|przekroczono/i.test(respText.text)) {
-            throw new Error('Nie udało się utworzyć klucza — prawdopodobnie limit (max 2 aktywne klucze API). Zdezaktywuj jeden istniejący lub wpisz klucz ręcznie.');
+        // 5) Brak loginu — pokaż diagnostykę
+        if (!login) {
+            const explicitLimit = /maksymalnie dwa|too many keys|przekroczono.*limit|max.*active|limit.*kluczy/i.test(text);
+            const detail = explicitLimit
+                ? 'Limit aktywnych kluczy API osiągnięty — zdezaktywuj istniejący lub wpisz klucz ręcznie.'
+                : ('Nie udało się sparsować loginu z odpowiedzi panelu. URL=' + url.substring(0, 200) + '. Snippet body: ' + text.substring(0, 300).replace(/\s+/g, ' '));
+            throw new Error(detail);
         }
 
         // 6) X-API-KEY = base64(login + ":" + api_key_generated)
