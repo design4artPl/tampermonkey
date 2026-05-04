@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         IdoSell - Masowe stany magazynowe
 // @namespace    https://idosell.com/
-// @version      1.5.14
+// @version      1.5.15
 // @description  Masowe ustawianie trybu gospodarki, stanu JEST/NIEMA, ilości na magazynach. Z uploadem CSV/XML (z size_id/size_name).
 // @author       Maciej Dobroń
 // @match        https://*.iai-shop.com/panel/app/products-list.php*
@@ -135,11 +135,12 @@
         });
         // Tolerancyjny parser — atrybuty mogą być w dowolnej kolejności (name/value).
         function parseHiddenValue(html, fieldName) {
-            // Field names are known constants — no regex escape needed.
-            const a = new RegExp('<input[^>]*\bname=[\"\']' + fieldName + '[\"\'][^>]*\bvalue=[\"\']([^\"\']*)', 'i');
-            const b = new RegExp('<input[^>]*\bvalue=[\"\']([^\"\']*)[\"\'][^>]*\bname=[\"\']' + fieldName + '\b', 'i');
-            let m = html.match(a); if (m) return m[1];
-            m = html.match(b); if (m) return m[1];
+            // Match <input ... name="X" ... value="Y" ...> (lub odwrotnie). Template literal,
+            // bez  (które w JS stringu byłoby backspace, nie word boundary).
+            const re1 = new RegExp(`name=["']${fieldName}["'][^>]*value=["']([^"']+)`, 'i');
+            const re2 = new RegExp(`value=["']([^"']+)["'][^>]*name=["']${fieldName}["']`, 'i');
+            let m = html.match(re1); if (m) return m[1];
+            m = html.match(re2); if (m) return m[1];
             return null;
         }
         const apiKeyGen = parseHiddenValue(html, 'api_key_generated');
@@ -957,10 +958,37 @@
                     <div class="ms-card-body" id="ms-state-body"></div>
                 </div>
 
-                <!-- 4. POSTĘP -->
-                <div class="ms-card ms-hidden" id="ms-card-progress">
+                <!-- 4. ROZMIAR (tylko gdy WebAPI aktywny) -->
+                <div class="ms-card ms-hidden" id="ms-card-size">
                     <div class="ms-card-hdr">
                         <span class="ms-num">4</span>
+                        <span class="ms-card-icon">${I.layers}</span>
+                        <span class="ms-card-title">Rozmiar</span>
+                    </div>
+                    <div class="ms-card-body">
+                        <label class="ms-radio" data-sizemode="uniw">
+                            <span class="ms-radio-dot"></span>
+                            <input type="radio" name="ms-sizemode" value="uniw" checked>
+                            <div class="ms-radio-text">
+                                <div class="ms-radio-label">Wszystkie one size (uniw)</div>
+                                <div class="ms-radio-desc">Szybciej — pomijamy odczyt rozmiarów. Działa dla towarów bez wariantów.</div>
+                            </div>
+                        </label>
+                        <label class="ms-radio" data-sizemode="fetch">
+                            <span class="ms-radio-dot"></span>
+                            <input type="radio" name="ms-sizemode" value="fetch">
+                            <div class="ms-radio-text">
+                                <div class="ms-radio-label">Odczytaj z towarów</div>
+                                <div class="ms-radio-desc">Wolniejsze — paginujemy bazę by pobrać prawdziwe rozmiary (S/M/L itp.).</div>
+                            </div>
+                        </label>
+                    </div>
+                </div>
+
+                <!-- 5. POSTĘP -->
+                <div class="ms-card ms-hidden" id="ms-card-progress">
+                    <div class="ms-card-hdr">
+                        <span class="ms-num">5</span>
                         <span class="ms-card-icon">${I.play}</span>
                         <span class="ms-card-title">Postęp operacji</span>
                     </div>
@@ -980,10 +1008,10 @@
                     </div>
                 </div>
 
-                <!-- 5. HISTORIA -->
+                <!-- 6. HISTORIA -->
                 <div class="ms-card ms-hidden" id="ms-card-log">
                     <div class="ms-card-hdr">
-                        <span class="ms-num">5</span>
+                        <span class="ms-num">6</span>
                         <span class="ms-card-icon">${I.history}</span>
                         <span class="ms-card-title">Historia operacji</span>
                     </div>
@@ -1048,6 +1076,7 @@
             quantity: '',
             file: null,
             warehouses: [],
+            sizeMode: 'uniw',  // 'uniw' | 'fetch' — tryb pobierania rozmiarów dla WebAPI
         };
 
         // RADIO HELPERS
@@ -1098,8 +1127,15 @@
             $('#ms-card-wh').classList.toggle('ms-hidden', !state.mode);
             $('#ms-card-file').classList.toggle('ms-hidden', state.scope !== 'fromFile');
             $('#ms-card-state').classList.toggle('ms-hidden', !state.scope || state.scope === 'fromFile');
+            // Karta "Rozmiar" tylko gdy WebAPI aktywny i operacja może z niej korzystać
+            const hasKey = !!getApiKey();
+            const showSize = hasKey && !!state.scope && state.scope !== 'fromFile';
+            $('#ms-card-size').classList.toggle('ms-hidden', !showSize);
             updateApplyBtn();
         }
+
+        // Bind radio for sizeMode (jednorazowo, bo karta zawsze w DOM)
+        bindRadio('ms-sizemode', (val) => { state.sizeMode = val; });
 
         // === WEBAPI STATUS ===
         function renderWebApiStatus() {
@@ -1604,9 +1640,18 @@
         }
 
         // Filter w WebAPI nie dziala — paginujemy cala baze raz, budujemy mape productId->sizes,
-        // potem wybieramy tylko zaznaczone.
+        // potem wybieramy tylko zaznaczone. Mozna tez pominac paginacje (state.sizeMode='uniw').
         const selectedSet = new Set(productIds.map(String));
         const sizesByProduct = {};
+
+        // Tryb 'uniw' — zakladamy ze wszystkie towary maja jeden rozmiar 'uniw' / 'one size'.
+        // Pomijamy paginacje, idziemy od razu do PUT.
+        if (state.sizeMode === 'uniw') {
+            log(`[WebAPI] Tryb rozmiaru: WSZYSTKIE one size (uniw) — pomijam odczyt rozmiarow`, 'info');
+            for (const pid of productIds) {
+                sizesByProduct[String(pid)] = [{ id: 'uniw', name: 'one size' }];
+            }
+        } else {
 
         await cp();
         log(`[WebAPI] Pobieranie rozmiarow z bazy (POST /search, paginacja)...`, 'info');
@@ -1667,6 +1712,8 @@
         }
         const knownSizes = Object.keys(sizesByProduct).length;
         log(`[WebAPI] Pobrano rozmiary dla ${knownSizes}/${productIds.length} zaznaczonych towarow`, knownSizes ? 'info' : 'warn');
+
+        } // end else (sizeMode === 'fetch')
 
         // Przygotuj batche tylko z zaznaczonych towarow do PUT
         const idBatches = [];
