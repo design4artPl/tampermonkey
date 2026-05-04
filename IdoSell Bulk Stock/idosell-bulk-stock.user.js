@@ -1,12 +1,17 @@
 // ==UserScript==
 // @name         IdoSell - Masowe stany magazynowe
 // @namespace    https://idosell.com/
-// @version      1.5.10
+// @version      1.5.11
 // @description  Masowe ustawianie trybu gospodarki, stanu JEST/NIEMA, ilości na magazynach. Z uploadem CSV/XML (z size_id/size_name).
 // @author       SyncOffer
 // @match        https://*.iai-shop.com/panel/app/products-list.php*
 // @match        https://*.idosell.com/panel/app/products-list.php*
-// @grant        none
+// @grant        GM_getValue
+// @grant        GM_setValue
+// @grant        GM_deleteValue
+// @grant        GM.getValue
+// @grant        GM.setValue
+// @grant        GM.deleteValue
 // @run-at       document-idle
 // ==/UserScript==
 
@@ -94,6 +99,138 @@
             xhr.send(body || '');
         });
     }
+
+    /* ═══════════════════════════════════════════
+       WebAPI — szybki tryb (batch 100)
+       ═══════════════════════════════════════════ */
+    const API_KEY_STORAGE_KEY = (host) => `ppApiKey_${host}`;
+    const gmGet = (k, def) => {
+        try { if (typeof GM_getValue === 'function') return GM_getValue(k, def); } catch (e) {}
+        try { return JSON.parse(localStorage.getItem(k) || 'null') || def; } catch (e) { return def; }
+    };
+    const gmSet = (k, v) => {
+        try { if (typeof GM_setValue === 'function') { GM_setValue(k, v); return; } } catch (e) {}
+        try { localStorage.setItem(k, JSON.stringify(v)); } catch (e) {}
+    };
+    const gmDel = (k) => {
+        try { if (typeof GM_deleteValue === 'function') { GM_deleteValue(k); return; } } catch (e) {}
+        try { localStorage.removeItem(k); } catch (e) {}
+    };
+
+    function getApiKey() { return gmGet(API_KEY_STORAGE_KEY(location.hostname), null); }
+    function setApiKey(v) { gmSet(API_KEY_STORAGE_KEY(location.hostname), v); }
+    function clearApiKey() { gmDel(API_KEY_STORAGE_KEY(location.hostname)); }
+
+    /** Tworzy nowy klucz API z uprawnieniem PIM=rw przez panelowy formularz.
+     *  Zwraca { apiKey, login } albo rzuca z opisem błędu. */
+    async function createApiKey(win) {
+        const w = win || window;
+        // 1) GET formularza, wyciągnij pre-generated values
+        const html = await new Promise((resolve, reject) => {
+            const xhr = new w.XMLHttpRequest();
+            xhr.open('GET', '/panel/users-api.php?operation=add', true);
+            xhr.onload = () => xhr.status === 200 ? resolve(xhr.responseText) : reject(new Error('GET HTTP ' + xhr.status));
+            xhr.onerror = () => reject(new Error('Błąd sieci (GET)'));
+            xhr.send();
+        });
+        const apiKeyGen = (html.match(/name="api_key_generated"\s+value="([^"]+)"/) || [])[1];
+        const passGen = (html.match(/name="password_generated"\s+value="([^"]+)"/) || [])[1];
+        if (!apiKeyGen || !passGen) throw new Error('Nie znaleziono pre-generated key w formularzu (czy jesteś zalogowany?)');
+
+        // 2) Sprawdź limit: max 2 aktywne klucze. Jeśli już są 2, panel zwróci błąd po POST.
+        // 3) POST formularza
+        const params = new URLSearchParams();
+        params.append('__iai_shop_panel[__encoding]', 'utf-8');
+        params.append('authorization_type', 'key');
+        params.append('app_name', 'PanelPro Bulk Stock');
+        params.append('email', 'panelpro@local');
+        params.append('active', 'y');
+        params.append('host_active', 'n');
+        params.append('host', '');
+        params.append('limited', 'n');
+        params.append('time_zone', 'Europe/Warsaw');
+        params.append('panel_language_default', 'pol');
+        params.append('panel_language', 'pol');
+        params.append('locale', 'pl_PL');
+        params.append('perms_system', 'none');
+        params.append('perms_cms', 'none');
+        params.append('perms_crm', 'none');
+        params.append('perms_pim', 'rw');
+        params.append('perms_oms', 'none');
+        params.append('perms_wms', 'none');
+        params.append('add_user', 'true');
+        params.append('password_generated', passGen);
+        params.append('api_key_generated', apiKeyGen);
+        params.append('change_api_key', '0');
+        params.append('editid', '');
+
+        const respText = await new Promise((resolve, reject) => {
+            const xhr = new w.XMLHttpRequest();
+            xhr.open('POST', '/panel/users-api.php', true);
+            xhr.setRequestHeader('Content-Type', 'application/x-www-form-urlencoded');
+            xhr.onload = () => xhr.status === 200 ? resolve({ text: xhr.responseText, url: xhr.responseURL }) : reject(new Error('POST HTTP ' + xhr.status));
+            xhr.onerror = () => reject(new Error('Błąd sieci (POST)'));
+            xhr.send(params.toString());
+        });
+
+        // 4) Wyciągnij login (applicationN) z URL ?id= albo z tekstu
+        const url = respText.url || '';
+        let login = (url.match(/[?&]id=(application\d+)/) || [])[1];
+        if (!login) login = (respText.text.match(/Username\s*[:=]?\s*<[^>]*>\s*(application\d+)/) || [])[1];
+        if (!login) login = (respText.text.match(/\b(application\d+)\b/) || [])[1];
+
+        // 5) Sprawdź błąd "max 2 klucze"
+        if (!login || /maksymalnie dwa|too many|przekroczono/i.test(respText.text)) {
+            throw new Error('Nie udało się utworzyć klucza — prawdopodobnie limit (max 2 aktywne klucze API). Zdezaktywuj jeden istniejący lub wpisz klucz ręcznie.');
+        }
+
+        // 6) X-API-KEY = base64(login + ":" + api_key_generated)
+        const apiKey = btoa(login + ':' + apiKeyGen);
+        return { apiKey, login };
+    }
+
+    /** GET WebAPI v8 — pobiera szczegóły wielu produktów (do batch 100). */
+    function webApiGetProducts(apiKey, productIds) {
+        return new Promise((resolve, reject) => {
+            const url = `https://${location.hostname}/api/admin/v8/products/products?` +
+                productIds.map(id => `params[productIds][]=${encodeURIComponent(id)}`).join('&');
+            const xhr = new XMLHttpRequest();
+            xhr.open('GET', url, true);
+            xhr.setRequestHeader('X-API-KEY', apiKey);
+            xhr.setRequestHeader('Accept', 'application/json');
+            xhr.onload = () => {
+                try {
+                    const j = JSON.parse(xhr.responseText);
+                    if (xhr.status >= 200 && xhr.status < 300) resolve(j);
+                    else reject(new Error(`WebAPI GET ${xhr.status}: ${(j.errors && JSON.stringify(j.errors).substring(0, 200)) || xhr.responseText.substring(0, 200)}`));
+                } catch (e) { reject(new Error('WebAPI GET parse: ' + xhr.responseText.substring(0, 200))); }
+            };
+            xhr.onerror = () => reject(new Error('WebAPI GET network'));
+            xhr.send();
+        });
+    }
+
+    /** PUT WebAPI v8 — masowy update (do batch 100).
+     *  products: [{ productId, productSizes:[{sizeId, sizePanelName, productStocksData:{productStocksQuantities:[{stockId, productSizeQuantity}]}}], productAvailabilityManagementType? }] */
+    function webApiPutProducts(apiKey, products) {
+        return new Promise((resolve, reject) => {
+            const url = `https://${location.hostname}/api/admin/v8/products/products`;
+            const xhr = new XMLHttpRequest();
+            xhr.open('PUT', url, true);
+            xhr.setRequestHeader('X-API-KEY', apiKey);
+            xhr.setRequestHeader('Content-Type', 'application/json');
+            xhr.setRequestHeader('Accept', 'application/json');
+            xhr.onload = () => {
+                let j = null;
+                try { j = JSON.parse(xhr.responseText); } catch (e) {}
+                if (xhr.status >= 200 && xhr.status < 300) resolve(j || { raw: xhr.responseText });
+                else reject(new Error(`WebAPI PUT ${xhr.status}: ${j ? JSON.stringify(j).substring(0, 300) : xhr.responseText.substring(0, 300)}`));
+            };
+            xhr.onerror = () => reject(new Error('WebAPI PUT network'));
+            xhr.send(JSON.stringify({ params: { products } }));
+        });
+    }
+
 
     function setManagementType(win, productId, type) {
         return ajaxGet(win, `/panel/ajax/product-edit.php?function=ajaxChangeAvailabilityManagementType&productId=${productId}&type=${type}`);
@@ -410,6 +547,35 @@
 
         .ms-body { padding:14px 16px 6px; flex:1; overflow-y:auto; }
 
+        .ms-webapi {
+            background:linear-gradient(135deg,#fef9e7,#fffbea);
+            border:1px solid #fde68a;border-radius:12px;
+            padding:10px 14px;margin-bottom:14px;
+        }
+        .ms-webapi.ms-webapi-on {
+            background:linear-gradient(135deg,#ecfdf5,#f0fdf4);
+            border-color:#bbf7d0;
+        }
+        .ms-webapi-row { display:flex;align-items:center;gap:12px; }
+        .ms-webapi-icon { font-size:18px; }
+        .ms-webapi-text { flex:1;min-width:0; }
+        .ms-webapi-title { font-size:13px;font-weight:700;color:#0f172a; }
+        .ms-webapi-desc { font-size:11.5px;color:#64748b;margin-top:1px; }
+        .ms-webapi.ms-webapi-on .ms-webapi-desc { color:#15803d; }
+        .ms-webapi-actions { display:flex;gap:6px;flex-shrink:0; }
+        .ms-webapi-actions button {
+            padding:5px 10px;font-size:11.5px;font-weight:600;
+            border-radius:6px;cursor:pointer;font-family:inherit;
+            border:1px solid #d0d5dd;background:#fff;color:#344054;
+            transition:.15s;
+        }
+        .ms-webapi-actions button:hover { background:#f8fafc;border-color:#94a3b8; }
+        .ms-webapi-actions button.ms-webapi-primary {
+            background:linear-gradient(135deg,#4f8cff,#3b6de0);color:#fff;border:none;
+        }
+        .ms-webapi-actions button.ms-webapi-primary:hover { box-shadow:0 2px 8px rgba(79,140,255,.35); }
+        .ms-webapi-actions button:disabled { opacity:.5;cursor:not-allowed; }
+
         .ms-card {
             background:#fff;border-radius:14px;border:1px solid #eef0f4;
             margin-bottom:14px;overflow:hidden;
@@ -663,6 +829,18 @@
             </div>
             <div class="ms-body">
 
+                <!-- 0. WEBAPI -->
+                <div class="ms-webapi" id="ms-webapi">
+                    <div class="ms-webapi-row">
+                        <span class="ms-webapi-icon" id="ms-webapi-icon">⚡</span>
+                        <div class="ms-webapi-text">
+                            <div class="ms-webapi-title" id="ms-webapi-title">Tryb szybki (WebAPI)</div>
+                            <div class="ms-webapi-desc" id="ms-webapi-desc">Sprawdzanie klucza…</div>
+                        </div>
+                        <div class="ms-webapi-actions" id="ms-webapi-actions"></div>
+                    </div>
+                </div>
+
                 <!-- 1. TRYB GOSPODARKI -->
                 <div class="ms-card">
                     <div class="ms-card-hdr">
@@ -910,6 +1088,58 @@
             $('#ms-card-state').classList.toggle('ms-hidden', !state.scope || state.scope === 'fromFile');
             updateApplyBtn();
         }
+
+        // === WEBAPI STATUS ===
+        function renderWebApiStatus() {
+            const root = $('#ms-webapi');
+            const icon = $('#ms-webapi-icon');
+            const title = $('#ms-webapi-title');
+            const desc = $('#ms-webapi-desc');
+            const actions = $('#ms-webapi-actions');
+            const key = getApiKey();
+            if (key) {
+                root.classList.add('ms-webapi-on');
+                icon.textContent = '✓';
+                title.textContent = 'Tryb szybki (WebAPI) — aktywny';
+                desc.textContent = `Klucz API skonfigurowany — operacje pójdą bulk-em (~3-5 min/40k)`;
+                actions.innerHTML = `<button id="ms-webapi-clear" type="button">Usuń klucz</button>`;
+                $('#ms-webapi-clear').onclick = () => {
+                    if (!confirm('Usunąć zapisany klucz API z pamięci skryptu? (Klucz pozostanie aktywny w panelu.)')) return;
+                    clearApiKey();
+                    renderWebApiStatus();
+                };
+            } else {
+                root.classList.remove('ms-webapi-on');
+                icon.textContent = '⚡';
+                title.textContent = 'Tryb szybki (WebAPI) — nieaktywny';
+                desc.textContent = 'Bez klucza operacje będą znacznie wolniejsze (~2,5h/40k zamiast ~3 min)';
+                actions.innerHTML = `
+                    <button class="ms-webapi-primary" id="ms-webapi-create" type="button">Utwórz klucz</button>
+                    <button id="ms-webapi-manual" type="button">Wpisz ręcznie</button>`;
+                $('#ms-webapi-create').onclick = async () => {
+                    $('#ms-webapi-create').disabled = true;
+                    desc.textContent = 'Tworzenie klucza w panelu…';
+                    try {
+                        const { apiKey, login } = await createApiKey(window);
+                        setApiKey(apiKey);
+                        alert(`Utworzono klucz API (${login}) z uprawnieniem PIM=rw. Zapisany w pamięci skryptu.`);
+                        renderWebApiStatus();
+                    } catch (e) {
+                        alert(`Nie udało się utworzyć klucza: ${e.message}`);
+                        $('#ms-webapi-create').disabled = false;
+                        desc.textContent = 'Nie udało się utworzyć klucza';
+                    }
+                };
+                $('#ms-webapi-manual').onclick = () => {
+                    const v = prompt('Wklej X-API-KEY (base64, np. YXBwbGljYXRpb24xMzo...):');
+                    if (v && v.trim()) {
+                        setApiKey(v.trim());
+                        renderWebApiStatus();
+                    }
+                };
+            }
+        }
+        renderWebApiStatus();
 
         // === MODE ===
         bindRadio('ms-mode', (val) => {
@@ -1318,8 +1548,152 @@
     /* ═══════════════════════════════════════════
        RUN OPERATION
        ═══════════════════════════════════════════ */
+    /** Sprawdza czy state nadaje sie do trybu szybkiego WebAPI. */
+    function canUseWebApi(state) {
+        if (!getApiKey()) return false;
+        if (state.scope === 'fromFile') return false;
+        if (state.mode === 'manual') return state.stock === 'available' || state.stock === 'unavailable';
+        if (state.mode === 'auto') {
+            if (state.stock === 'infinite') return true;
+            if (state.stock === 'finite' && state.finiteMode === 'value') return true;
+            if (state.stock === 'unlimited') return true;
+        }
+        return false;
+    }
+
+    /** Szybka sciezka: pobierz rozmiary batchem via WebAPI GET, wyslij update batchem via PUT. */
+    async function runViaWebApi(win, productIds, state, log, onProgress, runCtl) {
+        const cp = runCtl ? () => runCtl.checkpoint() : async () => {};
+        const apiKey = getApiKey();
+        const BATCH = 100;
+        const CONCURRENCY = 4;
+
+        const targetStocks = state.scope === 'all'
+            ? state.warehouses.map(w => w.stockId)
+            : state.selectedWh;
+        let mgmtType = null;
+        if (state.mode === 'manual') mgmtType = 'manual';
+        else if (state.mode === 'auto') mgmtType = 'stock';
+
+        let getQty;
+        if (state.mode === 'manual') {
+            const v = state.stock === 'available' ? -1 : 0;
+            getQty = () => v;
+        } else if (state.mode === 'auto' && state.stock === 'infinite') {
+            getQty = () => 0;
+        } else if (state.mode === 'auto' && state.stock === 'finite' && state.finiteMode === 'value') {
+            const v = parseInt(state.quantity) || 0;
+            getQty = () => v;
+        } else if (state.mode === 'auto' && state.stock === 'unlimited') {
+            getQty = (pid, sid, stockId) => stockId === 0 ? -1 : 99999;
+        } else {
+            log('Tryb nie obsugiwany w trybie szybkim', 'error');
+            return false;
+        }
+
+        log(`[WebAPI] Pobieranie rozmiarow dla ${productIds.length} towarow (batch ${BATCH})...`, 'info');
+        const sizesByProduct = {};
+        const idBatches = [];
+        for (let i = 0; i < productIds.length; i += BATCH) idBatches.push(productIds.slice(i, i + BATCH));
+        let fetchedCount = 0;
+        let fetchIdx = 0;
+        async function fetchWorker() {
+            while (fetchIdx < idBatches.length) {
+                await cp();
+                const myIdx = fetchIdx++;
+                const batch = idBatches[myIdx];
+                try {
+                    const r = await webApiGetProducts(apiKey, batch);
+                    const list = r.results || r.products || [];
+                    for (const p of list) {
+                        const pid = String(p.productId || p.id || '');
+                        if (!pid) continue;
+                        sizesByProduct[pid] = (p.productSizes || []).map(s => ({
+                            id: s.sizeId,
+                            name: s.sizePanelName || s.sizeName || s.name || s.sizeId,
+                        }));
+                    }
+                } catch (e) {
+                    log(`[WebAPI] Blad pobierania rozmiarow (batch ${myIdx + 1}/${idBatches.length}): ${e.message}`, 'error');
+                    if (/401|403/.test(e.message)) throw e;
+                }
+                fetchedCount += batch.length;
+                onProgress(Math.round(fetchedCount / productIds.length * 25), fetchedCount, productIds.length);
+            }
+        }
+        try {
+            await Promise.all(Array.from({ length: CONCURRENCY }, () => fetchWorker()));
+        } catch (e) {
+            log(`[WebAPI] Blad auth: ${e.message}`, 'error');
+            return false;
+        }
+        const knownSizes = Object.keys(sizesByProduct).length;
+        log(`[WebAPI] Pobrano rozmiary dla ${knownSizes}/${productIds.length} towarow`, knownSizes ? 'info' : 'warn');
+
+        log(`[WebAPI] Wysylanie aktualizacji (batch ${BATCH}, concurrency ${CONCURRENCY})...`, 'info');
+        let processed = 0, ok = 0, err = 0, skipped = 0;
+        let putIdx = 0;
+        async function putWorker() {
+            while (putIdx < idBatches.length) {
+                await cp();
+                const myIdx = putIdx++;
+                const batch = idBatches[myIdx];
+                const products = batch.map(pid => {
+                    const sizes = sizesByProduct[String(pid)];
+                    if (!sizes || !sizes.length) return null;
+                    const productSizes = sizes.map(s => ({
+                        sizeId: s.id,
+                        sizePanelName: s.name,
+                        productStocksData: {
+                            productStocksQuantities: targetStocks.map(stockId => ({
+                                stockId,
+                                productSizeQuantity: getQty(pid, s.id, stockId),
+                            })),
+                        },
+                    }));
+                    const payload = { productId: String(pid), productSizes };
+                    if (mgmtType) payload.productAvailabilityManagementType = mgmtType;
+                    return payload;
+                }).filter(Boolean);
+                const skippedHere = batch.length - products.length;
+                skipped += skippedHere;
+
+                if (products.length) {
+                    try {
+                        await webApiPutProducts(apiKey, products);
+                        ok += products.length;
+                    } catch (e) {
+                        err += products.length;
+                        log(`[WebAPI] Batch ${myIdx + 1}: ${e.message}`, 'error');
+                    }
+                }
+                processed += batch.length;
+                onProgress(25 + Math.round(processed / productIds.length * 75), processed, productIds.length);
+            }
+        }
+        await Promise.all(Array.from({ length: CONCURRENCY }, () => putWorker()));
+
+        const summary = `[WebAPI] Wynik: ${ok} OK / ${err} bledow${skipped ? ` / ${skipped} pominietych (brak rozmiarow)` : ''}`;
+        log(summary, err ? 'error' : 'success');
+        return err === 0;
+    }
+
     async function runOperation(win, productIds, state, log, onProgress, runCtl) {
         const cp = runCtl ? () => runCtl.checkpoint() : async () => {};
+
+        // Tryb szybki — WebAPI bulk (gdy mamy klucz i operacja jest wspierana)
+        if (canUseWebApi(state)) {
+            log('Tryb szybki (WebAPI) — bulk update przez /api/admin/v8/products/products', 'info');
+            try {
+                const ok = await runViaWebApi(win, productIds, state, log, onProgress, runCtl);
+                if (ok) return;
+                log('Tryb szybki zakończony z błędami — przełączam na ścieżkę standardową', 'warn');
+            } catch (e) {
+                if (e && e.message === '__cancelled__') throw e;
+                log('Tryb szybki padł: ' + e.message + '. Przełączam na ścieżkę standardową.', 'warn');
+            }
+        }
+
         // Krok 1: zmiana trybu
         if (state.mode === 'manual' || state.mode === 'auto') {
             log(`Zmiana trybu na: ${state.mode === 'manual' ? 'ręczny' : 'automatyczny'}`, 'info');
