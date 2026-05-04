@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         IdoSell - Masowe stany magazynowe
 // @namespace    https://idosell.com/
-// @version      1.5.12
+// @version      1.5.13
 // @description  Masowe ustawianie trybu gospodarki, stanu JEST/NIEMA, ilości na magazynach. Z uploadem CSV/XML (z size_id/size_name).
 // @author       SyncOffer
 // @match        https://*.iai-shop.com/panel/app/products-list.php*
@@ -135,11 +135,11 @@
         });
         // Tolerancyjny parser — atrybuty mogą być w dowolnej kolejności (name/value).
         function parseHiddenValue(html, fieldName) {
-            const escName = fieldName.replace(/[.*+?^${}()|[\]\]/g, '\$&');
-            let m = html.match(new RegExp(`<input[^>]*\bname=["']${escName}["'][^>]*\bvalue=["']([^"']*)["']`, 'i'));
-            if (m) return m[1];
-            m = html.match(new RegExp(`<input[^>]*\bvalue=["']([^"']*)["'][^>]*\bname=["']${escName}["']`, 'i'));
-            if (m) return m[1];
+            // Field names are known constants — no regex escape needed.
+            const a = new RegExp('<input[^>]*\bname=[\"\']' + fieldName + '[\"\'][^>]*\bvalue=[\"\']([^\"\']*)', 'i');
+            const b = new RegExp('<input[^>]*\bvalue=[\"\']([^\"\']*)[\"\'][^>]*\bname=[\"\']' + fieldName + '\b', 'i');
+            let m = html.match(a); if (m) return m[1];
+            m = html.match(b); if (m) return m[1];
             return null;
         }
         const apiKeyGen = parseHiddenValue(html, 'api_key_generated');
