@@ -1,9 +1,9 @@
 // ==UserScript==
 // @name         IdoSell - Masowe stany magazynowe
 // @namespace    https://idosell.com/
-// @version      1.5.13
+// @version      1.5.14
 // @description  Masowe ustawianie trybu gospodarki, stanu JEST/NIEMA, ilości na magazynach. Z uploadem CSV/XML (z size_id/size_name).
-// @author       SyncOffer
+// @author       Maciej Dobroń
 // @match        https://*.iai-shop.com/panel/app/products-list.php*
 // @match        https://*.idosell.com/panel/app/products-list.php*
 // @grant        GM_getValue
@@ -201,26 +201,24 @@
         return { apiKey, login };
     }
 
-    /** GET WebAPI v8 — pobiera szczegóły wielu produktów (do batch 100). */
-    function webApiGetProducts(apiKey, productIds) {
+    /** Pobiera jedną stronę POST /products/products/search (resultsPage 0-based, 100/strona). */
+    function webApiSearchPage(apiKey, page) {
         return new Promise((resolve, reject) => {
-            // returnElements zawęża response do potrzebnych pól (mniejszy payload, szybciej)
-            const ret = ['productId', 'productSizes'].map(x => `params[returnElements][]=${x}`).join('&');
-            const ids = productIds.map(id => `params[productIds][]=${encodeURIComponent(id)}`).join('&');
-            const url = `https://${location.hostname}/api/admin/v8/products/products?${ret}&${ids}`;
+            const url = `https://${location.hostname}/api/admin/v8/products/products/search`;
             const xhr = new XMLHttpRequest();
-            xhr.open('GET', url, true);
+            xhr.open('POST', url, true);
             xhr.setRequestHeader('X-API-KEY', apiKey);
+            xhr.setRequestHeader('Content-Type', 'application/json');
             xhr.setRequestHeader('Accept', 'application/json');
             xhr.onload = () => {
                 try {
                     const j = JSON.parse(xhr.responseText);
                     if (xhr.status >= 200 && xhr.status < 300) resolve(j);
-                    else reject(new Error(`WebAPI GET ${xhr.status}: ${(j.errors && JSON.stringify(j.errors).substring(0, 200)) || xhr.responseText.substring(0, 200)}`));
-                } catch (e) { reject(new Error('WebAPI GET parse: ' + xhr.responseText.substring(0, 200))); }
+                    else reject(new Error(`search ${xhr.status}: ${xhr.responseText.substring(0, 200)}`));
+                } catch (e) { reject(new Error('search parse: ' + xhr.responseText.substring(0, 200))); }
             };
-            xhr.onerror = () => reject(new Error('WebAPI GET network'));
-            xhr.send();
+            xhr.onerror = () => reject(new Error('search network'));
+            xhr.send(JSON.stringify({ params: { returnElements: ['sizes'], resultsPage: page, resultsLimit: 100 } }));
         });
     }
 
@@ -1605,46 +1603,74 @@
             return false;
         }
 
-        log(`[WebAPI] Pobieranie rozmiarow dla ${productIds.length} towarow (batch ${BATCH})...`, 'info');
+        // Filter w WebAPI nie dziala — paginujemy cala baze raz, budujemy mape productId->sizes,
+        // potem wybieramy tylko zaznaczone.
+        const selectedSet = new Set(productIds.map(String));
         const sizesByProduct = {};
-        const idBatches = [];
-        for (let i = 0; i < productIds.length; i += BATCH) idBatches.push(productIds.slice(i, i + BATCH));
-        let fetchedCount = 0;
-        let fetchIdx = 0;
-        async function fetchWorker() {
+
+        await cp();
+        log(`[WebAPI] Pobieranie rozmiarow z bazy (POST /search, paginacja)...`, 'info');
+        let first;
+        try {
+            first = await webApiSearchPage(apiKey, 0);
+        } catch (e) {
+            log(`[WebAPI] Blad polaczenia: ${e.message}`, 'error');
+            return false;
+        }
+        const totalPages = first.resultsNumberPage || 1;
+        const totalAll = first.resultsNumberAll || 0;
+        log(`[WebAPI] Baza: ${totalAll} towarow w ${totalPages} stronach (zaznaczonych do update: ${productIds.length})`, 'info');
+
+        function ingestPage(r) {
+            for (const p of (r.results || [])) {
+                const pid = String(p.productId);
+                if (!selectedSet.has(pid)) continue; // tylko zaznaczone
+                sizesByProduct[pid] = (p.productSizes || []).map(s => ({
+                    id: s.sizeId,
+                    name: s.sizePanelName || s.sizeName || s.sizeId,
+                }));
+            }
+        }
+        ingestPage(first);
+
+        // Pozostale strony rownolegle
+        let pageIdx = 1;
+        let pagesDone = 1;
+        async function pageWorker() {
             while (true) {
-                const myIdx = fetchIdx;
-                if (myIdx >= idBatches.length) break;
-                fetchIdx++;
+                const myPage = pageIdx;
+                if (myPage >= totalPages) break;
+                pageIdx++;
                 await cp();
-                const batch = idBatches[myIdx];
                 try {
-                    const r = await webApiGetProducts(apiKey, batch);
-                    const list = r.results || r.products || [];
-                    for (const p of list) {
-                        const pid = String(p.productId || p.id || '');
-                        if (!pid) continue;
-                        sizesByProduct[pid] = (p.productSizes || []).map(s => ({
-                            id: s.sizeId,
-                            name: s.sizePanelName || s.sizeName || s.name || s.sizeId,
-                        }));
-                    }
+                    const r = await webApiSearchPage(apiKey, myPage);
+                    ingestPage(r);
                 } catch (e) {
-                    log(`[WebAPI] Blad pobierania rozmiarow (batch ${myIdx + 1}/${idBatches.length}): ${e.message}`, 'error');
+                    log(`[WebAPI] Blad strony ${myPage + 1}: ${e.message}`, 'error');
                     if (/401|403/.test(e.message)) throw e;
                 }
-                fetchedCount += batch.length;
-                onProgress(Math.round(fetchedCount / productIds.length * 25), fetchedCount, productIds.length);
+                pagesDone++;
+                const found = Object.keys(sizesByProduct).length;
+                onProgress(Math.round(pagesDone / totalPages * 50), found, productIds.length);
+                // Wczesne wyjscie: jesli juz mamy wszystkie zaznaczone, nie ma sensu paginowac dalej
+                if (found >= selectedSet.size) {
+                    pageIdx = totalPages; // zakoncz pozostalym workerom
+                    break;
+                }
             }
         }
         try {
-            await Promise.all(Array.from({ length: CONCURRENCY }, () => fetchWorker()));
+            await Promise.all(Array.from({ length: CONCURRENCY }, () => pageWorker()));
         } catch (e) {
             log(`[WebAPI] Blad auth: ${e.message}`, 'error');
             return false;
         }
         const knownSizes = Object.keys(sizesByProduct).length;
-        log(`[WebAPI] Pobrano rozmiary dla ${knownSizes}/${productIds.length} towarow`, knownSizes ? 'info' : 'warn');
+        log(`[WebAPI] Pobrano rozmiary dla ${knownSizes}/${productIds.length} zaznaczonych towarow`, knownSizes ? 'info' : 'warn');
+
+        // Przygotuj batche tylko z zaznaczonych towarow do PUT
+        const idBatches = [];
+        for (let i = 0; i < productIds.length; i += BATCH) idBatches.push(productIds.slice(i, i + BATCH));
 
         log(`[WebAPI] Wysylanie aktualizacji (batch ${BATCH}, concurrency ${CONCURRENCY})...`, 'info');
         let processed = 0, ok = 0, err = 0, skipped = 0;
