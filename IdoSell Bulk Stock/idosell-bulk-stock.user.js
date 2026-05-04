@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         IdoSell - Masowe stany magazynowe
 // @namespace    https://idosell.com/
-// @version      1.5.16
+// @version      1.5.17
 // @description  Masowe ustawianie trybu gospodarki, stanu JEST/NIEMA, ilości na magazynach. Z uploadem CSV/XML (z size_id/size_name).
 // @author       Maciej Dobroń
 // @match        https://*.iai-shop.com/panel/app/products-list.php*
@@ -1786,8 +1786,24 @@
         return err === 0;
     }
 
+    /** Concurrent map z checkpointem (pause/cancel). Każdy worker bierze kolejny element atomicznie. */
+    async function concurrentForEach(items, concurrency, checkpoint, fn) {
+        let idx = 0;
+        async function worker() {
+            while (true) {
+                if (checkpoint) await checkpoint();
+                const my = idx;
+                if (my >= items.length) break;
+                idx++;
+                await fn(items[my], my);
+            }
+        }
+        await Promise.all(Array.from({ length: concurrency }, () => worker()));
+    }
+
     async function runOperation(win, productIds, state, log, onProgress, runCtl) {
         const cp = runCtl ? () => runCtl.checkpoint() : async () => {};
+        const PAR = 8; // równoległe requesty per-produkt (stara ścieżka panelu)
 
         // Tryb szybki — WebAPI bulk (gdy mamy klucz i operacja jest wspierana)
         if (canUseWebApi(state)) {
@@ -1804,12 +1820,9 @@
 
         // Krok 1: zmiana trybu
         if (state.mode === 'manual' || state.mode === 'auto') {
-            log(`Zmiana trybu na: ${state.mode === 'manual' ? 'ręczny' : 'automatyczny'}`, 'info');
-            let i = 0;
-            for (const pid of productIds) {
-                await cp();
-                i++;
-                onProgress(Math.round((i / productIds.length) * 30), i, productIds.length);
+            log(`Zmiana trybu na: ${state.mode === 'manual' ? 'ręczny' : 'automatyczny'} (równolegle ${PAR})`, 'info');
+            let done1 = 0;
+            await concurrentForEach(productIds, PAR, cp, async (pid) => {
                 try {
                     const r = await setManagementType(win, pid, state.mode);
                     if (r.errno === 0 || r.errno === undefined) log(`Towar ${pid} → tryb ${state.mode} OK`, 'success');
@@ -1817,8 +1830,9 @@
                 } catch (e) {
                     log(`Towar ${pid} → BŁĄD: ${e.message}`, 'error');
                 }
-                await sleep(120);
-            }
+                done1++;
+                onProgress(Math.round((done1 / productIds.length) * 30), done1, productIds.length);
+            });
         }
 
         // Krok 2: scope
@@ -1829,41 +1843,40 @@
 
         const targetStocks = state.scope === 'all' ? state.warehouses.map(w => w.stockId) : state.selectedWh;
 
-        // Krok 2a: tryb manual
+        // Krok 2a: tryb manual (concurrent)
         if (state.mode === 'manual' && state.stock) {
             const statusNum = state.stock === 'available' ? '-1' : '0';
             const label = state.stock === 'available' ? 'JEST' : 'NIEMA';
             const codes = state.warehouses.filter(w => targetStocks.includes(w.stockId)).map(w => w.code).join(', ');
-            log(`Magazyny [${codes}] → ${label} (status=${statusNum})`, 'info');
+            log(`Magazyny [${codes}] → ${label} (równolegle ${PAR})`, 'info');
 
-            let i = 0;
-            for (const pid of productIds) {
-                await cp();
-                i++;
-                onProgress(30 + Math.round((i / productIds.length) * 70), i, productIds.length);
+            let done2a = 0;
+            await concurrentForEach(productIds, PAR, cp, async (pid) => {
                 try {
                     const sd = await fetchProductSizes(win, pid);
-                    if (!sd.sizes.length) { log(`Towar ${pid} → brak rozmiarów`, 'warn'); continue; }
-                    let ok = 0, err = 0, noChange = 0;
-                    for (const stockId of targetStocks) {
-                        for (const sizeObj of sd.sizes) {
-                            try {
-                                const r = await changeAvailability(win, pid, stockId, sizeObj.id, statusNum);
-                                if (r && r.errno !== undefined && r.errno !== 0) err++;
-                                else if (r && r.commits && Object.keys(r.commits).length > 0) ok++;
-                                else noChange++;
-                            } catch (e) { err++; }
-                            await sleep(60);
+                    if (!sd.sizes.length) { log(`Towar ${pid} → brak rozmiarów`, 'warn'); }
+                    else {
+                        let ok = 0, err = 0, noChange = 0;
+                        for (const stockId of targetStocks) {
+                            for (const sizeObj of sd.sizes) {
+                                try {
+                                    const r = await changeAvailability(win, pid, stockId, sizeObj.id, statusNum);
+                                    if (r && r.errno !== undefined && r.errno !== 0) err++;
+                                    else if (r && r.commits && Object.keys(r.commits).length > 0) ok++;
+                                    else noChange++;
+                                } catch (e) { err++; }
+                            }
                         }
+                        const cls = err ? 'error' : (ok ? 'success' : 'warn');
+                        const ncMsg = noChange ? ` (${noChange} bez zmian)` : '';
+                        log(`Towar ${pid} → ${ok} OK / ${err} bł.${ncMsg}`, cls);
                     }
-                    const cls = err ? 'error' : (ok ? 'success' : 'warn');
-                    const ncMsg = noChange ? ` (${noChange} bez zmian)` : '';
-                    log(`Towar ${pid} → ${ok} OK / ${err} bł.${ncMsg}`, cls);
                 } catch (e) {
                     log(`Towar ${pid} → BŁĄD: ${e.message}`, 'error');
                 }
-                await sleep(120);
-            }
+                done2a++;
+                onProgress(30 + Math.round((done2a / productIds.length) * 70), done2a, productIds.length);
+            });
         }
 
         // Krok 2b: tryb auto + zerowanie
@@ -1886,14 +1899,11 @@
                 const ownCodes = state.warehouses.filter(w => ownStocks.includes(w.stockId)).map(w => w.code).join(', ');
                 log(`Stan nieskończony: M0 → unlimited${ownStocks.length ? `, magazyny własne [${ownCodes}] → ilość 99999` : ''}`, 'info');
                 const FAKE_INFINITE = 99999;
-                let i = 0;
-                for (const pid of productIds) {
-                    await cp();
-                    i++;
-                    onProgress(30 + Math.round((i / productIds.length) * 70), i, productIds.length);
+                let done2bp = 0;
+                await concurrentForEach(productIds, PAR, cp, async (pid) => {
                     try {
                         const sd = await fetchProductSizes(win, pid);
-                        if (!sd.sizes.length) { log(`Towar ${pid} → brak rozmiarów`, 'warn'); continue; }
+                        if (!sd.sizes.length) { log(`Towar ${pid} → brak rozmiarów`, 'warn'); done2bp++; onProgress(30 + Math.round((done2bp / productIds.length) * 70), done2bp, productIds.length); return; }
                         let m0ok = false, m0err = null;
                         let ownOk = 0, ownErr = 0, ownNoChange = 0;
                         // M0 → unlimited
@@ -1923,44 +1933,44 @@
                     } catch (e) {
                         log(`Towar ${pid} → BŁĄD: ${e.message}`, 'error');
                     }
-                    await sleep(100);
-                }
+                    done2bp++;
+                    onProgress(30 + Math.round((done2bp / productIds.length) * 70), done2bp, productIds.length);
+                });
             }
         }
 
-        // Krok 2c: tryb auto + finite + value
+        // Krok 2c: tryb auto + finite + value (concurrent)
         if (state.mode === 'auto' && state.stock === 'finite' && state.finiteMode === 'value') {
             const target = Number(state.quantity);
             const codes = state.warehouses.filter(w => targetStocks.includes(w.stockId)).map(w => w.code).join(', ');
-            log(`Ustawianie ilości = ${target} szt. dla magazynów [${codes}]`, 'info');
+            log(`Ustawianie ilości = ${target} szt. dla magazynów [${codes}] (równolegle ${PAR})`, 'info');
 
-            let i = 0;
-            for (const pid of productIds) {
-                await cp();
-                i++;
-                onProgress(30 + Math.round((i / productIds.length) * 70), i, productIds.length);
+            let done2c = 0;
+            await concurrentForEach(productIds, PAR, cp, async (pid) => {
                 try {
                     const sd = await fetchProductSizes(win, pid);
-                    if (!sd.sizes.length) { log(`Towar ${pid} → brak rozmiarów`, 'warn'); continue; }
-                    let ok = 0, err = 0, noChange = 0;
-                    for (const stockId of targetStocks) {
-                        for (const sizeObj of sd.sizes) {
-                            try {
-                                const r = await setTargetQuantity(win, pid, stockId, sizeObj.id, target);
-                                if (!r.changed) noChange++;
-                                else ok++;
-                            } catch (e) { err++; }
-                            await sleep(60);
+                    if (!sd.sizes.length) { log(`Towar ${pid} → brak rozmiarów`, 'warn'); }
+                    else {
+                        let ok = 0, err = 0, noChange = 0;
+                        for (const stockId of targetStocks) {
+                            for (const sizeObj of sd.sizes) {
+                                try {
+                                    const r = await setTargetQuantity(win, pid, stockId, sizeObj.id, target);
+                                    if (!r.changed) noChange++;
+                                    else ok++;
+                                } catch (e) { err++; }
+                            }
                         }
+                        const cls = err ? 'error' : (ok ? 'success' : 'warn');
+                        const ncMsg = noChange ? ` (${noChange} bez zmian)` : '';
+                        log(`Towar ${pid} → ${ok} OK / ${err} bł.${ncMsg}`, cls);
                     }
-                    const cls = err ? 'error' : (ok ? 'success' : 'warn');
-                    const ncMsg = noChange ? ` (${noChange} bez zmian)` : '';
-                    log(`Towar ${pid} → ${ok} OK / ${err} bł.${ncMsg}`, cls);
                 } catch (e) {
                     log(`Towar ${pid} → BŁĄD: ${e.message}`, 'error');
                 }
-                await sleep(120);
-            }
+                done2c++;
+                onProgress(30 + Math.round((done2c / productIds.length) * 70), done2c, productIds.length);
+            });
         }
 
         // Krok 2d: tryb auto + finite + file
