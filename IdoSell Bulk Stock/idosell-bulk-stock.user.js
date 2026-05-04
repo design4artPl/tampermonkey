@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         IdoSell - Masowe stany magazynowe
 // @namespace    https://idosell.com/
-// @version      1.5.11
+// @version      1.5.12
 // @description  Masowe ustawianie trybu gospodarki, stanu JEST/NIEMA, ilości na magazynach. Z uploadem CSV/XML (z size_id/size_name).
 // @author       SyncOffer
 // @match        https://*.iai-shop.com/panel/app/products-list.php*
@@ -133,9 +133,21 @@
             xhr.onerror = () => reject(new Error('Błąd sieci (GET)'));
             xhr.send();
         });
-        const apiKeyGen = (html.match(/name="api_key_generated"\s+value="([^"]+)"/) || [])[1];
-        const passGen = (html.match(/name="password_generated"\s+value="([^"]+)"/) || [])[1];
-        if (!apiKeyGen || !passGen) throw new Error('Nie znaleziono pre-generated key w formularzu (czy jesteś zalogowany?)');
+        // Tolerancyjny parser — atrybuty mogą być w dowolnej kolejności (name/value).
+        function parseHiddenValue(html, fieldName) {
+            const escName = fieldName.replace(/[.*+?^${}()|[\]\]/g, '\$&');
+            let m = html.match(new RegExp(`<input[^>]*\bname=["']${escName}["'][^>]*\bvalue=["']([^"']*)["']`, 'i'));
+            if (m) return m[1];
+            m = html.match(new RegExp(`<input[^>]*\bvalue=["']([^"']*)["'][^>]*\bname=["']${escName}["']`, 'i'));
+            if (m) return m[1];
+            return null;
+        }
+        const apiKeyGen = parseHiddenValue(html, 'api_key_generated');
+        const passGen = parseHiddenValue(html, 'password_generated');
+        if (!apiKeyGen || !passGen) {
+            const snippet = (html.match(/api_key_generated[\s\S]{0,300}/) || [''])[0];
+            throw new Error(`Nie znaleziono pre-generated key (apiKeyGen=${!!apiKeyGen}, passGen=${!!passGen}). Snippet: ${snippet.substring(0, 200)}`);
+        }
 
         // 2) Sprawdź limit: max 2 aktywne klucze. Jeśli już są 2, panel zwróci błąd po POST.
         // 3) POST formularza
@@ -192,8 +204,10 @@
     /** GET WebAPI v8 — pobiera szczegóły wielu produktów (do batch 100). */
     function webApiGetProducts(apiKey, productIds) {
         return new Promise((resolve, reject) => {
-            const url = `https://${location.hostname}/api/admin/v8/products/products?` +
-                productIds.map(id => `params[productIds][]=${encodeURIComponent(id)}`).join('&');
+            // returnElements zawęża response do potrzebnych pól (mniejszy payload, szybciej)
+            const ret = ['productId', 'productSizes'].map(x => `params[returnElements][]=${x}`).join('&');
+            const ids = productIds.map(id => `params[productIds][]=${encodeURIComponent(id)}`).join('&');
+            const url = `https://${location.hostname}/api/admin/v8/products/products?${ret}&${ids}`;
             const xhr = new XMLHttpRequest();
             xhr.open('GET', url, true);
             xhr.setRequestHeader('X-API-KEY', apiKey);
@@ -1598,9 +1612,11 @@
         let fetchedCount = 0;
         let fetchIdx = 0;
         async function fetchWorker() {
-            while (fetchIdx < idBatches.length) {
+            while (true) {
+                const myIdx = fetchIdx;
+                if (myIdx >= idBatches.length) break;
+                fetchIdx++;
                 await cp();
-                const myIdx = fetchIdx++;
                 const batch = idBatches[myIdx];
                 try {
                     const r = await webApiGetProducts(apiKey, batch);
@@ -1634,9 +1650,11 @@
         let processed = 0, ok = 0, err = 0, skipped = 0;
         let putIdx = 0;
         async function putWorker() {
-            while (putIdx < idBatches.length) {
+            while (true) {
+                const myIdx = putIdx;
+                if (myIdx >= idBatches.length) break;
+                putIdx++;
                 await cp();
-                const myIdx = putIdx++;
                 const batch = idBatches[myIdx];
                 const products = batch.map(pid => {
                     const sizes = sizesByProduct[String(pid)];
