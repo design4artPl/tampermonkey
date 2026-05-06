@@ -181,6 +181,11 @@
         return el ? (el.value || el.textContent || '') : '';
     }
 
+    function isValidProduct(data) {
+        if (!data || data.error) return false;
+        return !!(data.nazwa || data.opis_krotki || data.opis_dlugi || data.opis_dodatkowy);
+    }
+
     // ===== ID COLLECTION =====
     function collectProductIds(mode, count, specificIds, idRange) {
         if (mode === 'ids') {
