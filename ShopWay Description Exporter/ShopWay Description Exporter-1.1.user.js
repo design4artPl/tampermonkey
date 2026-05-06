@@ -16,6 +16,9 @@
     var AUTO_SAVE_EVERY = 50;        // co ile produktow zapis postepu
     var AUTO_EXPORT_EVERY = 1000;    // co ile produktow czesciowy CSV
     var MAX_RETRIES = 2;
+    var IFRAME_LOAD_WAIT = 800;      // ms po onload iframe zanim czytamy dane
+    var IFRAME_TIMEOUT = 20000;      // ms - hard timeout iframe
+    var activeIframes = 0;
 
     var isExporting = false;
     var shouldStop = false;
@@ -102,71 +105,80 @@
         lastExportedCount = 0;
     }
 
-    // ===== FETCH + PARSE =====
+    // ===== IFRAME LOADER =====
+    // Iframe potrzebny bo opisy doladowuja sie przez JS - sam fetch HTML zwraca puste textareas.
+    // Bez klikania zakladek (vs v3.6 ktory klika 4: Zdjecia/Akcesoria/Podobne/Cross) - 3-5x szybsze.
     function fetchProductDescription(productId) {
-        var url = 'https://poscielone.pl/admin/product/edit/' + productId;
-        return fetch(url, { credentials: 'include' })
-            .then(function(response) {
-                if (!response.ok) throw new Error('HTTP ' + response.status);
-                return response.text();
-            })
-            .then(function(html) {
-                var parser = new DOMParser();
-                var doc = parser.parseFromString(html, 'text/html');
+        return new Promise(function(resolve) {
+            var startTime = Date.now();
+            var iframe = document.createElement('iframe');
+            iframe.style.cssText = 'position:fixed;left:-3000px;top:0;width:1280px;height:720px;opacity:0.01;border:0;';
+            document.body.appendChild(iframe);
+            activeIframes++;
 
-                return {
-                    id: productId,
-                    nazwa: getInput(doc, 'basic_pane[language_data][1][name]'),
-                    opis_krotki: getTextareaRaw(doc, html, 'description_pane[language_data][1][shortdescription]'),
-                    opis_dlugi: getTextareaRaw(doc, html, 'description_pane[language_data][1][description]'),
-                    opis_dodatkowy: getTextareaRaw(doc, html, 'description_pane[language_data][1][longdescription]')
-                };
-            })
-            .catch(function(e) {
-                return { id: productId, error: e.message || String(e) };
-            });
+            var resolved = false;
+            var cleanedUp = false;
+
+            function cleanup() {
+                if (cleanedUp) return;
+                cleanedUp = true;
+                activeIframes = Math.max(0, activeIframes - 1);
+                try { if (iframe.parentNode) iframe.parentNode.removeChild(iframe); } catch (e) {}
+            }
+
+            var timeout = setTimeout(function() {
+                if (resolved) return;
+                resolved = true;
+                cleanup();
+                resolve({ id: productId, error: 'Timeout po ' + Math.round((Date.now() - startTime) / 1000) + 's' });
+            }, IFRAME_TIMEOUT);
+
+            iframe.onload = function() {
+                setTimeout(function() {
+                    if (resolved) return;
+                    try {
+                        var doc = iframe.contentDocument || iframe.contentWindow.document;
+                        var data = {
+                            id: productId,
+                            nazwa: getInput(doc, 'basic_pane[language_data][1][name]'),
+                            opis_krotki: getTextareaValue(doc, 'description_pane[language_data][1][shortdescription]'),
+                            opis_dlugi: getTextareaValue(doc, 'description_pane[language_data][1][description]'),
+                            opis_dodatkowy: getTextareaValue(doc, 'description_pane[language_data][1][longdescription]')
+                        };
+                        resolved = true;
+                        clearTimeout(timeout);
+                        cleanup();
+                        resolve(data);
+                    } catch (e) {
+                        if (resolved) return;
+                        resolved = true;
+                        clearTimeout(timeout);
+                        cleanup();
+                        resolve({ id: productId, error: 'Iframe access: ' + e.message });
+                    }
+                }, IFRAME_LOAD_WAIT);
+            };
+
+            iframe.onerror = function() {
+                if (resolved) return;
+                resolved = true;
+                clearTimeout(timeout);
+                cleanup();
+                resolve({ id: productId, error: 'Iframe load error' });
+            };
+
+            iframe.src = 'https://poscielone.pl/admin/product/edit/' + productId;
+        });
     }
 
     function getInput(doc, name) {
-        var el = doc.querySelector('input[name="' + cssEscape(name) + '"]');
+        var el = doc.querySelector('input[name="' + name + '"]');
         return el ? (el.value || el.getAttribute('value') || '') : '';
     }
 
-    // Czytaj raw HTML textarea z surowego HTML strony - zachowuje znaczniki HTML w opisach
-    // DOMParser dekoduje encje, ale pozostaja znaczniki <p>, <br>, <strong> itd.
-    function getTextareaRaw(doc, html, name) {
-        // Sprobuj DOMParser - .value albo textContent
-        var el = doc.querySelector('textarea[name="' + cssEscape(name) + '"]');
-        if (el) {
-            var v = el.value;
-            if (v && v.length > 0) return v;
-            var tc = el.textContent;
-            if (tc && tc.length > 0) return tc;
-        }
-
-        // Fallback: regex z surowego HTML (na wypadek gdyby DOMParser cos zepsul)
-        var nameEsc = name.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-        var regex = new RegExp('<textarea[^>]*name=["\']' + nameEsc + '["\'][^>]*>([\\s\\S]*?)</textarea>', 'i');
-        var match = html.match(regex);
-        if (match && match[1]) {
-            return decodeHtmlEntities(match[1]);
-        }
-        return '';
-    }
-
-    function cssEscape(s) {
-        return s.replace(/(["\\])/g, '\\$1');
-    }
-
-    function decodeHtmlEntities(s) {
-        var ta = document.createElement('textarea');
-        ta.innerHTML = s;
-        return ta.value;
-    }
-
-    function isValidProduct(data) {
-        if (!data || data.error) return false;
-        return !!(data.nazwa || data.opis_krotki || data.opis_dlugi || data.opis_dodatkowy);
+    function getTextareaValue(doc, name) {
+        var el = doc.querySelector('textarea[name="' + name + '"]');
+        return el ? (el.value || el.textContent || '') : '';
     }
 
     // ===== ID COLLECTION =====
@@ -252,7 +264,7 @@
         var count = parseInt(document.getElementById('desc-count').value, 10) || 10;
         var ids = document.getElementById('desc-ids').value;
         var range = document.getElementById('desc-range').value;
-        var parallel = clamp(parseInt(document.getElementById('desc-parallel').value, 10) || 10, 1, 30);
+        var parallel = clamp(parseInt(document.getElementById('desc-parallel').value, 10) || 5, 1, 15);
 
         isExporting = true;
         shouldStop = false;
@@ -393,7 +405,7 @@
         lastSavedCount = exportedProducts.length;
         lastExportedCount = exportedProducts.length;
 
-        var parallel = clamp(parseInt(document.getElementById('desc-parallel').value, 10) || 10, 1, 30);
+        var parallel = clamp(parseInt(document.getElementById('desc-parallel').value, 10) || 5, 1, 15);
         var remaining = saved.remainingIds || [];
 
         toggleButtons(true);
@@ -454,7 +466,7 @@
             + '#desc-export-ui .stats{margin-top:6px;font-size:11px;}'
             + '</style>'
             + '<button class="btn-close" id="desc-close">X</button>'
-            + '<h3>📝 Description Exporter v1.0</h3>'
+            + '<h3>📝 Description Exporter v1.1 (iframe)</h3>'
 
             + '<label>Tryb:</label>'
             + '<select id="desc-mode">'
@@ -479,8 +491,8 @@
             + '</div>'
 
             + '<label>Rownolegle (1-30):</label>'
-            + '<input type="number" id="desc-parallel" value="10" min="1" max="30">'
-            + '<div class="info">10 jest bezpieczne. Wiecej = szybciej ale obciaza serwer.</div>'
+            + '<input type="number" id="desc-parallel" value="5" min="1" max="15">'
+            + '<div class="info">5 jest dobre dla iframe. Max 15 - kazde iframe ladiuje pelna strone.</div>'
 
             + '<div>'
             +   '<button class="btn-start" id="desc-start">▶ Start</button>'
@@ -500,7 +512,8 @@
             + '<div class="stats">'
             +   '<span style="color:#27ae60;">OK: <span id="desc-ok">0</span></span> | '
             +   '<span style="color:#e74c3c;">Bledy: <span id="desc-err">0</span></span> | '
-            +   '<span style="color:#3498db;">Tempo: <span id="desc-rate">0</span>/s</span>'
+            +   '<span style="color:#3498db;">Tempo: <span id="desc-rate">0</span>/s</span> | '
+            +   '<span style="color:#9b59b6;">Iframes: <span id="desc-iframes">0</span></span>'
             + '</div>'
 
             + '<div style="margin-top:8px;">'
@@ -562,9 +575,11 @@
         var ok = document.getElementById('desc-ok');
         var err = document.getElementById('desc-err');
         var rateEl = document.getElementById('desc-rate');
+        var iframesEl = document.getElementById('desc-iframes');
         if (ok) ok.textContent = successCount;
         if (err) err.textContent = errorCount;
         if (rateEl && rate !== undefined) rateEl.textContent = rate.toFixed(1);
+        if (iframesEl) iframesEl.textContent = activeIframes;
     }
 
     function checkSavedProgress() {
