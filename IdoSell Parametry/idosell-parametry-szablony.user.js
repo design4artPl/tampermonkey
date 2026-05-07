@@ -1089,7 +1089,13 @@
 
     updateStatus('Usuwanie "' + nodeName + '"...');
 
+    // v4.5.45: gdy kasujemy wartosc, po odpieciu sprawdzimy czy parametr-rodzic
+    // ma jeszcze inne wartosci na tych produktach. Jesli nie - odpinamy tez parametr.
+    var isValueNode = isValue(doc, nodeId);
+    var parentIsParameter = parentId && parentId !== '0' && isParameter(doc, parentId);
+
     var totalDetached = 0;
+    var detachedFrom = [];
     var maxRetries = 10;
 
     for (var attempt = 0; attempt < maxRetries; attempt++) {
@@ -1099,6 +1105,9 @@
 
       // Success
       if (removeResult.child && !removeResult.errno) {
+        if (isValueNode && parentIsParameter && detachedFrom.length > 0) {
+          await detachOrphanParentFromProducts(parentId, detachedFrom, updateStatus);
+        }
         updateStatus(totalDetached > 0
           ? 'Usunieto "' + nodeName + '" (odpieto od ' + totalDetached + ' towarow)'
           : 'Usunieto "' + nodeName + '"');
@@ -1106,6 +1115,9 @@
       }
 
       if (!removeResult.error && !removeResult.errno) {
+        if (isValueNode && parentIsParameter && detachedFrom.length > 0) {
+          await detachOrphanParentFromProducts(parentId, detachedFrom, updateStatus);
+        }
         updateStatus('Usunieto "' + nodeName + '"');
         return true;
       }
@@ -1130,8 +1142,10 @@
               ])) + '&columns=[]'
             );
             totalDetached++;
+            detachedFrom.push(String(productIds[i]));
           } catch (e) {
             totalDetached++;
+            detachedFrom.push(String(productIds[i]));
           }
           if (i < productIds.length - 1) await sleep(200);
         }
@@ -1146,6 +1160,36 @@
 
     updateStatus('Blad: nie udalo sie usunac po ' + maxRetries + ' probach', true);
     return false;
+  }
+
+  // v4.5.45: dla kazdego produktu na liscie sprawdz czy parametr-rodzic ma jeszcze inna wartosc.
+  // Jesli juz nie ma (parametr osierocony), odepnij rowniez sam parametr.
+  async function detachOrphanParentFromProducts(parentId, productIds, updateStatus) {
+    if (!productIds || !productIds.length) return;
+    var stillHas = new Set();
+    try {
+      var occ = await fetchAjax('action=numberOfOccurrence&id=' + encodeURIComponent(parentId));
+      var raw = occ && occ.data ? occ.data.products : null;
+      if (Array.isArray(raw)) {
+        raw.forEach(function (p) { stillHas.add(String(typeof p === 'object' ? (p.id || p.product_id) : p)); });
+      } else if (raw && typeof raw === 'object') {
+        Object.values(raw).forEach(function (p) { stillHas.add(String(typeof p === 'object' ? (p.id || p.product_id) : p)); });
+      }
+    } catch (e) { return; }
+    var orphans = productIds.filter(function (pid) { return !stillHas.has(String(pid)); });
+    if (!orphans.length) return;
+    for (var i = 0; i < orphans.length; i++) {
+      if (updateStatus) updateStatus('Odpinanie pustego parametru-rodzica od towaru ' + (i + 1) + '/' + orphans.length + ' (ID: ' + orphans[i] + ')...');
+      try {
+        await fetchAjaxRaw(
+          AJAX_URL + '?action=saveParametersChanges&productId=' + orphans[i],
+          'data=' + encodeURIComponent(JSON.stringify([
+            { operation: 'remove', parameter: String(parentId) }
+          ])) + '&columns=[]'
+        );
+      } catch (e) {}
+      if (i < orphans.length - 1) await sleep(200);
+    }
   }
 
   async function loadChildValues(nodeId) {
