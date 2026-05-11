@@ -1,8 +1,8 @@
 ﻿// ==UserScript==
 // @name         IdoSell Blogi — rozszerzona lista wpisów
 // @namespace    https://github.com/design4artPl/tampermonkey
-// @version      0.2.1
-// @description  Lista wpisów blog: 4 dodatkowe kolumny (powiązane towary, własny URL, indywidualne metatagi, obrazki w treści) + eksport bieżącej strony / wszystkich wpisów do JSON / CSV / XML
+// @version      0.3.0
+// @description  Lista wpisów blog: 4 dodatkowe kolumny + multi-select wpisów (persistent przez paginację) + eksport bieżącej / zaznaczonych / wszystkich wpisów do JSON / CSV / XML
 // @author       design4artPl
 // @match        https://*.iai-shop.com/panel/entries.php?*mode=blog*
 // @run-at       document-idle
@@ -19,6 +19,7 @@
     const CACHE_TTL = 5 * 60 * 1000;
     const CACHE_PREFIX = 'blogi:entry:';
     const LAST_EDITED_KEY = 'blogi:lastEditedId';
+    const SELECTED_KEY = 'blogi:selected';
     const BOOT_INTERVAL = 200;
     const BOOT_MAX_TRIES = 50;
 
@@ -37,6 +38,8 @@
         'table.entries .blogi-yes{color:#2a8f2a;font-weight:bold}',
         'table.entries .blogi-no{color:#999}',
         'table.entries .blogi-num{font-weight:bold}',
+        'table.entries th.blogi-select-col,table.entries td.blogi-select-col{width:32px;text-align:center;padding:2px}',
+        'table.entries tr.blogi-selected td{background:#fff8d6 !important}',
         '.blogi-toolbar{display:inline-block;position:relative;margin:0 8px}',
         '.blogi-toolbar .blogi-btn{background:#5cb85c;color:#fff;border:0;padding:5px 12px;border-radius:3px;cursor:pointer;font-size:12px}',
         '.blogi-toolbar .blogi-btn:hover{background:#4a934a}',
@@ -45,6 +48,10 @@
         '.blogi-menu-group{padding:4px 10px;font-weight:bold;font-size:11px;color:#666;background:#f5f5f5;border-bottom:1px solid #e5e5e5;text-transform:uppercase}',
         '.blogi-menu-item{display:block;padding:6px 14px;cursor:pointer;color:#333;text-decoration:none;font-size:12px}',
         '.blogi-menu-item:hover{background:#eef}',
+        '.blogi-menu-item.blogi-disabled{color:#bbb;cursor:not-allowed;pointer-events:none}',
+        '.blogi-selection-info{display:inline-block;margin:0 8px;padding:4px 10px;background:#fffbe6;border:1px solid #f3e09a;border-radius:3px;font-size:12px;color:#7a5b00}',
+        '.blogi-selection-info button{margin-left:8px;padding:2px 8px;font-size:11px;background:#fff;border:1px solid #ccc;border-radius:2px;cursor:pointer;color:#333}',
+        '.blogi-selection-info button:hover{background:#f0f0f0}',
         '.blogi-modal-mask{position:fixed;top:0;left:0;right:0;bottom:0;background:rgba(0,0,0,.4);z-index:9998}',
         '.blogi-modal{position:fixed;top:50%;left:50%;transform:translate(-50%,-50%);background:#fff;border-radius:6px;box-shadow:0 4px 20px rgba(0,0,0,.3);padding:20px;min-width:380px;z-index:9999;font-family:Arial,sans-serif}',
         '.blogi-modal h3{margin:0 0 12px 0;font-size:16px}',
@@ -79,6 +86,17 @@
     function cacheInvalidate(id) {
         try { sessionStorage.removeItem(CACHE_PREFIX + id); } catch (e) {}
     }
+
+    function loadSelected() {
+        try { return new Set(JSON.parse(sessionStorage.getItem(SELECTED_KEY) || '[]')); }
+        catch (e) { return new Set(); }
+    }
+
+    function saveSelected() {
+        try { sessionStorage.setItem(SELECTED_KEY, JSON.stringify([...selected])); } catch (e) {}
+    }
+
+    const selected = loadSelected();
 
     function parseEntryDoc(html) {
         const doc = new DOMParser().parseFromString(html, 'text/html');
@@ -212,39 +230,118 @@
 
     function rebuildHeader() {
         const headRow = document.querySelector('table.entries thead tr');
-        if (!headRow || headRow.querySelector('th.blogi-col')) return;
+        if (!headRow) return;
 
-        const operationTh = Array.from(headRow.querySelectorAll('th'))
-            .find(th => th.getAttribute('data-name') === 'operation') || headRow.lastElementChild;
+        if (!headRow.querySelector('th.blogi-select-col')) {
+            const selTh = document.createElement('th');
+            selTh.className = 'title blogi-select-col';
+            selTh.title = 'Zaznacz/odznacz wszystkie na bieżącej stronie';
+            selTh.innerHTML = '<input type="checkbox" class="blogi-select-all">';
+            selTh.querySelector('input').addEventListener('click', e => {
+                const check = e.target.checked;
+                getCurrentPageIds().forEach(id => check ? selected.add(id) : selected.delete(id));
+                saveSelected();
+                applySelectedToRows();
+                updateSelectionBar();
+            });
+            headRow.insertBefore(selTh, headRow.firstElementChild);
+        }
 
-        for (const col of COLUMNS) {
-            const th = document.createElement('th');
-            th.className = 'title blogi-col';
-            th.setAttribute('data-name', 'blogi-' + col.key);
-            th.title = col.tooltip;
-            th.style.width = col.width;
-            th.innerHTML = '<table style="margin:0 auto"><tbody><tr><td>' + col.label + '</td></tr></tbody></table>';
-            headRow.insertBefore(th, operationTh);
+        if (!headRow.querySelector('th.blogi-col')) {
+            const operationTh = Array.from(headRow.querySelectorAll('th'))
+                .find(th => th.getAttribute('data-name') === 'operation') || headRow.lastElementChild;
+            for (const col of COLUMNS) {
+                const th = document.createElement('th');
+                th.className = 'title blogi-col';
+                th.setAttribute('data-name', 'blogi-' + col.key);
+                th.title = col.tooltip;
+                th.style.width = col.width;
+                th.innerHTML = '<table style="margin:0 auto"><tbody><tr><td>' + col.label + '</td></tr></tbody></table>';
+                headRow.insertBefore(th, operationTh);
+            }
         }
     }
 
     function rebuildRows() {
         const rows = document.querySelectorAll('table.entries tr[id^="tr_"]');
         rows.forEach(tr => {
-            if (tr.querySelector('td.blogi-col')) return;
             const editLink = tr.querySelector('a[href*="action=edit"]');
             if (!editLink) return;
             const m = editLink.getAttribute('href').match(/[?&]id=(\d+)/);
             if (!m) return;
-            tr.dataset.blogiId = m[1];
+            const id = m[1];
+            tr.dataset.blogiId = id;
 
-            const lastTd = tr.lastElementChild;
-            for (const col of COLUMNS) {
+            if (!tr.querySelector('td.blogi-select-col')) {
                 const td = document.createElement('td');
-                td.className = 'row0 blogi-col blogi-col-' + col.key;
-                td.innerHTML = '<span class="blogi-cell loading" data-col="' + col.key + '">…</span>';
-                tr.insertBefore(td, lastTd);
+                td.className = 'row0 blogi-select-col';
+                const cb = document.createElement('input');
+                cb.type = 'checkbox';
+                cb.className = 'blogi-select-row';
+                cb.checked = selected.has(id);
+                cb.dataset.blogiId = id;
+                cb.addEventListener('click', e => {
+                    e.stopPropagation();
+                    if (cb.checked) selected.add(id);
+                    else selected.delete(id);
+                    saveSelected();
+                    updateRowHighlight(tr);
+                    updateSelectionBar();
+                    updateHeaderCheckbox();
+                });
+                td.appendChild(cb);
+                tr.insertBefore(td, tr.firstElementChild);
+                updateRowHighlight(tr);
             }
+
+            if (!tr.querySelector('td.blogi-col')) {
+                const lastTd = tr.lastElementChild;
+                for (const col of COLUMNS) {
+                    const td = document.createElement('td');
+                    td.className = 'row0 blogi-col blogi-col-' + col.key;
+                    td.innerHTML = '<span class="blogi-cell loading" data-col="' + col.key + '">…</span>';
+                    tr.insertBefore(td, lastTd);
+                }
+            }
+        });
+    }
+
+    function updateRowHighlight(tr) {
+        const cb = tr.querySelector('input.blogi-select-row');
+        if (cb && cb.checked) tr.classList.add('blogi-selected');
+        else tr.classList.remove('blogi-selected');
+    }
+
+    function applySelectedToRows() {
+        document.querySelectorAll('input.blogi-select-row').forEach(cb => {
+            cb.checked = selected.has(cb.dataset.blogiId);
+            const tr = cb.closest('tr');
+            if (tr) updateRowHighlight(tr);
+        });
+    }
+
+    function updateHeaderCheckbox() {
+        const all = document.querySelectorAll('input.blogi-select-row');
+        const headerCb = document.querySelector('input.blogi-select-all');
+        if (!headerCb) return;
+        if (all.length === 0) { headerCb.checked = false; headerCb.indeterminate = false; return; }
+        const checked = Array.from(all).filter(c => c.checked).length;
+        if (checked === 0) { headerCb.checked = false; headerCb.indeterminate = false; }
+        else if (checked === all.length) { headerCb.checked = true; headerCb.indeterminate = false; }
+        else { headerCb.checked = false; headerCb.indeterminate = true; }
+    }
+
+    function updateSelectionBar() {
+        const bar = document.querySelector('.blogi-selection-info');
+        if (bar) {
+            if (selected.size === 0) bar.style.display = 'none';
+            else {
+                bar.style.display = '';
+                bar.querySelector('.blogi-selection-count').textContent = selected.size;
+            }
+        }
+        document.querySelectorAll('.blogi-menu-item[data-scope="selected"]').forEach(it => {
+            it.classList.toggle('blogi-disabled', selected.size === 0);
         });
     }
 
@@ -521,6 +618,8 @@
             let ids;
             if (scope === 'page') {
                 ids = getCurrentPageIds();
+            } else if (scope === 'selected') {
+                ids = [...selected];
             } else {
                 ids = await collectAllIds(modal.signal, (p, t) => modal.update(p, t, 'Pobieranie stron listy'));
             }
@@ -565,9 +664,36 @@
         }
     }
 
+    async function selectAllEntries() {
+        const modal = showProgressModal('Zaznaczanie wszystkich wpisów');
+        modal.update(0, 1, 'Zbieranie identyfikatorów');
+        try {
+            const ids = await collectAllIds(modal.signal, (p, t) => modal.update(p, t, 'Pobieranie stron listy'));
+            if (modal.signal.aborted) { modal.done('Anulowano'); return; }
+            ids.forEach(id => selected.add(id));
+            saveSelected();
+            applySelectedToRows();
+            updateSelectionBar();
+            updateHeaderCheckbox();
+            modal.log('Zaznaczono: ' + selected.size);
+            modal.done('Zaznaczono ' + selected.size + ' wpisów');
+        } catch (e) {
+            if (e.name !== 'AbortError') modal.log('Błąd: ' + e.message);
+            modal.done(e.name === 'AbortError' ? 'Anulowano' : 'Błąd');
+        }
+    }
+
     function injectToolbar() {
         const paginator = document.querySelector('.yui-dt-paginator');
         if (!paginator || paginator.querySelector('.blogi-toolbar')) return;
+
+        const selBar = document.createElement('span');
+        selBar.className = 'blogi-selection-info';
+        selBar.style.display = 'none';
+        selBar.innerHTML =
+            'Zaznaczono: <strong class="blogi-selection-count">0</strong>' +
+            ' <button class="blogi-clear-sel" type="button">Wyczyść</button>' +
+            ' <button class="blogi-select-all-btn" type="button">Zaznacz wszystkie wpisy</button>';
 
         const wrap = document.createElement('span');
         wrap.className = 'blogi-toolbar';
@@ -578,11 +704,16 @@
             '<a class="blogi-menu-item" data-scope="page" data-format="json">JSON</a>' +
             '<a class="blogi-menu-item" data-scope="page" data-format="csv">CSV</a>' +
             '<a class="blogi-menu-item" data-scope="page" data-format="xml">XML</a>' +
+            '<div class="blogi-menu-group">Zaznaczone</div>' +
+            '<a class="blogi-menu-item blogi-disabled" data-scope="selected" data-format="json">JSON</a>' +
+            '<a class="blogi-menu-item blogi-disabled" data-scope="selected" data-format="csv">CSV</a>' +
+            '<a class="blogi-menu-item blogi-disabled" data-scope="selected" data-format="xml">XML</a>' +
             '<div class="blogi-menu-group">Wszystkie wpisy</div>' +
             '<a class="blogi-menu-item" data-scope="all" data-format="json">JSON</a>' +
             '<a class="blogi-menu-item" data-scope="all" data-format="csv">CSV</a>' +
             '<a class="blogi-menu-item" data-scope="all" data-format="xml">XML</a>' +
             '</div>';
+        paginator.appendChild(selBar);
         paginator.appendChild(wrap);
 
         const btn = wrap.querySelector('.blogi-btn');
@@ -591,9 +722,20 @@
         document.addEventListener('click', () => menu.classList.remove('open'));
         menu.addEventListener('click', (e) => {
             const item = e.target.closest('.blogi-menu-item');
-            if (!item) return;
+            if (!item || item.classList.contains('blogi-disabled')) return;
             menu.classList.remove('open');
             runExport(item.dataset.scope, item.dataset.format);
+        });
+
+        selBar.querySelector('.blogi-clear-sel').addEventListener('click', () => {
+            selected.clear();
+            saveSelected();
+            applySelectedToRows();
+            updateSelectionBar();
+            updateHeaderCheckbox();
+        });
+        selBar.querySelector('.blogi-select-all-btn').addEventListener('click', () => {
+            selectAllEntries();
         });
     }
 
@@ -601,6 +743,9 @@
         rebuildHeader();
         rebuildRows();
         injectToolbar();
+        applySelectedToRows();
+        updateSelectionBar();
+        updateHeaderCheckbox();
         enqueueFetches();
     }
 
