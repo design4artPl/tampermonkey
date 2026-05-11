@@ -1,7 +1,7 @@
 ﻿// ==UserScript==
 // @name         IdoSell Blogi — rozszerzona lista wpisów
 // @namespace    https://github.com/design4artPl/tampermonkey
-// @version      0.2.0
+// @version      0.2.1
 // @description  Lista wpisów blog: 4 dodatkowe kolumny (powiązane towary, własny URL, indywidualne metatagi, obrazki w treści) + eksport bieżącej strony / wszystkich wpisów do JSON / CSV / XML
 // @author       design4artPl
 // @match        https://*.iai-shop.com/panel/entries.php?*mode=blog*
@@ -480,7 +480,16 @@
         const status = modal.querySelector('.blogi-status');
         const cancelBtn = modal.querySelector('button.cancel');
         const controller = new AbortController();
-        cancelBtn.addEventListener('click', () => controller.abort());
+        let finished = false;
+        const close = () => {
+            if (mask.parentNode) mask.parentNode.removeChild(mask);
+            if (modal.parentNode) modal.parentNode.removeChild(modal);
+        };
+        cancelBtn.addEventListener('click', () => {
+            if (finished) close();
+            else controller.abort();
+        });
+        mask.addEventListener('click', () => { if (finished) close(); });
         return {
             signal: controller.signal,
             update(done, total, msg) {
@@ -494,11 +503,9 @@
                 status.appendChild(line);
                 status.scrollTop = status.scrollHeight;
             },
-            close() {
-                document.body.removeChild(mask);
-                document.body.removeChild(modal);
-            },
+            close,
             done(msg) {
+                finished = true;
                 cancelBtn.textContent = 'Zamknij';
                 cancelBtn.className = 'primary';
                 txt.textContent = msg || 'Zakończono';
