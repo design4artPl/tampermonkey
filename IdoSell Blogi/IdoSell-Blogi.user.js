@@ -1,8 +1,8 @@
 ﻿// ==UserScript==
 // @name         IdoSell Blogi — rozszerzona lista wpisów
 // @namespace    https://github.com/design4artPl/tampermonkey
-// @version      0.1.0
-// @description  Dodaje 4 kolumny do listy wpisów blog: liczba powiązanych towarów, własny URL, indywidualne metatagi, obrazki w treści
+// @version      0.2.0
+// @description  Lista wpisów blog: 4 dodatkowe kolumny (powiązane towary, własny URL, indywidualne metatagi, obrazki w treści) + eksport bieżącej strony / wszystkich wpisów do JSON / CSV / XML
 // @author       design4artPl
 // @match        https://*.iai-shop.com/panel/entries.php?*mode=blog*
 // @run-at       document-idle
@@ -36,7 +36,25 @@
         'table.entries .blogi-cell.error{color:#c00;cursor:help}',
         'table.entries .blogi-yes{color:#2a8f2a;font-weight:bold}',
         'table.entries .blogi-no{color:#999}',
-        'table.entries .blogi-num{font-weight:bold}'
+        'table.entries .blogi-num{font-weight:bold}',
+        '.blogi-toolbar{display:inline-block;position:relative;margin:0 8px}',
+        '.blogi-toolbar .blogi-btn{background:#5cb85c;color:#fff;border:0;padding:5px 12px;border-radius:3px;cursor:pointer;font-size:12px}',
+        '.blogi-toolbar .blogi-btn:hover{background:#4a934a}',
+        '.blogi-menu{display:none;position:absolute;top:100%;left:0;margin-top:2px;background:#fff;border:1px solid #ccc;box-shadow:0 2px 8px rgba(0,0,0,.15);z-index:1000;min-width:240px}',
+        '.blogi-menu.open{display:block}',
+        '.blogi-menu-group{padding:4px 10px;font-weight:bold;font-size:11px;color:#666;background:#f5f5f5;border-bottom:1px solid #e5e5e5;text-transform:uppercase}',
+        '.blogi-menu-item{display:block;padding:6px 14px;cursor:pointer;color:#333;text-decoration:none;font-size:12px}',
+        '.blogi-menu-item:hover{background:#eef}',
+        '.blogi-modal-mask{position:fixed;top:0;left:0;right:0;bottom:0;background:rgba(0,0,0,.4);z-index:9998}',
+        '.blogi-modal{position:fixed;top:50%;left:50%;transform:translate(-50%,-50%);background:#fff;border-radius:6px;box-shadow:0 4px 20px rgba(0,0,0,.3);padding:20px;min-width:380px;z-index:9999;font-family:Arial,sans-serif}',
+        '.blogi-modal h3{margin:0 0 12px 0;font-size:16px}',
+        '.blogi-modal .blogi-progress-bar{background:#eee;height:14px;border-radius:3px;overflow:hidden;margin:10px 0}',
+        '.blogi-modal .blogi-progress-fill{background:#5cb85c;height:100%;width:0;transition:width .2s}',
+        '.blogi-modal .blogi-progress-text{font-size:12px;color:#666;margin-bottom:6px}',
+        '.blogi-modal .blogi-status{font-size:11px;color:#999;margin-top:8px;max-height:60px;overflow:auto}',
+        '.blogi-modal-actions{margin-top:14px;text-align:right}',
+        '.blogi-modal-actions button{padding:6px 14px;margin-left:6px;cursor:pointer;border:1px solid #ccc;background:#fff;border-radius:3px;font-size:12px}',
+        '.blogi-modal-actions button.primary{background:#5cb85c;color:#fff;border-color:#5cb85c}'
     ].join('');
     document.head.appendChild(style);
 
@@ -85,17 +103,95 @@
         return { products, customLink, customMeta, hasImg };
     }
 
-    async function fetchEntryDetails(id, signal) {
-        const cached = cacheGet(id);
-        if (cached) return cached;
+    function parseFullEntry(html, id) {
+        const doc = new DOMParser().parseFromString(html, 'text/html');
+        const $val = (sel) => { const e = doc.querySelector(sel); return e ? (e.value || '') : ''; };
+        const $checked = (name) => { const e = doc.querySelector('input[name="' + name + '"]:checked'); return e ? e.value : null; };
+
+        const data = {
+            id: String(id),
+            visible: $checked('visible') === 't',
+            date: $val('input[name="created_at_ymd"]'),
+            showDate: $val('input[name="show_date_ymd"]'),
+            hideDate: $val('input[name="hide_date_ymd"]'),
+            linkType: $checked('linkType') || 'self',
+            link: $val('input[name="link"]'),
+            entryHasImg: $checked('ifimg') === 't',
+            categories: Array.from(doc.querySelectorAll('input[name="categories[]"]:checked')).map(i => i.value),
+            zones: Array.from(doc.querySelectorAll('input[name="zones[]"]:checked')).map(i => i.value),
+            relatedProducts: Array.from(doc.querySelectorAll('#related-products input[id^="related-product-"]')).map(i => i.value),
+            languages: {},
+            images: []
+        };
+
+        const langs = new Set();
+        doc.querySelectorAll('input[name^="title["]').forEach(i => {
+            const m = i.name.match(/^title\[(.+?)\]$/);
+            if (m) langs.add(m[1]);
+        });
+
+        for (const lang of langs) {
+            const longDesc = $val('input[name="long_description[' + lang + ']"]');
+            data.languages[lang] = {
+                title: $val('input[name="title[' + lang + ']"]'),
+                description: $val('textarea[name="description[' + lang + ']"]'),
+                longDescription: longDesc,
+                translationFlag: $checked('translation_flag_radio[' + lang + ']') === 'y',
+                meta: $checked('meta[' + lang + ']') === 'y',
+                metaTitle: $val('input[name="meta_title[' + lang + ']"]'),
+                metaDescription: $val('input[name="meta_description[' + lang + ']"]'),
+                metaKeyword: $val('input[name="meta_keyword[' + lang + ']"]'),
+                urlBlogRadio: $checked('url_blog_radio[' + lang + ']') === 'y',
+                blogUrl: $val('input[name="blog_url[' + lang + ']"]'),
+                urlNewsRadio: $checked('url_news_radio[' + lang + ']') === 'y',
+                newsUrl: $val('input[name="news_url[' + lang + ']"]'),
+                canonicalBlogRadio: $checked('canonical_blog_radio[' + lang + ']') === 'y',
+                canonicalBlog: $val('input[name="canonical_blog[' + lang + ']"]'),
+                canonicalNewsRadio: $checked('canonical_news_radio[' + lang + ']') === 'y',
+                canonicalNews: $val('input[name="canonical_news[' + lang + ']"]')
+            };
+
+            const imgRegex = /<img\s+[^>]*src=["']([^"']+)["'][^>]*>/gi;
+            let m;
+            while ((m = imgRegex.exec(longDesc)) !== null) {
+                data.images.push({ lang, src: m[1] });
+            }
+        }
+
+        data.hasImgInContent = data.images.length > 0;
+        data.customLink = (data.linkType !== 'self') || Object.values(data.languages).some(l => l.urlBlogRadio || l.urlNewsRadio);
+        data.customMeta = Object.values(data.languages).some(l => l.meta);
+
+        return data;
+    }
+
+    async function fetchEntryHtml(id, signal) {
         const shop = new URLSearchParams(location.search).get('shop') || '1';
         const url = location.origin + '/panel/entries.php?action=edit&mode=blog&shop=' + shop + '&id=' + id;
         const r = await fetch(url, { credentials: 'include', signal });
         if (!r.ok) throw new Error('HTTP ' + r.status);
-        const html = await r.text();
+        return await r.text();
+    }
+
+    async function fetchEntryDetails(id, signal) {
+        const cached = cacheGet(id);
+        if (cached) return cached;
+        const html = await fetchEntryHtml(id, signal);
         const data = parseEntryDoc(html);
         cacheSet(id, data);
         return data;
+    }
+
+    async function fetchFullEntry(id, signal) {
+        const html = await fetchEntryHtml(id, signal);
+        const full = parseFullEntry(html, id);
+        cacheSet(id, {
+            products: full.relatedProducts.length,
+            customLink: full.customLink,
+            customMeta: full.customMeta,
+            hasImg: full.hasImgInContent
+        });
+        return full;
     }
 
     let activeController = null;
@@ -195,9 +291,309 @@
         runQueue(tasks, CONCURRENCY);
     }
 
+    function escapeXml(s) {
+        return String(s == null ? '' : s)
+            .replace(/&/g, '&amp;')
+            .replace(/</g, '&lt;')
+            .replace(/>/g, '&gt;')
+            .replace(/"/g, '&quot;')
+            .replace(/'/g, '&apos;');
+    }
+
+    function xmlValue(v, indent) {
+        if (v == null) return '';
+        if (typeof v === 'boolean') return v ? 'true' : 'false';
+        if (typeof v === 'number') return String(v);
+        if (Array.isArray(v)) {
+            return v.map(item => indent + '<item>' + (typeof item === 'object' ? '\n' + xmlObject(item, indent + '  ') + indent : escapeXml(item)) + '</item>').join('\n');
+        }
+        if (typeof v === 'object') {
+            return '\n' + xmlObject(v, indent + '  ') + indent;
+        }
+        const s = String(v);
+        if (/[<>&]/.test(s) && s.length > 30) return '<![CDATA[' + s.replace(/]]>/g, ']]]]><![CDATA[>') + ']]>';
+        return escapeXml(s);
+    }
+
+    function xmlObject(obj, indent) {
+        let out = '';
+        for (const k of Object.keys(obj)) {
+            const v = obj[k];
+            const tag = k.replace(/[^a-zA-Z0-9_-]/g, '_');
+            if (Array.isArray(v)) {
+                if (v.length === 0) {
+                    out += indent + '<' + tag + '/>\n';
+                } else {
+                    out += indent + '<' + tag + '>\n' + xmlValue(v, indent + '  ') + '\n' + indent + '</' + tag + '>\n';
+                }
+            } else if (v != null && typeof v === 'object') {
+                out += indent + '<' + tag + '>' + xmlValue(v, indent) + '</' + tag + '>\n';
+            } else {
+                out += indent + '<' + tag + '>' + xmlValue(v, indent) + '</' + tag + '>\n';
+            }
+        }
+        return out;
+    }
+
+    function toXml(entries) {
+        let out = '<?xml version="1.0" encoding="UTF-8"?>\n<entries>\n';
+        for (const e of entries) {
+            out += '  <entry>\n' + xmlObject(e, '    ') + '  </entry>\n';
+        }
+        out += '</entries>\n';
+        return out;
+    }
+
+    function csvEscape(s) {
+        if (s == null) return '';
+        const str = String(s);
+        if (/[;"\n\r]/.test(str)) return '"' + str.replace(/"/g, '""') + '"';
+        return str;
+    }
+
+    function toCsv(entries) {
+        const allLangs = new Set();
+        entries.forEach(e => Object.keys(e.languages || {}).forEach(l => allLangs.add(l)));
+        const langs = [...allLangs].sort();
+
+        const baseCols = ['id', 'visible', 'date', 'showDate', 'hideDate', 'linkType', 'link', 'entryHasImg', 'hasImgInContent', 'customLink', 'customMeta', 'productsCount', 'relatedProducts', 'categories', 'zones', 'imagesCount'];
+        const langCols = ['title', 'description', 'longDescription', 'translationFlag', 'meta', 'metaTitle', 'metaDescription', 'metaKeyword', 'urlBlogRadio', 'blogUrl', 'urlNewsRadio', 'newsUrl', 'canonicalBlogRadio', 'canonicalBlog', 'canonicalNewsRadio', 'canonicalNews'];
+
+        const headers = [...baseCols];
+        for (const lang of langs) {
+            for (const c of langCols) headers.push(c + '_' + lang);
+        }
+
+        const lines = [headers.map(csvEscape).join(';')];
+        for (const e of entries) {
+            const row = [
+                e.id, e.visible, e.date, e.showDate, e.hideDate, e.linkType, e.link,
+                e.entryHasImg, e.hasImgInContent, e.customLink, e.customMeta,
+                (e.relatedProducts || []).length,
+                (e.relatedProducts || []).join(','),
+                (e.categories || []).join(','),
+                (e.zones || []).join(','),
+                (e.images || []).length
+            ];
+            for (const lang of langs) {
+                const l = (e.languages || {})[lang] || {};
+                for (const c of langCols) row.push(l[c]);
+            }
+            lines.push(row.map(csvEscape).join(';'));
+        }
+        return '﻿' + lines.join('\r\n');
+    }
+
+    function downloadBlob(content, filename, mime) {
+        const blob = new Blob([content], { type: mime });
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement('a');
+        a.href = url;
+        a.download = filename;
+        document.body.appendChild(a);
+        a.click();
+        document.body.removeChild(a);
+        setTimeout(() => URL.revokeObjectURL(url), 1000);
+    }
+
+    function fileNameStem() {
+        const host = location.hostname.replace(/\W/g, '-');
+        const d = new Date();
+        const pad = n => String(n).padStart(2, '0');
+        const ts = d.getFullYear() + pad(d.getMonth() + 1) + pad(d.getDate()) + '_' + pad(d.getHours()) + pad(d.getMinutes());
+        return host + '_blog-export_' + ts;
+    }
+
+    function downloadEntries(entries, format) {
+        const stem = fileNameStem();
+        if (format === 'json') {
+            downloadBlob(JSON.stringify(entries, null, 2), stem + '.json', 'application/json;charset=utf-8');
+        } else if (format === 'csv') {
+            downloadBlob(toCsv(entries), stem + '.csv', 'text/csv;charset=utf-8');
+        } else if (format === 'xml') {
+            downloadBlob(toXml(entries), stem + '.xml', 'application/xml;charset=utf-8');
+        }
+    }
+
+    function getCurrentPageIds() {
+        return Array.from(document.querySelectorAll('table.entries tr[id^="tr_"] a[href*="action=edit"]'))
+            .map(a => { const m = a.getAttribute('href').match(/[?&]id=(\d+)/); return m ? m[1] : null; })
+            .filter(Boolean);
+    }
+
+    async function fetchListPageIds(pageNum, signal) {
+        const shop = new URLSearchParams(location.search).get('shop') || '1';
+        const body = '__iai_shop_panel[__encoding]=utf-8' +
+            '&mode=blog&action=items&shop=' + shop +
+            '&tableClass=t6+entries' +
+            '&current_page=' + pageNum +
+            '&sort[column]=&sort[type]=';
+        const r = await fetch(location.origin + '/panel/ajax/view-manager.php?type=blog&view=ajax_content', {
+            method: 'POST',
+            credentials: 'include',
+            headers: { 'Content-Type': 'application/x-www-form-urlencoded; charset=UTF-8', 'X-Requested-With': 'XMLHttpRequest' },
+            body,
+            signal
+        });
+        if (!r.ok) throw new Error('HTTP ' + r.status);
+        const html = await r.text();
+        const doc = new DOMParser().parseFromString(html, 'text/html');
+        const ids = Array.from(doc.querySelectorAll('tr[id^="tr_"] a[href*="action=edit"]'))
+            .map(a => { const m = a.getAttribute('href').match(/[?&]id=(\d+)/); return m ? m[1] : null; })
+            .filter(Boolean);
+        const info = doc.querySelector('#search-results-info');
+        const total = info ? parseInt(info.querySelector('.total-result')?.textContent || '0', 10) : ids.length;
+        const perPage = info ? parseInt(info.querySelector('.per-page')?.textContent || '100', 10) : 100;
+        return { ids, total, perPage };
+    }
+
+    async function collectAllIds(signal, onProgress) {
+        const first = await fetchListPageIds(1, signal);
+        const all = [...first.ids];
+        const totalPages = Math.max(1, Math.ceil(first.total / first.perPage));
+        if (onProgress) onProgress(1, totalPages);
+        for (let p = 2; p <= totalPages; p++) {
+            if (signal.aborted) throw new DOMException('aborted', 'AbortError');
+            const page = await fetchListPageIds(p, signal);
+            all.push(...page.ids);
+            if (onProgress) onProgress(p, totalPages);
+        }
+        return all;
+    }
+
+    function showProgressModal(title) {
+        const mask = document.createElement('div');
+        mask.className = 'blogi-modal-mask';
+        const modal = document.createElement('div');
+        modal.className = 'blogi-modal';
+        modal.innerHTML =
+            '<h3></h3>' +
+            '<div class="blogi-progress-text">Inicjalizacja…</div>' +
+            '<div class="blogi-progress-bar"><div class="blogi-progress-fill"></div></div>' +
+            '<div class="blogi-status"></div>' +
+            '<div class="blogi-modal-actions"><button class="cancel">Anuluj</button></div>';
+        modal.querySelector('h3').textContent = title;
+        document.body.appendChild(mask);
+        document.body.appendChild(modal);
+        const fill = modal.querySelector('.blogi-progress-fill');
+        const txt = modal.querySelector('.blogi-progress-text');
+        const status = modal.querySelector('.blogi-status');
+        const cancelBtn = modal.querySelector('button.cancel');
+        const controller = new AbortController();
+        cancelBtn.addEventListener('click', () => controller.abort());
+        return {
+            signal: controller.signal,
+            update(done, total, msg) {
+                const pct = total > 0 ? Math.round(100 * done / total) : 0;
+                fill.style.width = pct + '%';
+                txt.textContent = (msg || 'Pobieranie') + ': ' + done + ' / ' + total + ' (' + pct + '%)';
+            },
+            log(msg) {
+                const line = document.createElement('div');
+                line.textContent = msg;
+                status.appendChild(line);
+                status.scrollTop = status.scrollHeight;
+            },
+            close() {
+                document.body.removeChild(mask);
+                document.body.removeChild(modal);
+            },
+            done(msg) {
+                cancelBtn.textContent = 'Zamknij';
+                cancelBtn.className = 'primary';
+                txt.textContent = msg || 'Zakończono';
+                fill.style.width = '100%';
+            }
+        };
+    }
+
+    async function runExport(scope, format) {
+        const modal = showProgressModal('Eksport wpisów blog → ' + format.toUpperCase());
+        modal.update(0, 1, scope === 'all' ? 'Zbieranie identyfikatorów' : 'Przygotowanie');
+        try {
+            let ids;
+            if (scope === 'page') {
+                ids = getCurrentPageIds();
+            } else {
+                ids = await collectAllIds(modal.signal, (p, t) => modal.update(p, t, 'Pobieranie stron listy'));
+            }
+            if (ids.length === 0) { modal.log('Brak wpisów do eksportu'); modal.done('Brak wpisów'); return; }
+            modal.log('Wpisów do pobrania: ' + ids.length);
+
+            const entries = new Array(ids.length);
+            let done = 0;
+            const tasks = ids.map((id, idx) => async (signal) => {
+                try {
+                    entries[idx] = await fetchFullEntry(id, signal);
+                } catch (e) {
+                    if (e.name !== 'AbortError') {
+                        entries[idx] = { id, error: e.message };
+                        modal.log('Błąd ' + id + ': ' + e.message);
+                    }
+                } finally {
+                    done++;
+                    modal.update(done, ids.length, 'Pobieranie wpisów');
+                }
+            });
+
+            const signal = modal.signal;
+            let i = 0;
+            const workers = Array(Math.min(CONCURRENCY, tasks.length)).fill(0).map(async () => {
+                while (i < tasks.length && !signal.aborted) {
+                    const idx = i++;
+                    await tasks[idx](signal);
+                }
+            });
+            await Promise.all(workers);
+
+            if (signal.aborted) { modal.log('Eksport anulowany'); modal.done('Anulowano'); return; }
+
+            const validEntries = entries.filter(Boolean);
+            modal.log('Generowanie pliku ' + format.toUpperCase() + '…');
+            downloadEntries(validEntries, format);
+            modal.done('Plik pobrany (' + validEntries.length + ' wpisów)');
+        } catch (e) {
+            if (e.name !== 'AbortError') modal.log('Błąd: ' + e.message);
+            modal.done(e.name === 'AbortError' ? 'Anulowano' : 'Błąd');
+        }
+    }
+
+    function injectToolbar() {
+        const paginator = document.querySelector('.yui-dt-paginator');
+        if (!paginator || paginator.querySelector('.blogi-toolbar')) return;
+
+        const wrap = document.createElement('span');
+        wrap.className = 'blogi-toolbar';
+        wrap.innerHTML =
+            '<button class="blogi-btn" type="button">📤 Eksport ▾</button>' +
+            '<div class="blogi-menu">' +
+            '<div class="blogi-menu-group">Bieżąca strona</div>' +
+            '<a class="blogi-menu-item" data-scope="page" data-format="json">JSON</a>' +
+            '<a class="blogi-menu-item" data-scope="page" data-format="csv">CSV</a>' +
+            '<a class="blogi-menu-item" data-scope="page" data-format="xml">XML</a>' +
+            '<div class="blogi-menu-group">Wszystkie wpisy</div>' +
+            '<a class="blogi-menu-item" data-scope="all" data-format="json">JSON</a>' +
+            '<a class="blogi-menu-item" data-scope="all" data-format="csv">CSV</a>' +
+            '<a class="blogi-menu-item" data-scope="all" data-format="xml">XML</a>' +
+            '</div>';
+        paginator.appendChild(wrap);
+
+        const btn = wrap.querySelector('.blogi-btn');
+        const menu = wrap.querySelector('.blogi-menu');
+        btn.addEventListener('click', (e) => { e.stopPropagation(); menu.classList.toggle('open'); });
+        document.addEventListener('click', () => menu.classList.remove('open'));
+        menu.addEventListener('click', (e) => {
+            const item = e.target.closest('.blogi-menu-item');
+            if (!item) return;
+            menu.classList.remove('open');
+            runExport(item.dataset.scope, item.dataset.format);
+        });
+    }
+
     function onListReload() {
         rebuildHeader();
         rebuildRows();
+        injectToolbar();
         enqueueFetches();
     }
 
