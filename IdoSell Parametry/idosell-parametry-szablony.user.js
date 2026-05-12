@@ -7297,7 +7297,7 @@ li.tp-row--selected > div {
       ],
       pagination: { perPage: 50 },
       footer: {
-        version: 'v4.5.58',
+        version: 'v4.5.59',
         links: [
           { label: 'Propozycja', icon: 'star', tooltip: 'Zaproponuj funkcjonalność', variant: 'feature', href: 'https://github.com/design4artPl/tampermonkey/issues/new?labels=enhancement', target: '_blank' },
           { label: 'Zgłoś błąd', icon: 'bug_report', tooltip: 'Zgłoś błąd', variant: 'bug', href: 'https://github.com/design4artPl/tampermonkey/issues/new?labels=bug', target: '_blank' }
@@ -7547,16 +7547,17 @@ li.tp-row--selected > div {
       try {
         var direct = await fetchValueProductCount(t.nid);
         var total = direct.count;
+        var debugInfo = { paramId: t.nid, direct: direct.count, fromChildren: 0, childCount: 0, sampleChild: null };
         if (total === 0) {
-          // v4.5.57: zamiast 1+N fetchów (parametr + każde dziecko) bierzemy natywne liczby
-          // z treeCode (`towary: N` per wartość). Jedno wywołanie loadChildValues zwraca wszystko.
-          // To suma — nie distinct — ale opiera się na natywnych licznikach IdoSella, których
-          // numberOfOccurrence per wartość nieraz nie potwierdza (rozjazd po stronie IdoSella).
           var children = await loadChildValues(t.nid);
           if (children && children.length > 0) {
             total = children.reduce(function (acc, c) { return acc + (Number(c.productCount) || 0); }, 0);
+            debugInfo.fromChildren = total;
+            debugInfo.childCount = children.length;
+            debugInfo.sampleChild = children[0];
           }
         }
+        try { console.log('[parametry v4.5.59 products]', debugInfo); } catch (e) {}
         t.cell.dataset.countLoaded = '1';
         t.cell.textContent = '';
         if (total > 0) {
