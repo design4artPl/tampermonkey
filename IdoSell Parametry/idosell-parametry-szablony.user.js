@@ -7,11 +7,61 @@
 // @match        https://*.iai-shop.com/panel/app/parameters.php*
 // @match        https://*.idosell.com/panel/app/parameters.php*
 // @grant        none
-// @run-at       document-idle
+// @run-at       document-start
 // ==/UserScript==
 
 (function () {
   'use strict';
+
+  // v4.5.50: pre-hide native panel + splash overlay before iframe even paints.
+  // Runs at @run-at document-start, so even on first load the user doesn't see the bare native tree.
+  (function preHide() {
+    if (location.pathname.indexOf('parameters.php') === -1) return;
+    var preStyle = document.createElement('style');
+    preStyle.id = 'tp-prehide-style';
+    preStyle.textContent = [
+      '/* Ukryj cały iframe panelu dopóki nie zamontujemy widoku */',
+      'iframe { visibility: hidden !important; }',
+      '#tp-loading-splash { position: fixed; inset: 0; background: linear-gradient(180deg,#f8fafc,#eef2f7); z-index: 2147483645; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 18px; font-family: "Segoe UI",Roboto,sans-serif; color: #334155; transition: opacity 0.25s; }',
+      '#tp-loading-splash .tp-splash-card { display: flex; flex-direction: column; align-items: center; gap: 14px; padding: 32px 48px; background: #fff; border-radius: 12px; box-shadow: 0 10px 30px rgba(0,0,0,0.08); border: 1px solid #e2e8f0; }',
+      '#tp-loading-splash .tp-spinner { width: 48px; height: 48px; border: 4px solid #e2e8f0; border-top-color: #2563eb; border-radius: 50%; animation: tp-spin 0.8s linear infinite; }',
+      '#tp-loading-splash .tp-splash-title { font-size: 15px; font-weight: 600; color: #0f172a; }',
+      '#tp-loading-splash .tp-splash-sub { font-size: 12px; color: #64748b; }',
+      '@keyframes tp-spin { to { transform: rotate(360deg); } }',
+      '#tp-loading-splash.tp-hide { opacity: 0; pointer-events: none; }'
+    ].join('\n');
+    (document.head || document.documentElement).appendChild(preStyle);
+
+    function ensureSplash() {
+      if (!document.body) return;
+      if (document.getElementById('tp-loading-splash')) return;
+      var splash = document.createElement('div');
+      splash.id = 'tp-loading-splash';
+      splash.innerHTML = '<div class="tp-splash-card"><div class="tp-spinner"></div><div class="tp-splash-title">Ładowanie panelu Parametrów</div><div class="tp-splash-sub">Inicjalizacja widoku rozszerzonego…</div></div>';
+      document.body.appendChild(splash);
+    }
+    if (document.body) ensureSplash();
+    else {
+      var splashTimer = setInterval(function () {
+        if (document.body) { ensureSplash(); clearInterval(splashTimer); }
+      }, 20);
+    }
+
+    // Safety: po 30s zdejmij splash niezależnie od stanu (gdyby coś padło)
+    setTimeout(function () {
+      var s = document.getElementById('tp-loading-splash');
+      if (s) { s.classList.add('tp-hide'); setTimeout(function () { try { s.remove(); } catch (e) {} }, 250); }
+      var st = document.getElementById('tp-prehide-style');
+      if (st) try { st.remove(); } catch (e) {}
+    }, 30000);
+  })();
+
+  function _tpRevealReadyView() {
+    var s = document.getElementById('tp-loading-splash');
+    if (s) { s.classList.add('tp-hide'); setTimeout(function () { try { s.remove(); } catch (e) {} }, 250); }
+    var st = document.getElementById('tp-prehide-style');
+    if (st) try { st.remove(); } catch (e) {}
+  }
 
   /* === Embedded panel-pro widget v1.2.4 (inline) === */
 /* ============================================================================
@@ -7458,6 +7508,9 @@ li.tp-row--selected > div {
     if (_panel) rebuildViewsDropdown(doc);
     // v4.5.36: initial pagination — without this, totalVisible=0 -> pager empty until first search
     applyPagination(doc);
+    // v4.5.50: panel zamontowany \u2014 zdejmij splash i ods\u0142o\u0144 iframe
+    _tpRevealReadyView();
+
     // v4.5.49: wszystkie 3 loadery startuj\u0105 r\u00f3wnolegle (by\u0142o staggered 800/1000/1200ms)
     setTimeout(function () {
       loadChildrenCountsInBackground(doc);
