@@ -5571,6 +5571,323 @@ li.tp-row--selected > div {
     return s;
   }
 
+  function xmlEsc(v) {
+    if (v == null) return '';
+    return String(v).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;').replace(/'/g, '&apos;');
+  }
+
+  // v4.5.46: ujednolicony eksport — modal z wyborem zakresu, formatu i języków
+  var COMMON_LANGS = [
+    { code: 'pol', label: 'Polski' }, { code: 'eng', label: 'Angielski' }, { code: 'ger', label: 'Niemiecki' },
+    { code: 'fra', label: 'Francuski' }, { code: 'ita', label: 'Włoski' }, { code: 'esp', label: 'Hiszpański' },
+    { code: 'ces', label: 'Czeski' }, { code: 'slk', label: 'Słowacki' }, { code: 'hun', label: 'Węgierski' },
+    { code: 'rum', label: 'Rumuński' }, { code: 'rus', label: 'Rosyjski' }, { code: 'ukr', label: 'Ukraiński' },
+    { code: 'ara', label: 'Arabski' }
+  ];
+
+  function showExportModal(doc, defaultScope) {
+    if (doc.getElementById('tp-export-modal')) doc.getElementById('tp-export-modal').remove();
+    var ov = doc.createElement('div'); ov.id = 'tp-export-modal'; ov.className = 'tp-overlay';
+    var modal = doc.createElement('div'); modal.className = 'tp-modal';
+    modal.style.cssText = 'width:680px;max-width:calc(100vw - 40px)';
+    function close() { ov.classList.add('tp-closing'); setTimeout(function () { try { ov.remove(); } catch (e) {} }, 160); }
+
+    var hasSelection = selectedNodes.size > 0;
+    var initialScope = defaultScope === 'selected' && hasSelection ? 'selected' : 'all';
+    var langOptions = COMMON_LANGS.map(function (l) {
+      var preChecked = (l.code === LANG);
+      return '<label class="tp-lang-chip' + (preChecked ? ' tp-lang-chip--active' : '') + '">' +
+        '<input type="checkbox" name="tp-export-lang" value="' + l.code + '"' + (preChecked ? ' checked' : '') + '> ' + l.label + ' <span class="tp-lang-code">(' + l.code + ')</span></label>';
+    }).join('');
+
+    modal.innerHTML =
+      '<div class="tp-modal-header tp-modal-header--primary"><span>Eksport</span>' +
+        '<button class="tp-modal-header-close" type="button">×</button>' +
+      '</div>' +
+      '<div class="tp-modal-body" style="padding:18px 20px">' +
+        '<div class="tp-export-section">' +
+          '<div class="tp-export-section-title">ZAKRES</div>' +
+          '<div class="tp-export-options">' +
+            '<label class="tp-export-option' + (initialScope === 'all' ? ' tp-export-option--active' : '') + '">' +
+              '<input type="radio" name="tp-export-scope" value="all"' + (initialScope === 'all' ? ' checked' : '') + '>' +
+              '<div class="tp-export-option-main">Całe drzewo</div>' +
+              '<div class="tp-export-option-sub">Wszystkie parametry</div>' +
+            '</label>' +
+            '<label class="tp-export-option' + (initialScope === 'selected' ? ' tp-export-option--active' : '') + (!hasSelection ? ' tp-export-option--disabled' : '') + '">' +
+              '<input type="radio" name="tp-export-scope" value="selected"' + (initialScope === 'selected' ? ' checked' : '') + (!hasSelection ? ' disabled' : '') + '>' +
+              '<div class="tp-export-option-main">Tylko zaznaczone</div>' +
+              '<div class="tp-export-option-sub">' + (hasSelection ? selectedNodes.size + ' zaznaczonych' : 'brak zaznaczenia') + '</div>' +
+            '</label>' +
+          '</div>' +
+        '</div>' +
+        '<div class="tp-export-section">' +
+          '<div class="tp-export-section-title">FORMAT</div>' +
+          '<div class="tp-export-options tp-export-options--format">' +
+            '<label class="tp-export-fmt tp-export-fmt--active"><input type="radio" name="tp-export-fmt" value="json" checked>JSON</label>' +
+            '<label class="tp-export-fmt"><input type="radio" name="tp-export-fmt" value="csv">CSV</label>' +
+            '<label class="tp-export-fmt"><input type="radio" name="tp-export-fmt" value="xml">XML</label>' +
+          '</div>' +
+        '</div>' +
+        '<div class="tp-export-section">' +
+          '<div class="tp-export-section-title-row"><span class="tp-export-section-title">JĘZYKI</span><a class="tp-export-link" data-action="all-langs" href="#">Zaznacz wszystkie</a></div>' +
+          '<div class="tp-export-langs">' + langOptions + '</div>' +
+          '<div class="tp-export-hint">Eksport zawsze zawiera priorytet wartości (z pozycji w drzewie). Pole <code>context_id</code> zostawiamy puste — nie jest udostępniane przez API.</div>' +
+        '</div>' +
+      '</div>' +
+      '<div class="tp-modal-footer">' +
+        '<button class="tp-btn-modal" data-action="cancel" type="button">Anuluj</button>' +
+        '<button class="tp-btn-modal-primary" data-action="export" type="button">Eksportuj</button>' +
+      '</div>';
+    ov.appendChild(modal);
+    doc.body.appendChild(ov);
+
+    if (!doc.getElementById('tp-export-modal-styles')) {
+      var st = doc.createElement('style');
+      st.id = 'tp-export-modal-styles';
+      st.textContent =
+        '.tp-export-section{margin-bottom:18px}' +
+        '.tp-export-section-title{font-size:11px;font-weight:700;letter-spacing:.5px;color:#64748b;text-transform:uppercase;margin-bottom:8px}' +
+        '.tp-export-section-title-row{display:flex;align-items:center;justify-content:space-between;margin-bottom:8px}' +
+        '.tp-export-link{font-size:12px;color:#2563eb;text-decoration:none;cursor:pointer}.tp-export-link:hover{text-decoration:underline}' +
+        '.tp-export-options{display:flex;gap:10px}' +
+        '.tp-export-option{flex:1;cursor:pointer;border:2px solid #e2e8f0;border-radius:8px;padding:12px 14px;background:#fff;transition:all .15s;position:relative;display:flex;flex-direction:column;gap:2px}' +
+        '.tp-export-option:hover{border-color:#cbd5e1}' +
+        '.tp-export-option--active{border-color:#2563eb;background:#eff6ff}' +
+        '.tp-export-option--disabled{opacity:.5;cursor:not-allowed}' +
+        '.tp-export-option input{position:absolute;left:-9999px}' +
+        '.tp-export-option-main{font-weight:600;font-size:14px;color:#0f172a}' +
+        '.tp-export-option-sub{font-size:12px;color:#64748b}' +
+        '.tp-export-options--format{gap:6px}' +
+        '.tp-export-fmt{flex:1;cursor:pointer;border:1px solid #cbd5e1;border-radius:6px;padding:10px;text-align:center;font-weight:600;font-size:13px;background:#fff;transition:all .15s}' +
+        '.tp-export-fmt input{position:absolute;left:-9999px}' +
+        '.tp-export-fmt:hover{border-color:#94a3b8}' +
+        '.tp-export-fmt--active{border-color:#2563eb;background:#eff6ff;color:#1d4ed8}' +
+        '.tp-export-langs{display:flex;flex-wrap:wrap;gap:6px}' +
+        '.tp-lang-chip{display:inline-flex;align-items:center;gap:4px;border:1px solid #cbd5e1;border-radius:14px;padding:5px 10px;cursor:pointer;font-size:12px;background:#fff;transition:all .15s}' +
+        '.tp-lang-chip input{margin:0;accent-color:#2563eb}' +
+        '.tp-lang-chip--active{border-color:#2563eb;background:#eff6ff;color:#1d4ed8}' +
+        '.tp-lang-code{color:#94a3b8;font-family:monospace;font-size:11px}' +
+        '.tp-export-hint{font-size:11px;color:#94a3b8;margin-top:8px;line-height:1.4}.tp-export-hint code{background:#f1f5f9;padding:1px 5px;border-radius:3px;font-size:11px}';
+      doc.head.appendChild(st);
+    }
+
+    modal.querySelector('.tp-modal-header-close').addEventListener('click', close);
+    modal.querySelector('[data-action="cancel"]').addEventListener('click', close);
+    ov.addEventListener('click', function (e) { if (e.target === ov) close(); });
+
+    // Toggle active state on scope and format selectors
+    modal.querySelectorAll('input[name="tp-export-scope"]').forEach(function (r) {
+      r.addEventListener('change', function () {
+        modal.querySelectorAll('.tp-export-option').forEach(function (o) { o.classList.remove('tp-export-option--active'); });
+        r.closest('.tp-export-option').classList.add('tp-export-option--active');
+      });
+    });
+    modal.querySelectorAll('input[name="tp-export-fmt"]').forEach(function (r) {
+      r.addEventListener('change', function () {
+        modal.querySelectorAll('.tp-export-fmt').forEach(function (o) { o.classList.remove('tp-export-fmt--active'); });
+        r.closest('.tp-export-fmt').classList.add('tp-export-fmt--active');
+      });
+    });
+    modal.querySelectorAll('input[name="tp-export-lang"]').forEach(function (cb) {
+      cb.addEventListener('change', function () { cb.closest('.tp-lang-chip').classList.toggle('tp-lang-chip--active', cb.checked); });
+    });
+    modal.querySelector('[data-action="all-langs"]').addEventListener('click', function (e) {
+      e.preventDefault();
+      modal.querySelectorAll('input[name="tp-export-lang"]').forEach(function (cb) { cb.checked = true; cb.dispatchEvent(new Event('change')); });
+    });
+
+    modal.querySelector('[data-action="export"]').addEventListener('click', function () {
+      var scope = modal.querySelector('input[name="tp-export-scope"]:checked').value;
+      var format = modal.querySelector('input[name="tp-export-fmt"]:checked').value;
+      var langs = Array.from(modal.querySelectorAll('input[name="tp-export-lang"]:checked')).map(function (cb) { return cb.value; });
+      if (!langs.length) { alert('Wybierz co najmniej jeden język'); return; }
+      close();
+      runExport(doc, { scope: scope, format: format, langs: langs }).catch(function (e) {
+        alert('Błąd eksportu: ' + (e.message || e));
+      });
+    });
+  }
+
+  // Fetch parameter tree for given language. Returns flat array of {id, name, priority, values:[{id, name, priority}]}.
+  async function fetchTreeMultiLang(doc, paramIds, langs, onProgress) {
+    // dataByLang[lang][paramId] = { name, values: { valueId: name } }
+    var dataByLang = {};
+    for (var li = 0; li < langs.length; li++) {
+      var lang = langs[li];
+      onProgress && onProgress('Pobieranie parametrów w języku ' + lang + '...', li, langs.length);
+      try {
+        var listResp = await fetchAjax('action=getList&type=parameter&parent=0&lang=' + encodeURIComponent(lang));
+        var paramsForLang = (listResp && listResp.data) ? listResp.data : [];
+        dataByLang[lang] = {};
+        paramsForLang.forEach(function (p) {
+          dataByLang[lang][String(p.id)] = { name: String(p.name || '').trim(), values: {} };
+        });
+      } catch (e) { dataByLang[lang] = {}; }
+    }
+    // Determine which param IDs to actually export
+    var allParamIds;
+    if (paramIds && paramIds.length) {
+      allParamIds = paramIds.slice();
+    } else {
+      // All root params from primary lang
+      var primary = dataByLang[langs[0]] || {};
+      allParamIds = Object.keys(primary);
+    }
+    // Fetch values for each param × lang
+    var total = allParamIds.length * langs.length;
+    var done = 0;
+    for (var i = 0; i < allParamIds.length; i++) {
+      var pid = allParamIds[i];
+      for (var lj = 0; lj < langs.length; lj++) {
+        var l = langs[lj];
+        onProgress && onProgress('Wartości parametru ' + pid + ' (' + l + ')...', done, total);
+        try {
+          var children = await fetchValuesForLang(pid, l);
+          if (!dataByLang[l][pid]) dataByLang[l][pid] = { name: '', values: {} };
+          children.forEach(function (c, idx) {
+            dataByLang[l][pid].values[String(c.id)] = { name: String(c.name || '').trim(), priority: idx + 1 };
+          });
+        } catch (e) {}
+        done++;
+      }
+    }
+    // Build merged structure
+    var primaryLang = langs[0];
+    var primary = dataByLang[primaryLang] || {};
+    var paramsOrdered = allParamIds.map(function (pid, idx) {
+      var entry = primary[pid] || { name: '', values: {} };
+      var names = {};
+      langs.forEach(function (l) { names[l] = (dataByLang[l][pid] && dataByLang[l][pid].name) || ''; });
+      // Collect all value IDs across languages
+      var valueIdSet = {};
+      langs.forEach(function (l) {
+        var lv = dataByLang[l][pid] && dataByLang[l][pid].values || {};
+        Object.keys(lv).forEach(function (vid) { valueIdSet[vid] = true; });
+      });
+      var valueIds = Object.keys(valueIdSet);
+      // Get priority from primary lang ordering
+      var primaryValues = entry.values;
+      valueIds.sort(function (a, b) {
+        var pa = primaryValues[a] ? primaryValues[a].priority : 9999;
+        var pb = primaryValues[b] ? primaryValues[b].priority : 9999;
+        return pa - pb;
+      });
+      var values = valueIds.map(function (vid, vi) {
+        var vnames = {};
+        langs.forEach(function (l) {
+          vnames[l] = (dataByLang[l][pid] && dataByLang[l][pid].values && dataByLang[l][pid].values[vid] && dataByLang[l][pid].values[vid].name) || '';
+        });
+        return { id: Number(vid), names: vnames, priority: vi + 1, context_id: null };
+      });
+      return { id: Number(pid), names: names, priority: idx + 1, context_id: null, values: values };
+    });
+    return { langs: langs, parameters: paramsOrdered };
+  }
+
+  function fetchValuesForLang(paramId, lang) {
+    return new Promise(function (resolve, reject) {
+      var win = getIframeWin();
+      if (!win) return reject(new Error('Brak iframe'));
+      var xhr = new win.XMLHttpRequest();
+      xhr.open('POST', AJAX_URL);
+      xhr.setRequestHeader('Content-Type', 'application/x-www-form-urlencoded');
+      xhr.onload = function () {
+        try {
+          var resp = JSON.parse(xhr.responseText);
+          var html = resp.treeCode || '';
+          var children = [];
+          var regex = /id="m_(\d+)"[\s\S]*?class="showMenuSub\s+value[^"]*">([^<]+)/g;
+          var match;
+          while ((match = regex.exec(html)) !== null) children.push({ id: match[1], name: match[2].trim() });
+          resolve(children);
+        } catch (e) { reject(e); }
+      };
+      xhr.onerror = function () { reject(new Error('Sieć')); };
+      xhr.send('action=getTreeForSection&parameter=group' + paramId + '&lang=' + encodeURIComponent(lang));
+    });
+  }
+
+  async function runExport(doc, opts) {
+    var paramIds = [];
+    if (opts.scope === 'selected') {
+      Array.from(selectedNodes).forEach(function (nid) {
+        if (isParameter(doc, nid)) paramIds.push(String(nid));
+      });
+      if (!paramIds.length) { alert('Brak zaznaczonych parametrów (zaznacz parametry, nie wartości)'); return; }
+    }
+
+    if (_panel) _panel.showStatus('Eksport: rozpoczynanie...');
+
+    var data = await fetchTreeMultiLang(doc, paramIds, opts.langs, function (msg, done, total) {
+      if (_panel) {
+        var pct = total > 0 ? Math.round(done / total * 100) : 0;
+        _panel.showStatus('Eksport ' + opts.format.toUpperCase() + ': ' + msg + ' (' + pct + '%)');
+      }
+    });
+
+    var ts = new Date().toISOString().replace(/[:.]/g, '-');
+    var fileBase = 'parametry_' + opts.langs.join('-') + '_' + ts;
+    var content, mime, ext;
+
+    if (opts.format === 'json') {
+      content = JSON.stringify({ exportedAt: new Date().toISOString(), langs: data.langs, parameters: data.parameters }, null, 2);
+      mime = 'application/json;charset=utf-8'; ext = 'json';
+    } else if (opts.format === 'csv') {
+      var header = ['parameter_id', 'parameter_priority'];
+      opts.langs.forEach(function (l) { header.push('parameter_name_' + l); });
+      header.push('context_id', 'value_id', 'value_priority');
+      opts.langs.forEach(function (l) { header.push('value_name_' + l); });
+      header.push('value_context_id');
+      var rows = [header.join(',')];
+      data.parameters.forEach(function (p) {
+        if (!p.values.length) {
+          var row = [p.id, p.priority];
+          opts.langs.forEach(function (l) { row.push(csvEsc(p.names[l])); });
+          row.push(p.context_id || '', '', '');
+          opts.langs.forEach(function () { row.push(''); });
+          row.push('');
+          rows.push(row.join(','));
+        } else {
+          p.values.forEach(function (v) {
+            var row = [p.id, p.priority];
+            opts.langs.forEach(function (l) { row.push(csvEsc(p.names[l])); });
+            row.push(p.context_id || '', v.id, v.priority);
+            opts.langs.forEach(function (l) { row.push(csvEsc(v.names[l])); });
+            row.push(v.context_id || '');
+            rows.push(row.join(','));
+          });
+        }
+      });
+      content = '﻿' + rows.join('\r\n');
+      mime = 'text/csv;charset=utf-8'; ext = 'csv';
+    } else if (opts.format === 'xml') {
+      var x = ['<?xml version="1.0" encoding="UTF-8"?>'];
+      x.push('<parameters exportedAt="' + xmlEsc(new Date().toISOString()) + '" langs="' + xmlEsc(opts.langs.join(',')) + '">');
+      data.parameters.forEach(function (p) {
+        x.push('  <parameter id="' + p.id + '" priority="' + p.priority + '"' + (p.context_id ? ' contextId="' + xmlEsc(p.context_id) + '"' : '') + '>');
+        opts.langs.forEach(function (l) { x.push('    <name lang="' + l + '">' + xmlEsc(p.names[l]) + '</name>'); });
+        if (p.values.length) {
+          x.push('    <values>');
+          p.values.forEach(function (v) {
+            x.push('      <value id="' + v.id + '" priority="' + v.priority + '"' + (v.context_id ? ' contextId="' + xmlEsc(v.context_id) + '"' : '') + '>');
+            opts.langs.forEach(function (l) { x.push('        <name lang="' + l + '">' + xmlEsc(v.names[l]) + '</name>'); });
+            x.push('      </value>');
+          });
+          x.push('    </values>');
+        }
+        x.push('  </parameter>');
+      });
+      x.push('</parameters>');
+      content = x.join('\n');
+      mime = 'application/xml;charset=utf-8'; ext = 'xml';
+    } else {
+      throw new Error('Nieznany format: ' + opts.format);
+    }
+
+    downloadBlob(doc, content, mime, fileBase + '.' + ext);
+    if (_panel) _panel.showStatus('Eksport ' + opts.format.toUpperCase() + ': ' + data.parameters.length + ' parametrów');
+  }
+
   async function exportTreeFull(doc, format) {
     var fmtLabel = format === 'csv' ? 'CSV' : 'JSON';
     function progress(done, total, vals) {
@@ -6774,7 +7091,7 @@ li.tp-row--selected > div {
             { icon: 'swap_horiz', label: 'Odwr\u00f3\u0107', tooltip: 'Odwr\u00f3\u0107 zaznaczenie', variant: 'text', onClick: function () { invertSelection(doc); } }
           ] },
           { label: 'Transfer', buttons: [
-            { icon: 'download', label: 'Eksport JSON', tooltip: 'Pe\u0142en eksport (parametry + warto\u015bci) do JSON', variant: 'text', onClick: function () { exportTreeFull(doc, 'json'); } }, { icon: 'table_chart', label: 'Eksport CSV', tooltip: 'Pe\u0142en eksport (parametry + warto\u015bci) do CSV', variant: 'text', onClick: function () { exportTreeFull(doc, 'csv'); } },
+            { icon: 'download', label: 'Eksport', tooltip: 'Eksport parametr\u00f3w \u2014 wyb\u00f3r zakresu, formatu i j\u0119zyk\u00f3w', variant: 'text', onClick: function () { showExportModal(doc, 'all'); } },
             { icon: 'upload',   label: 'Import',  tooltip: 'Import parametr\u00f3w z pliku JSON lub CSV',   variant: 'text', onClick: function () { openImportFilePicker(doc); } }
           ] },
           { label: 'Widok', dropdown: {
@@ -6800,8 +7117,7 @@ li.tp-row--selected > div {
           { icon: 'delete',        label: 'Usu\u0144', tooltip: 'Usu\u0144 zaznaczone',           variant: 'danger',  onClick: function () { showBulkDeleteModal(doc); } }
         ],
         extraActions: [
-          { icon: 'download',     label: 'Eksport JSON', tooltip: 'Eksport zaznaczonych do JSON', onClick: function () { exportSelected(doc, 'json'); } },
-          { icon: 'table_chart',  label: 'Eksport CSV',  tooltip: 'Eksport zaznaczonych do CSV',  onClick: function () { exportSelected(doc, 'csv'); } }
+          { icon: 'download', label: 'Eksport', tooltip: 'Eksport zaznaczonych (wybór formatu i języków)', onClick: function () { showExportModal(doc, 'selected'); } }
         ],
         onClear: function () { deselectAll(doc); }
       },
@@ -6817,7 +7133,7 @@ li.tp-row--selected > div {
       ],
       pagination: { perPage: 50 },
       footer: {
-        version: 'v4.5.43',
+        version: 'v4.5.46',
         links: [
           { label: 'Propozycja', icon: 'star', tooltip: 'Zaproponuj funkcjonalność', variant: 'feature', href: 'https://github.com/design4artPl/tampermonkey/issues/new?labels=enhancement', target: '_blank' },
           { label: 'Zgłoś błąd', icon: 'bug_report', tooltip: 'Zgłoś błąd', variant: 'bug', href: 'https://github.com/design4artPl/tampermonkey/issues/new?labels=bug', target: '_blank' }
