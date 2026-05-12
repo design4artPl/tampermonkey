@@ -7020,28 +7020,52 @@ li.tp-row--selected > div {
       .catch(function (e) { alert('B\u0142\u0105d tworzenia sekcji: ' + (e.message || e)); });
   }
 
-  function waitForIframe(cb, attempts) {
-    attempts = attempts || 0;
-    if (attempts > 60) return;
+  // v4.5.47: bardziej cierpliwe + reaktywne wykrywanie #block_group0. Bez sztywnego limitu
+  // attempts: polling co 250 ms + MutationObserver na document + iframe.load — żeby skrypt
+  // odpalił się gdy IdoSell w końcu wstrzyknie drzewo, bez konieczności drugiego refresha.
+  function waitForIframe(cb) {
+    var fired = false;
 
-    // Wait for a document that actually has the parameter tree marker
-    var doc = null;
-    if (document.querySelector('#block_group0')) {
-      doc = document;
-    } else {
+    function findDoc() {
+      if (document.querySelector('#block_group0')) return document;
       var iframes = document.querySelectorAll('iframe');
       for (var i = 0; i < iframes.length; i++) {
         try {
           var d = iframes[i].contentDocument;
-          if (d && d.querySelector('#block_group0')) { doc = d; break; }
+          if (d && d.querySelector('#block_group0')) return d;
         } catch (e) {}
       }
+      return null;
     }
-    if (doc) {
-      cb(doc);
-    } else {
-      setTimeout(function () { waitForIframe(cb, attempts + 1); }, 500);
+
+    function tryFire() {
+      if (fired) return false;
+      var doc = findDoc();
+      if (!doc) return false;
+      fired = true;
+      try { cb(doc); } catch (e) { console.error('[parametry] init error', e); }
+      return true;
     }
+
+    if (tryFire()) return;
+
+    var pollTimer = setInterval(function () { if (tryFire()) clearInterval(pollTimer); }, 250);
+
+    if (typeof MutationObserver !== 'undefined') {
+      var mo = new MutationObserver(function () { if (tryFire()) { mo.disconnect(); clearInterval(pollTimer); } });
+      try { mo.observe(document.documentElement, { childList: true, subtree: true }); } catch (e) {}
+    }
+
+    function bindIframeLoads() {
+      document.querySelectorAll('iframe').forEach(function (ifr) {
+        if (ifr.__tpLoadHooked) return;
+        ifr.__tpLoadHooked = true;
+        ifr.addEventListener('load', function () { setTimeout(tryFire, 50); }, true);
+      });
+    }
+    bindIframeLoads();
+    var rebindTimer = setInterval(bindIframeLoads, 500);
+    setTimeout(function () { clearInterval(rebindTimer); }, 60000);
   }
 
   // ============================================================
@@ -7133,7 +7157,7 @@ li.tp-row--selected > div {
       ],
       pagination: { perPage: 50 },
       footer: {
-        version: 'v4.5.46',
+        version: 'v4.5.47',
         links: [
           { label: 'Propozycja', icon: 'star', tooltip: 'Zaproponuj funkcjonalność', variant: 'feature', href: 'https://github.com/design4artPl/tampermonkey/issues/new?labels=enhancement', target: '_blank' },
           { label: 'Zgłoś błąd', icon: 'bug_report', tooltip: 'Zgłoś błąd', variant: 'bug', href: 'https://github.com/design4artPl/tampermonkey/issues/new?labels=bug', target: '_blank' }
