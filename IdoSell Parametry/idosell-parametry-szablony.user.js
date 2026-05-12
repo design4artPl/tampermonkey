@@ -7289,7 +7289,7 @@ li.tp-row--selected > div {
       ],
       pagination: { perPage: 50 },
       footer: {
-        version: 'v4.5.55',
+        version: 'v4.5.56',
         links: [
           { label: 'Propozycja', icon: 'star', tooltip: 'Zaproponuj funkcjonalność', variant: 'feature', href: 'https://github.com/design4artPl/tampermonkey/issues/new?labels=enhancement', target: '_blank' },
           { label: 'Zgłoś błąd', icon: 'bug_report', tooltip: 'Zgłoś błąd', variant: 'bug', href: 'https://github.com/design4artPl/tampermonkey/issues/new?labels=bug', target: '_blank' }
@@ -7543,13 +7543,21 @@ li.tp-row--selected > div {
           var children = await loadChildValues(t.nid);
           if (children && children.length > 0) {
             var perValue = await Promise.all(children.map(function (c) { return fetchValueProductCount(c.id); }));
+            // v4.5.56: poprawione liczenie — wartości BEZ ID produktów nie giną
+            // gdy są wartości Z ID. Łączymy distinct (z tych z ID) + sum (z tych bez ID).
             var seen = {};
+            var sumWithoutIds = 0;
             perValue.forEach(function (pv) {
-              pv.productIds.forEach(function (pid) { seen[pid] = true; });
-              if (pv.productIds.length === 0 && pv.count > 0) total += pv.count;
+              if (pv.productIds.length > 0) {
+                pv.productIds.forEach(function (pid) { seen[pid] = true; });
+              } else if (pv.count > 0) {
+                sumWithoutIds += pv.count;
+              }
             });
             var distinctCount = Object.keys(seen).length;
-            if (distinctCount > 0) total = distinctCount;
+            // Best-effort: distinct z ID + count bez ID (może lekko przeszacować jeśli się nakładają,
+            // ale lepsze niż gubienie liczb wartości bez listy ID)
+            total = distinctCount + sumWithoutIds;
           }
         }
         t.cell.dataset.countLoaded = '1';
