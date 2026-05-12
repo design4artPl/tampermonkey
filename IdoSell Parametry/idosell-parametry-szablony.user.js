@@ -3421,8 +3421,16 @@ li.tp-row--selected > div {
     });
     actionsCell.appendChild(deleteAction);
 
+    // v4.5.48: kontekst — pusta komórka, wypełniana w tle przez loadContextsInBackground
+    var contextCell = doc.createElement('div');
+    contextCell.className = 'tp-col-context';
+    contextCell.style.cssText = 'text-align:center';
+    var cachedCtx = _ctxCache[nodeId];
+    if (cachedCtx) { contextCell.dataset.ctxLoaded = '1'; renderContextCell(contextCell, cachedCtx.ctx); }
+
     // Insert cells at the beginning (before existing content)
     li.insertBefore(actionsCell, li.firstChild);
+    li.insertBefore(contextCell, li.firstChild);
     li.insertBefore(productsCell, li.firstChild);
     li.insertBefore(childrenCell, li.firstChild);
     li.insertBefore(idCell, li.firstChild);
@@ -7153,6 +7161,7 @@ li.tp-row--selected > div {
         { id: 'id',       label: 'ID',       width: '80px' },
         { id: 'children', label: 'Dzieci',   width: '80px' },
         { id: 'products', label: 'Produkty', width: '90px' },
+        { id: 'context',  label: 'Kontekst', width: '90px' },
         { id: 'actions',  label: 'Akcje',    width: '220px' }
       ],
       pagination: { perPage: 50 },
@@ -7247,6 +7256,131 @@ li.tp-row--selected > div {
     } catch (e) { return { count: 0, productIds: [] }; }
   }
 
+  // v4.5.48: kontekst specjalny per parametr/wartość
+  // Endpoint: action=getParameterLangData&id=<nodeId> zwraca context_id (parametr) / context_value_id (wartość)
+  var _ctxCache = {}; // nodeId -> { ctx: 'CONTEXT_X' | null, labelType: 'param' | 'value' }
+  var CONTEXT_LABELS = {
+    'CONTEXT_COLOR': 'Kolor',
+    'CONTEXT_MODEL': 'Model',
+    'CONTEXT_SEASON': 'Sezon',
+    'CONTEXT_SEX': 'Płeć',
+    'CONTEXT_STATE': 'Stan',
+    'CONTEXT_AGE_GROUP': 'Grupa wiekowa',
+    'CONTEXT_ONLY_ADULTS': 'Tylko dla dorosłych',
+    'HEEL_HEIGHT': 'Wysokość obcasa (cm)',
+    'CONTEXT_ENERGY_EFFICIENCY_CLASS': 'Klasa energetyczna',
+    'CONTEXT_DOCUMENTS_JPK_VAT': 'Oznaczenie JPK_VAT',
+    'CONTEXT_MOVIE_RELEASE_DATE': 'Film: data wydania',
+    'CONTEXT_MOVIE_ORIGINAL_TITLE': 'Film: tytuł oryginalny',
+    'CONTEXT_BOOK_AUTHOR': 'Książka: autor',
+    'CONTEXT_BOOK_PUBLICATION_DATE': 'Książka: data wydania',
+    'CONTEXT_BOOK_PAGES_NUMBER': 'Książka: liczba stron',
+    'CONTEXT_BOOK_PUBLICATION_LANGUAGE': 'Książka: język wydania',
+    'CONTEXT_PRESCRIPTION_MEDICINE': 'Lek na receptę',
+    'CONTEXT_STD_UNIT_LENGTH': 'Długość (m)',
+    'CONTEXT_STD_UNIT_LENGTH_CM': 'Długość (cm)',
+    'CONTEXT_STD_UNIT_HEIGHT_CM': 'Wysokość (cm)',
+    'CONTEXT_STD_UNIT_WIDTH_CM': 'Szerokość (cm)',
+    'CONTEXT_STD_UNIT_AREA_M2': 'Powierzchnia (m²)',
+    'CONTEXT_STD_UNIT_VOLUME': 'Objętość (ml)',
+    'CONTEXT_STD_UNIT_VOLUME_SI': 'Objętość (l)',
+    'CONTEXT_STD_UNIT_VOLUME_M3': 'Objętość (m³)',
+    'CONTEXT_STD_UNIT_WEIGHT': 'Waga (g)',
+    'CONTEXT_STD_UNIT_WEIGHT_SI': 'Waga (kg)',
+    'CONTEXT_STD_UNIT_QUANTITY_PACKAGE': 'Sztuk w opakowaniu',
+    'CONTEXT_STD_OVERHEAD_WEIGHT': 'Waga gabarytowa',
+    'CONTEXT_WEIGHT_NET': 'Waga netto',
+    'CONTEXT_WEIGHT_PACKAGING': 'Waga opakowania',
+    'CONTEXT_MAX_QUANTITY_PER_RETAIL_ORDER': 'Max ilość / zamów. detal',
+    'CONTEXT_MAX_QUANTITY_PER_WHOLESALE_ORDER': 'Max ilość / zamów. hurt',
+    'CONTEXT_MAX_SIZE_QUANTITY_PER_RETAIL_ORDER': 'Max rozmiar / zamów. detal',
+    'CONTEXT_MAX_SIZE_QUANTITY_PER_WHOLESALE_ORDER': 'Max rozmiar / zamów. hurt',
+    'CONTEXT_MIN_QUANTITY_PER_RETAIL_ORDER': 'Min ilość / zamów. detal',
+    'CONTEXT_MIN_QUANTITY_PER_WHOLESALE_ORDER': 'Min ilość / zamów. hurt',
+    'CONTEXT_MIN_SIZE_QUANTITY_PER_RETAIL_ORDER': 'Min rozmiar / zamów. detal',
+    'CONTEXT_MIN_SIZE_QUANTITY_PER_WHOLESALE_ORDER': 'Min rozmiar / zamów. hurt',
+    'CONTEXT_AGE_GROUP_ADULT': 'Dorośli',
+    'CONTEXT_AGE_GROUP_MINOR': 'Dzieci',
+    'CONTEXT_SEX_MAN': 'Mężczyzna',
+    'CONTEXT_SEX_WOMAN': 'Kobieta',
+    'CONTEXT_SEX_UNISEX': 'Unisex',
+    'CONTEXT_STATE_NEW': 'Nowy',
+    'CONTEXT_STATE_NEW_OTHERS': 'Nowy: inne',
+    'CONTEXT_STATE_NEW_WITH_DEFECTS': 'Nowy z wadą',
+    'CONTEXT_STATE_USED': 'Używany',
+    'CONTEXT_STATE_REFURBISHED_BY_PRODUCER': 'Odnowiony przez producenta',
+    'CONTEXT_STATE_REFURBISHED_BY_SELLER': 'Odnowiony przez sprzedawcę',
+    'CONTEXT_STATE_FOR_PARTS_OR_BROKEN': 'Na części / zepsuty',
+    'CONTEXT_SEASON_SPRING': 'Wiosna',
+    'CONTEXT_SEASON_SUMMER': 'Lato',
+    'CONTEXT_SEASON_FALL': 'Jesień',
+    'CONTEXT_SEASON_WINTER': 'Zima',
+    'CONTEXT_SEASON_SPRING_SUMMER': 'Wiosna/Lato',
+    'CONTEXT_SEASON_FALL_WINTER': 'Jesień/Zima',
+    'CONTEXT_ONLY_ADULTS_YES': 'Tak (dla dorosłych)',
+    'CONTEXT_ONLY_ADULTS_NO': 'Nie (dla dorosłych)',
+    'CONTEXT_PRESCRIPTION_MEDICINE_YES': 'Tak (recepta)',
+    'CONTEXT_PRESCRIPTION_MEDICINE_NO': 'Nie (recepta)',
+    'CONTEXT_STD_UNIT_DEFAULT': 'Domyślnie',
+    'CONTEXT_STD_UNIT_WHOLE': 'Cena za jednostkę',
+    'CONTEXT_STD_UNIT_TENS': 'Cena za 10 jednostek',
+    'CONTEXT_STD_UNIT_HUNDREDS': 'Cena za 100 jednostek',
+    'CONTEXT_STD_UNIT_ONES': 'Cena za 1 jednostkę'
+  };
+  function contextLabel(ctx) { return ctx ? (CONTEXT_LABELS[ctx] || ctx) : ''; }
+
+  async function fetchContextForNode(nodeId) {
+    if (_ctxCache[nodeId]) return _ctxCache[nodeId];
+    try {
+      var r = await fetchAjax('action=getParameterLangData&id=' + encodeURIComponent(nodeId));
+      var d = r && r.data ? r.data : null;
+      if (!d) { _ctxCache[nodeId] = { ctx: null }; return _ctxCache[nodeId]; }
+      var ctx = (d.type === 'value' ? d.context_value_id : d.context_id) || null;
+      _ctxCache[nodeId] = { ctx: ctx, type: d.type };
+      return _ctxCache[nodeId];
+    } catch (e) {
+      _ctxCache[nodeId] = { ctx: null };
+      return _ctxCache[nodeId];
+    }
+  }
+
+  function renderContextCell(cell, ctx) {
+    if (!cell) return;
+    cell.innerHTML = '';
+    if (!ctx) return;
+    var label = contextLabel(ctx);
+    var icon = cell.ownerDocument.createElement('span');
+    icon.className = 'material-symbols-outlined';
+    icon.textContent = 'verified';
+    icon.style.cssText = 'font-size:18px;color:#7c3aed;cursor:help';
+    icon.setAttribute('data-pp-tooltip', label + ' (' + ctx + ')');
+    cell.appendChild(icon);
+  }
+
+  async function loadContextsInBackground(doc, liList) {
+    if (!_panel) return;
+    var items = liList || getRootItems(doc);
+    var targets = [];
+    items.forEach(function (li) {
+      var nid = getNodeId(li); if (!nid) return;
+      var cell = li.querySelector(':scope > .tp-col-context');
+      if (!cell) return;
+      if (cell.dataset.ctxLoaded === '1') return;
+      targets.push({ nid: nid, cell: cell });
+    });
+    var BATCH = 5;
+    for (var i = 0; i < targets.length; i += BATCH) {
+      var batch = targets.slice(i, i + BATCH);
+      await Promise.all(batch.map(async function (t) {
+        try {
+          var info = await fetchContextForNode(t.nid);
+          t.cell.dataset.ctxLoaded = '1';
+          renderContextCell(t.cell, info.ctx);
+        } catch (e) {}
+      }));
+    }
+  }
+
   async function loadParameterProductCountsInBackground(doc) {
     if (!_panel) return;
     var rootItems = getRootItems(doc);
@@ -7323,6 +7457,8 @@ li.tp-row--selected > div {
     setTimeout(function () { loadChildrenCountsInBackground(doc); }, 800);
     // v4.5.31: parameter product counts (parameters start with "\u2014" natively)
     setTimeout(function () { loadParameterProductCountsInBackground(doc); }, 1000);
+    // v4.5.48: kontekst specjalny per parametr \u2014 w tle
+    setTimeout(function () { loadContextsInBackground(doc); }, 1200);
     // v4.5.31: sections panel below parameters list — mount immediately
     mountSectionsPanel(doc);
     // v4.5.14: auto-sort after import
