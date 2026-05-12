@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         IdoSell - Parametry Toolbar
 // @namespace    https://idosell.com/
-// @version      4.5.63
+// @version      4.5.64
 // @description  Toolbar do grupowej edycji parametrow: panel-pro v1.2.4 inline + new-panel support, checkboxy, zaznaczanie, rozwijanie/zwijanie, grupowe usuwanie/edycja, import CSV
 // @author       SyncOffer
 // @match        https://*.iai-shop.com/panel/app/parameters.php*
@@ -5746,6 +5746,11 @@ li.tp-row--selected > div {
       return String.fromCodePoint.apply(String, cc.split('').map(function (c) { return 0x1F1E6 + c.charCodeAt(0) - 65; }));
     }
     var stateLangs = COMMON_LANGS.map(function (l) { return { code: l.code, label: l.label, on: l.code === LANG }; });
+    var stateExtras = [
+      { key: 'priority', label: 'Priorytety', desc: 'Pozycja parametru/wartości w drzewie', on: true },
+      { key: 'context', label: 'Konteksty specjalne', desc: 'context_id parametrów + context_value_id wartości', on: true },
+      { key: 'productCount', label: 'Liczby produktów', desc: 'Liczba towarów przypisanych do każdej wartości', on: false }
+    ];
 
     var CSS = [
       ':host { all: initial; }',
@@ -5787,6 +5792,18 @@ li.tp-row--selected > div {
       '.lang-check { width: 14px; height: 14px; border-radius: 3px; border: 1.5px solid #c6d0e0; flex-shrink: 0; position: relative; }',
       '.lang-item.checked .lang-check { background: #4f8cff; border-color: #4f8cff; }',
       '.lang-item.checked .lang-check::after { content: \'\'; position: absolute; left: 3.5px; top: 0.5px; width: 4px; height: 8px; border: solid #fff; border-width: 0 2px 2px 0; transform: rotate(45deg); }',
+      '.extras { display: flex; flex-direction: column; gap: 4px; border: 1px solid #eef0f4; border-radius: 10px; padding: 10px 12px; background: #fafbfd; }',
+      '.toggle-row { display: flex; align-items: center; gap: 10px; padding: 8px 10px; border-radius: 6px; cursor: pointer; background: #fff; transition: background .15s; }',
+      '.toggle-row:hover { background: #f5f8ff; }',
+      '.toggle-row input { display: none; }',
+      '.toggle-sw { position: relative; width: 30px; height: 17px; border-radius: 9px; background: #d0d5dd; transition: background .2s; flex-shrink: 0; }',
+      '.toggle-sw::after { content: \'\'; position: absolute; top: 2px; left: 2px; width: 13px; height: 13px; border-radius: 50%; background: #fff; box-shadow: 0 1px 2px rgba(0,0,0,.15); transition: left .2s; }',
+      '.toggle-row.on .toggle-sw { background: #4f8cff; }',
+      '.toggle-row.on .toggle-sw::after { left: 15px; }',
+      '.toggle-text { flex: 1; }',
+      '.toggle-label { font-size: 12.5px; font-weight: 500; color: #344054; line-height: 1.3; }',
+      '.toggle-row.on .toggle-label { color: #1a1a2e; }',
+      '.toggle-desc { font-size: 11px; color: #98a2b3; margin-top: 2px; line-height: 1.3; }',
       '.info { padding: 10px 12px; border-radius: 8px; font-size: 12px; line-height: 1.5; background: #eef3ff; border: 1px solid #d6e2ff; color: #3b5998; }',
       '.info strong { font-weight: 700; }',
       '.ft { padding: 14px 22px; border-top: 1px solid #eef0f4; background: #fafbfc; display: flex; gap: 8px; justify-content: flex-end; align-items: center; }',
@@ -5810,6 +5827,15 @@ li.tp-row--selected > div {
           '<span class="lang-flag">' + langFlag(l.code) + '</span>' +
           '<span class="lang-name">' + l.label + '</span>' +
           '<input type="checkbox"' + (l.on ? ' checked' : '') + '>' +
+        '</label>';
+      }).join('');
+    }
+    function buildExtrasHtml() {
+      return stateExtras.map(function (f) {
+        return '<label class="toggle-row' + (f.on ? ' on' : '') + '" data-extra="' + f.key + '">' +
+          '<span class="toggle-sw"></span>' +
+          '<span class="toggle-text"><div class="toggle-label">' + f.label + '</div><div class="toggle-desc">' + f.desc + '</div></span>' +
+          '<input type="checkbox"' + (f.on ? ' checked' : '') + '>' +
         '</label>';
       }).join('');
     }
@@ -5852,7 +5878,11 @@ li.tp-row--selected > div {
             '<div class="lbl-row"><div class="lbl">Języki</div><button type="button" class="col-toggle" data-toggle-all="langs">Zaznacz</button></div>' +
             '<div class="lang-list" data-role="lang-list">' + buildLangHtml() + '</div>' +
           '</div>' +
-          '<div class="info">Eksport zawiera <strong>nazwy</strong> per język, <strong>priorytety</strong> (z pozycji w drzewie), <strong>context_id</strong> i <strong>productCount</strong> per wartość.</div>' +
+          '<div class="sec">' +
+            '<div class="lbl">Dodatkowe dane</div>' +
+            '<div class="extras" data-role="extras-list">' + buildExtrasHtml() + '</div>' +
+          '</div>' +
+          '<div class="info">Eksport zawiera <strong>nazwy</strong> per język. Dodatkowe pola (priorytety, konteksty, liczby produktów) wybierasz powyżej.</div>' +
         '</div>' +
         '<div class="ft">' +
           '<button type="button" class="b b-c" data-role="cancel">Anuluj</button>' +
@@ -5911,11 +5941,25 @@ li.tp-row--selected > div {
       if (btn) btn.textContent = stateLangs.every(function (l) { return l.on; }) ? 'Odznacz' : 'Zaznacz';
     })();
 
+    shadow.querySelectorAll('[data-extra]').forEach(function (row) {
+      row.addEventListener('click', function (e) {
+        e.preventDefault();
+        var key = row.dataset.extra;
+        var s = stateExtras.find(function (x) { return x.key === key; });
+        if (!s) return;
+        s.on = !s.on;
+        row.classList.toggle('on', s.on);
+        var cb = row.querySelector('input'); if (cb) cb.checked = s.on;
+      });
+    });
+
     shadow.querySelector('[data-role="ok"]').addEventListener('click', function () {
       var langs = stateLangs.filter(function (l) { return l.on; }).map(function (l) { return l.code; });
       if (!langs.length) { alert('Wybierz przynajmniej jeden język'); return; }
+      var extras = {};
+      stateExtras.forEach(function (f) { extras[f.key] = !!f.on; });
       close();
-      runExport(targetDoc, { scope: currentScope, format: currentFormat, langs: langs }).catch(function (e) {
+      runExport(targetDoc, { scope: currentScope, format: currentFormat, langs: langs, extras: extras }).catch(function (e) {
         alert('Błąd eksportu: ' + (e.message || e));
       });
     });
@@ -6021,6 +6065,7 @@ li.tp-row--selected > div {
   }
 
   async function runExport(doc, opts) {
+    var extras = opts.extras || { priority: true, context: true, productCount: false };
     var paramIds = [];
     if (opts.scope === 'selected') {
       Array.from(selectedNodes).forEach(function (nid) {
@@ -6038,35 +6083,84 @@ li.tp-row--selected > div {
       }
     });
 
+    // v4.5.64: opcjonalnie dociągnij konteksty per parametr+wartość gdy ekstras.context
+    if (extras.context) {
+      var ctxTargets = [];
+      data.parameters.forEach(function (p) {
+        ctxTargets.push({ ref: p, isValue: false, id: p.id });
+        p.values.forEach(function (v) { ctxTargets.push({ ref: v, isValue: true, id: v.id }); });
+      });
+      var BATCH = 15;
+      for (var ci = 0; ci < ctxTargets.length; ci += BATCH) {
+        var batch = ctxTargets.slice(ci, ci + BATCH);
+        await Promise.all(batch.map(async function (t) {
+          try {
+            var info = await fetchContextForNode(t.id);
+            t.ref.context_id = info && info.ctx ? info.ctx : null;
+          } catch (e) {}
+        }));
+        if (_panel) _panel.showStatus('Eksport: konteksty (' + Math.min(ci + BATCH, ctxTargets.length) + '/' + ctxTargets.length + ')');
+      }
+    }
+
     var ts = new Date().toISOString().replace(/[:.]/g, '-');
     var fileBase = 'parametry_' + opts.langs.join('-') + '_' + ts;
     var content, mime, ext;
 
+    // Helper — buduje obiekt dla parametru / wartości z włączonymi extras
+    function buildNode(n, isValue) {
+      var obj = { id: n.id, names: n.names };
+      if (extras.priority) obj.priority = n.priority;
+      if (extras.context) obj.context_id = n.context_id || null;
+      if (extras.productCount && isValue) obj.productCount = n.productCount || 0;
+      return obj;
+    }
+
     if (opts.format === 'json') {
-      content = JSON.stringify({ exportedAt: new Date().toISOString(), langs: data.langs, parameters: data.parameters }, null, 2);
+      var jsonParams = data.parameters.map(function (p) {
+        var po = buildNode(p, false);
+        po.values = p.values.map(function (v) { return buildNode(v, true); });
+        return po;
+      });
+      content = JSON.stringify({ exportedAt: new Date().toISOString(), langs: data.langs, extras: extras, parameters: jsonParams }, null, 2);
       mime = 'application/json;charset=utf-8'; ext = 'json';
     } else if (opts.format === 'csv') {
-      var header = ['parameter_id', 'parameter_priority'];
+      var header = ['parameter_id'];
+      if (extras.priority) header.push('parameter_priority');
       opts.langs.forEach(function (l) { header.push('parameter_name_' + l); });
-      header.push('context_id', 'value_id', 'value_priority');
+      if (extras.context) header.push('parameter_context_id');
+      header.push('value_id');
+      if (extras.priority) header.push('value_priority');
       opts.langs.forEach(function (l) { header.push('value_name_' + l); });
-      header.push('value_context_id');
+      if (extras.context) header.push('value_context_id');
+      if (extras.productCount) header.push('value_product_count');
       var rows = [header.join(',')];
+
+      function paramCols(p) {
+        var r = [p.id];
+        if (extras.priority) r.push(p.priority);
+        opts.langs.forEach(function (l) { r.push(csvEsc(p.names[l])); });
+        if (extras.context) r.push(p.context_id || '');
+        return r;
+      }
+
       data.parameters.forEach(function (p) {
         if (!p.values.length) {
-          var row = [p.id, p.priority];
-          opts.langs.forEach(function (l) { row.push(csvEsc(p.names[l])); });
-          row.push(p.context_id || '', '', '');
+          var row = paramCols(p);
+          row.push(''); // value_id
+          if (extras.priority) row.push('');
           opts.langs.forEach(function () { row.push(''); });
-          row.push('');
+          if (extras.context) row.push('');
+          if (extras.productCount) row.push('');
           rows.push(row.join(','));
         } else {
           p.values.forEach(function (v) {
-            var row = [p.id, p.priority];
-            opts.langs.forEach(function (l) { row.push(csvEsc(p.names[l])); });
-            row.push(p.context_id || '', v.id, v.priority);
+            var row = paramCols(p);
+            row.push(v.id);
+            if (extras.priority) row.push(v.priority);
             opts.langs.forEach(function (l) { row.push(csvEsc(v.names[l])); });
-            row.push(v.context_id || '');
+            if (extras.context) row.push(v.context_id || '');
+            if (extras.productCount) row.push(v.productCount || 0);
             rows.push(row.join(','));
           });
         }
@@ -6074,15 +6168,23 @@ li.tp-row--selected > div {
       content = '﻿' + rows.join('\r\n');
       mime = 'text/csv;charset=utf-8'; ext = 'csv';
     } else if (opts.format === 'xml') {
+      function attr(node) {
+        var a = ' id="' + node.id + '"';
+        if (extras.priority) a += ' priority="' + node.priority + '"';
+        if (extras.context && node.context_id) a += ' contextId="' + xmlEsc(node.context_id) + '"';
+        return a;
+      }
       var x = ['<?xml version="1.0" encoding="UTF-8"?>'];
       x.push('<parameters exportedAt="' + xmlEsc(new Date().toISOString()) + '" langs="' + xmlEsc(opts.langs.join(',')) + '">');
       data.parameters.forEach(function (p) {
-        x.push('  <parameter id="' + p.id + '" priority="' + p.priority + '"' + (p.context_id ? ' contextId="' + xmlEsc(p.context_id) + '"' : '') + '>');
+        x.push('  <parameter' + attr(p) + '>');
         opts.langs.forEach(function (l) { x.push('    <name lang="' + l + '">' + xmlEsc(p.names[l]) + '</name>'); });
         if (p.values.length) {
           x.push('    <values>');
           p.values.forEach(function (v) {
-            x.push('      <value id="' + v.id + '" priority="' + v.priority + '"' + (v.context_id ? ' contextId="' + xmlEsc(v.context_id) + '"' : '') + '>');
+            var valAttr = attr(v);
+            if (extras.productCount) valAttr += ' productCount="' + (v.productCount || 0) + '"';
+            x.push('      <value' + valAttr + '>');
             opts.langs.forEach(function (l) { x.push('        <name lang="' + l + '">' + xmlEsc(v.names[l]) + '</name>'); });
             x.push('      </value>');
           });
@@ -7373,7 +7475,7 @@ li.tp-row--selected > div {
       ],
       pagination: { perPage: 50 },
       footer: {
-        version: 'v4.5.63',
+        version: 'v4.5.64',
         links: [
           { label: 'Propozycja', icon: 'star', tooltip: 'Zaproponuj funkcjonalność', variant: 'feature', href: 'https://github.com/design4artPl/tampermonkey/issues/new?labels=enhancement', target: '_blank' },
           { label: 'Zgłoś błąd', icon: 'bug_report', tooltip: 'Zgłoś błąd', variant: 'bug', href: 'https://github.com/design4artPl/tampermonkey/issues/new?labels=bug', target: '_blank' }
