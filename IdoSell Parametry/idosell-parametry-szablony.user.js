@@ -76,6 +76,47 @@
     if (st) try { st.remove(); } catch (e) {}
   }
 
+  // v4.5.55: localStorage cache z TTL — pierwszy fetch zapisuje, kolejne wejścia
+  // czytają natychmiast. Pomaga przy children/products/context — drugie wejście
+  // na parameters.php pokazuje pełne kolumny od ręki.
+  var TP_CACHE_HOST = (location.hostname || 'host').replace(/[^a-zA-Z0-9.-]/g, '_');
+  var TP_TTL_CTX      = 24 * 60 * 60 * 1000; // 24 h — kontekst rzadko się zmienia
+  var TP_TTL_CHILDREN = 60 * 60 * 1000;      // 1 h — liczba wartości
+  var TP_TTL_PRODUCTS = 30 * 60 * 1000;      // 30 min — przypisania produktów
+
+  function _tpCacheKey(scope, id) { return 'tp.' + TP_CACHE_HOST + '.' + scope + '.' + id; }
+
+  function tpCacheGet(scope, id, ttlMs) {
+    try {
+      var raw = localStorage.getItem(_tpCacheKey(scope, id));
+      if (!raw) return null;
+      var obj = JSON.parse(raw);
+      if (!obj || typeof obj.t !== 'number') return null;
+      if (Date.now() - obj.t > ttlMs) return null;
+      return obj.v;
+    } catch (e) { return null; }
+  }
+  function tpCacheSet(scope, id, value) {
+    try { localStorage.setItem(_tpCacheKey(scope, id), JSON.stringify({ t: Date.now(), v: value })); }
+    catch (e) { /* quota / privacy mode — ignore */ }
+  }
+  function tpCacheDel(scope, id) {
+    try { localStorage.removeItem(_tpCacheKey(scope, id)); } catch (e) {}
+  }
+  function tpCacheClearAll() {
+    try {
+      var prefix = 'tp.' + TP_CACHE_HOST + '.';
+      var toDel = [];
+      for (var i = 0; i < localStorage.length; i++) {
+        var k = localStorage.key(i);
+        if (k && k.indexOf(prefix) === 0) toDel.push(k);
+      }
+      toDel.forEach(function (k) { localStorage.removeItem(k); });
+    } catch (e) {}
+  }
+  // Expose na window dla diagnostyki (F12: tpCacheClearAll())
+  try { window.tpCacheClearAll = tpCacheClearAll; } catch (e) {}
+
   /* === Embedded panel-pro widget v1.2.4 (inline) === */
 /* ============================================================================
  * panel-pro v1.2.1
@@ -1171,6 +1212,8 @@
         if (isValueNode && parentIsParameter && detachedFrom.length > 0) {
           await detachOrphanParentFromProducts(parentId, detachedFrom, updateStatus);
         }
+        // v4.5.55: usunięcie → wyczyść cache węzła i jego rodzica (dzieci się zmienia)
+        try { tpCacheDel('ctx', nodeId); tpCacheDel('pr', nodeId); if (parentId) { tpCacheDel('ch', parentId + '_pol'); tpCacheDel('ch', parentId + '_' + LANG); tpCacheDel('pr', parentId); } } catch (e) {}
         updateStatus(totalDetached > 0
           ? 'Usunieto "' + nodeName + '" (odpieto od ' + totalDetached + ' towarow)'
           : 'Usunieto "' + nodeName + '"');
@@ -1181,6 +1224,7 @@
         if (isValueNode && parentIsParameter && detachedFrom.length > 0) {
           await detachOrphanParentFromProducts(parentId, detachedFrom, updateStatus);
         }
+        try { tpCacheDel('ctx', nodeId); tpCacheDel('pr', nodeId); if (parentId) { tpCacheDel('ch', parentId + '_pol'); tpCacheDel('ch', parentId + '_' + LANG); tpCacheDel('pr', parentId); } } catch (e) {}
         updateStatus('Usunieto "' + nodeName + '"');
         return true;
       }
@@ -1256,6 +1300,10 @@
   }
 
   async function loadChildValues(nodeId) {
+    // v4.5.55: cache TTL 1h dla per-lang listy dzieci
+    var cacheKey = nodeId + '_' + LANG;
+    var cached = tpCacheGet('ch', cacheKey, TP_TTL_CHILDREN);
+    if (cached !== null) return cached;
     const win = getIframeWin();
     return new Promise((resolve, reject) => {
       const xhr = new win.XMLHttpRequest();
@@ -1271,6 +1319,7 @@
           while ((match = regex.exec(html)) !== null) {
             children.push({ id: match[1], name: match[2].trim() });
           }
+          tpCacheSet('ch', cacheKey, children);
           resolve(children);
         } catch (e) { reject(e); }
       };
@@ -7240,7 +7289,7 @@ li.tp-row--selected > div {
       ],
       pagination: { perPage: 50 },
       footer: {
-        version: 'v4.5.54',
+        version: 'v4.5.55',
         links: [
           { label: 'Propozycja', icon: 'star', tooltip: 'Zaproponuj funkcjonalność', variant: 'feature', href: 'https://github.com/design4artPl/tampermonkey/issues/new?labels=enhancement', target: '_blank' },
           { label: 'Zgłoś błąd', icon: 'bug_report', tooltip: 'Zgłoś błąd', variant: 'bug', href: 'https://github.com/design4artPl/tampermonkey/issues/new?labels=bug', target: '_blank' }
@@ -7318,6 +7367,9 @@ li.tp-row--selected > div {
   // numberOfOccurrence returns 0 for parameter nodes (IdoSell only populates it for values),
   // so sum up the counts from the parameter's child values instead.
   async function fetchValueProductCount(valueId) {
+    // v4.5.55: cache TTL 30 min
+    var cached = tpCacheGet('pr', valueId, TP_TTL_PRODUCTS);
+    if (cached !== null) return cached;
     try {
       var r = await fetchAjax('action=numberOfOccurrence&id=' + encodeURIComponent(valueId));
       var n = (r && r.data && r.data.numberOfProduct) ? Number(r.data.numberOfProduct) : 0;
@@ -7331,7 +7383,9 @@ li.tp-row--selected > div {
           return String(typeof p === 'object' ? (p.id || p.product_id) : p);
         });
       }
-      return { count: n, productIds: ids };
+      var result = { count: n, productIds: ids };
+      tpCacheSet('pr', valueId, result);
+      return result;
     } catch (e) { return { count: 0, productIds: [] }; }
   }
 
@@ -7410,12 +7464,16 @@ li.tp-row--selected > div {
 
   async function fetchContextForNode(nodeId) {
     if (_ctxCache[nodeId]) return _ctxCache[nodeId];
+    // v4.5.55: persistent cache TTL 24h
+    var cached = tpCacheGet('ctx', nodeId, TP_TTL_CTX);
+    if (cached !== null) { _ctxCache[nodeId] = cached; return cached; }
     try {
       var r = await fetchAjax('action=getParameterLangData&id=' + encodeURIComponent(nodeId));
       var d = r && r.data ? r.data : null;
-      if (!d) { _ctxCache[nodeId] = { ctx: null }; return _ctxCache[nodeId]; }
+      if (!d) { _ctxCache[nodeId] = { ctx: null }; tpCacheSet('ctx', nodeId, { ctx: null }); return _ctxCache[nodeId]; }
       var ctx = (d.type === 'value' ? d.context_value_id : d.context_id) || null;
       _ctxCache[nodeId] = { ctx: ctx, type: d.type };
+      tpCacheSet('ctx', nodeId, _ctxCache[nodeId]);
       return _ctxCache[nodeId];
     } catch (e) {
       _ctxCache[nodeId] = { ctx: null };
