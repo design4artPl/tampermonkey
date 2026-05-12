@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         IdoSell - Parametry Toolbar
 // @namespace    https://idosell.com/
-// @version      4.5.61
+// @version      4.5.62
 // @description  Toolbar do grupowej edycji parametrow: panel-pro v1.2.4 inline + new-panel support, checkboxy, zaznaczanie, rozwijanie/zwijanie, grupowe usuwanie/edycja, import CSV
 // @author       SyncOffer
 // @match        https://*.iai-shop.com/panel/app/parameters.php*
@@ -7297,7 +7297,7 @@ li.tp-row--selected > div {
       ],
       pagination: { perPage: 50 },
       footer: {
-        version: 'v4.5.61',
+        version: 'v4.5.62',
         links: [
           { label: 'Propozycja', icon: 'star', tooltip: 'Zaproponuj funkcjonalność', variant: 'feature', href: 'https://github.com/design4artPl/tampermonkey/issues/new?labels=enhancement', target: '_blank' },
           { label: 'Zgłoś błąd', icon: 'bug_report', tooltip: 'Zgłoś błąd', variant: 'bug', href: 'https://github.com/design4artPl/tampermonkey/issues/new?labels=bug', target: '_blank' }
@@ -7545,42 +7545,34 @@ li.tp-row--selected > div {
 
     async function processOne(t) {
       try {
-        // 1) Pr\u00f3ba bezpo\u015brednia \u2014 czasem API zwraca count + list\u0119 productIds (real panele)
+        // v4.5.62: bierzemy MAX z trzech \u017ar\u00f3de\u0142, bo \u017cadne nie jest zawsze prawdziwe:
+        //   A) parent-level numberOfOccurrence (czasem zwraca distinct ID)
+        //   B) union value-level numberOfOccurrence productIds
+        //   C) MAX z natywnych licznik\u00f3w iteminfo z treeCode
+        // Na demo37 native UI bywa \u017ar\u00f3d\u0142em prawdy gdy API podlicza (np. Ko\u0142ek 20631:
+        // API => 2, native iteminfo "towary: 3" przy obu warto\u015bciach).
         var direct = await fetchValueProductCount(t.nid);
-        var total = Number(direct.count) || 0;
         var idsSeen = {};
         if (direct.productIds && direct.productIds.length) {
           direct.productIds.forEach(function (pid) { idsSeen[pid] = true; });
-          total = Object.keys(idsSeen).length;
         }
+        var maxNativeCount = 0;
 
-        if (total === 0) {
-          // 2) Fallback po warto\u015bciach. Ka\u017cda warto\u015b\u0107: numberOfOccurrence -> count + IDs
-          var children = await loadChildValues(t.nid);
-          if (children && children.length > 0) {
-            var perValue = await Promise.all(children.map(function (c) { return fetchValueProductCount(c.id); }));
-            var anyHasIds = false;
-            var maxNativeCount = 0;
-            for (var k = 0; k < perValue.length; k++) {
-              var pv = perValue[k];
-              if (pv.productIds && pv.productIds.length) {
-                anyHasIds = true;
-                for (var j = 0; j < pv.productIds.length; j++) idsSeen[pv.productIds[j]] = true;
-              }
-              var nativeCnt = Number(children[k].productCount) || 0;
-              if (nativeCnt > maxNativeCount) maxNativeCount = nativeCnt;
+        var children = await loadChildValues(t.nid);
+        if (children && children.length > 0) {
+          var perValue = await Promise.all(children.map(function (c) { return fetchValueProductCount(c.id); }));
+          for (var k = 0; k < perValue.length; k++) {
+            var pv = perValue[k];
+            if (pv.productIds && pv.productIds.length) {
+              for (var j = 0; j < pv.productIds.length; j++) idsSeen[pv.productIds[j]] = true;
             }
-            if (anyHasIds) {
-              // Distinct union ID produkt\u00f3w ze wszystkich warto\u015bci
-              total = Object.keys(idsSeen).length;
-            } else {
-              // API nie eksponuje ID per warto\u015b\u0107 (demo37) \u2014 u\u017cywamy MAX z natywnych licznik\u00f3w
-              // IdoSella. Unika over-countingu gdy produkt ma wiele warto\u015bci tego samego parametru
-              // (np. wszystkie warto\u015bci Bilecika wskazuj\u0105 na ten sam jeden towar => max=1).
-              total = maxNativeCount;
-            }
+            var nativeCnt = Number(children[k].productCount) || 0;
+            if (nativeCnt > maxNativeCount) maxNativeCount = nativeCnt;
           }
         }
+
+        var apiDistinct = Object.keys(idsSeen).length;
+        var total = Math.max(apiDistinct, maxNativeCount);
         t.cell.dataset.countLoaded = '1';
         t.cell.textContent = '';
         if (total > 0) {
