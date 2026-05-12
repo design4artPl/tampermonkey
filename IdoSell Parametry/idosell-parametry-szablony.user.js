@@ -7240,7 +7240,7 @@ li.tp-row--selected > div {
       ],
       pagination: { perPage: 50 },
       footer: {
-        version: 'v4.5.53',
+        version: 'v4.5.54',
         links: [
           { label: 'Propozycja', icon: 'star', tooltip: 'Zaproponuj funkcjonalność', variant: 'feature', href: 'https://github.com/design4artPl/tampermonkey/issues/new?labels=enhancement', target: '_blank' },
           { label: 'Zgłoś błąd', icon: 'bug_report', tooltip: 'Zgłoś błąd', variant: 'bug', href: 'https://github.com/design4artPl/tampermonkey/issues/new?labels=bug', target: '_blank' }
@@ -7253,9 +7253,9 @@ li.tp-row--selected > div {
     injectHeaderSelectAll(doc, panel);
     refreshPagination(doc, panel);
 
-    // v4.5.53: reveal jest wyzwalany z waitForIframe po (a) załadowaniu danych
-    // dla widocznej strony LUB (b) timeoucie 3.5s. Tutaj nie odsłaniamy.
-    try { console.log('[parametry v4.5.53] panel-pro mounted'); } catch (e) {}
+    // v4.5.54: odsłaniamy widok od razu po mount. Kolumny doczytają się w tle.
+    try { console.log('[parametry v4.5.54] mount success — reveal'); } catch (e) {}
+    _tpRevealReadyView();
 
     return panel;
   }
@@ -7535,27 +7535,12 @@ li.tp-row--selected > div {
     // v4.5.36: initial pagination — without this, totalVisible=0 -> pager empty until first search
     applyPagination(doc);
 
-    // v4.5.53: \u0142adujemy dane TYLKO dla widocznej strony PRZED zdj\u0119ciem splasha.
-    // Splash zostaje max 3.5s, potem ods\u0142aniamy \u2014 pozosta\u0142e strony doczytaj\u0105 si\u0119 w tle.
-    (function loadVisibleThenReveal() {
-      var visible = getVisibleRootItems(doc);
-      var firstPassPromise = Promise.all([
-        loadChildrenCountsInBackground(doc, visible),
-        loadParameterProductCountsInBackground(doc, visible),
-        loadContextsInBackground(doc, visible)
-      ]);
-      var timeoutPromise = new Promise(function (r) { setTimeout(r, 3500); });
-      Promise.race([firstPassPromise, timeoutPromise]).then(function () {
-        try { console.log('[parametry v4.5.53] visible loaded \u2014 reveal'); } catch (e) {}
-        _tpRevealReadyView();
-        // drugi przebieg dla pozosta\u0142ych wierszy \u2014 w tle, bez priorytetu
-        setTimeout(function () {
-          loadChildrenCountsInBackground(doc);
-          loadParameterProductCountsInBackground(doc);
-          loadContextsInBackground(doc);
-        }, 200);
-      });
-    })();
+    // v4.5.54: loadery w tle, niemal natychmiast po reveal (widok ju\u017c widoczny)
+    setTimeout(function () {
+      loadChildrenCountsInBackground(doc);
+      loadParameterProductCountsInBackground(doc);
+      loadContextsInBackground(doc);
+    }, 50);
     // v4.5.31: sections panel below parameters list — mount immediately
     mountSectionsPanel(doc);
     // v4.5.14: auto-sort after import
