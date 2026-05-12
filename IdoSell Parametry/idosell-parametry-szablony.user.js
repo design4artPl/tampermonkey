@@ -1213,7 +1213,7 @@
           await detachOrphanParentFromProducts(parentId, detachedFrom, updateStatus);
         }
         // v4.5.55: usunięcie → wyczyść cache węzła i jego rodzica (dzieci się zmienia)
-        try { tpCacheDel('ctx', nodeId); tpCacheDel('pr', nodeId); if (parentId) { tpCacheDel('ch', parentId + '_pol'); tpCacheDel('ch', parentId + '_' + LANG); tpCacheDel('pr', parentId); } } catch (e) {}
+        try { tpCacheDel('ctx', nodeId); tpCacheDel('pr', nodeId); if (parentId) { tpCacheDel('ch2', parentId + '_pol'); tpCacheDel('ch2', parentId + '_' + LANG); tpCacheDel('pr', parentId); } } catch (e) {}
         updateStatus(totalDetached > 0
           ? 'Usunieto "' + nodeName + '" (odpieto od ' + totalDetached + ' towarow)'
           : 'Usunieto "' + nodeName + '"');
@@ -1224,7 +1224,7 @@
         if (isValueNode && parentIsParameter && detachedFrom.length > 0) {
           await detachOrphanParentFromProducts(parentId, detachedFrom, updateStatus);
         }
-        try { tpCacheDel('ctx', nodeId); tpCacheDel('pr', nodeId); if (parentId) { tpCacheDel('ch', parentId + '_pol'); tpCacheDel('ch', parentId + '_' + LANG); tpCacheDel('pr', parentId); } } catch (e) {}
+        try { tpCacheDel('ctx', nodeId); tpCacheDel('pr', nodeId); if (parentId) { tpCacheDel('ch2', parentId + '_pol'); tpCacheDel('ch2', parentId + '_' + LANG); tpCacheDel('pr', parentId); } } catch (e) {}
         updateStatus('Usunieto "' + nodeName + '"');
         return true;
       }
@@ -1303,7 +1303,7 @@
     // v4.5.55: cache TTL 1h dla per-lang listy dzieci
     // v4.5.57: parsujemy też natywną liczbę produktów per wartość z iteminfo ("towary: N")
     var cacheKey = nodeId + '_' + LANG;
-    var cached = tpCacheGet('ch', cacheKey, TP_TTL_CHILDREN);
+    var cached = tpCacheGet('ch2', cacheKey, TP_TTL_CHILDREN);
     if (cached !== null) return cached;
     const win = getIframeWin();
     return new Promise((resolve, reject) => {
@@ -1327,7 +1327,7 @@
             const cid = match[1];
             children.push({ id: cid, name: match[2].trim(), productCount: prodMap[cid] || 0 });
           }
-          tpCacheSet('ch', cacheKey, children);
+          tpCacheSet('ch2', cacheKey, children);
           resolve(children);
         } catch (e) { reject(e); }
       };
@@ -7297,7 +7297,7 @@ li.tp-row--selected > div {
       ],
       pagination: { perPage: 50 },
       footer: {
-        version: 'v4.5.57',
+        version: 'v4.5.58',
         links: [
           { label: 'Propozycja', icon: 'star', tooltip: 'Zaproponuj funkcjonalność', variant: 'feature', href: 'https://github.com/design4artPl/tampermonkey/issues/new?labels=enhancement', target: '_blank' },
           { label: 'Zgłoś błąd', icon: 'bug_report', tooltip: 'Zgłoś błąd', variant: 'bug', href: 'https://github.com/design4artPl/tampermonkey/issues/new?labels=bug', target: '_blank' }
