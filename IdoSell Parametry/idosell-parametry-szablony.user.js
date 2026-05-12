@@ -13,10 +13,10 @@
 (function () {
   'use strict';
 
-  // v4.5.50: pre-hide native panel + splash overlay before iframe even paints.
+  // v4.5.50/51: pre-hide native panel + splash overlay before iframe even paints.
   // Runs at @run-at document-start, so even on first load the user doesn't see the bare native tree.
   (function preHide() {
-    if (location.pathname.indexOf('parameters.php') === -1) return;
+    try { console.log('[parametry v4.5.51] preHide start, path=', location.pathname); } catch (e) {}
     var preStyle = document.createElement('style');
     preStyle.id = 'tp-prehide-style';
     preStyle.textContent = [
@@ -7231,6 +7231,10 @@ li.tp-row--selected > div {
     injectHeaderSelectAll(doc, panel);
     refreshPagination(doc, panel);
 
+    // v4.5.51: panel ZAMONTOWANY pomyślnie — dopiero teraz zdejmij splash
+    try { console.log('[parametry v4.5.51] mount success — reveal'); } catch (e) {}
+    _tpRevealReadyView();
+
     return panel;
   }
 
@@ -7508,8 +7512,7 @@ li.tp-row--selected > div {
     if (_panel) rebuildViewsDropdown(doc);
     // v4.5.36: initial pagination — without this, totalVisible=0 -> pager empty until first search
     applyPagination(doc);
-    // v4.5.50: panel zamontowany \u2014 zdejmij splash i ods\u0142o\u0144 iframe
-    _tpRevealReadyView();
+    // v4.5.51: reveal przeniesiony do mountPanelPro success-path (odpala si\u0119 tylko po realnym mount)
 
     // v4.5.49: wszystkie 3 loadery startuj\u0105 r\u00f3wnolegle (by\u0142o staggered 800/1000/1200ms)
     setTimeout(function () {
