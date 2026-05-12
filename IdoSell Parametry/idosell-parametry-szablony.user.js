@@ -6535,6 +6535,8 @@ li.tp-row--selected > div {
       // Update product counts for newly loaded values
       if (nodes.length > 0) {
         updateProductCounts(doc);
+        // v4.5.49: wczytaj konteksty dla świeżo dodanych wartości
+        try { loadContextsInBackground(doc, nodes); } catch (e) {}
         // Refresh priority cells for affected parents (children may have been added)
         var seenParents = new Set();
         for (var p = 0; p < nodes.length; p++) {
@@ -7209,10 +7211,11 @@ li.tp-row--selected > div {
   }
 
   // v4.5.2: background loader for children counts (no DOM expand)
+  // v4.5.49: BATCH bumped 5 -> 15 (browser allows ~6 concurrent per host; loader runs alone here)
   async function loadChildrenCountsInBackground(doc) {
     if (!_panel) return;
     var rootItems = getRootItems(doc);
-    var BATCH = 5;
+    var BATCH = 15;
     for (var i = 0; i < rootItems.length; i += BATCH) {
       var batch = rootItems.slice(i, i + BATCH);
       await Promise.all(batch.map(async function (li) {
@@ -7357,9 +7360,11 @@ li.tp-row--selected > div {
     cell.appendChild(icon);
   }
 
+  // v4.5.49: skanujemy WSZYSTKIE wiersze (parametry + wartości) — fetchContextForNode rozróżnia
+  // context_id vs context_value_id po polu type. BATCH 5 -> 15.
   async function loadContextsInBackground(doc, liList) {
     if (!_panel) return;
-    var items = liList || getRootItems(doc);
+    var items = liList || Array.from(doc.querySelectorAll('#block_group0 li[id^="m_"]'));
     var targets = [];
     items.forEach(function (li) {
       var nid = getNodeId(li); if (!nid) return;
@@ -7368,7 +7373,7 @@ li.tp-row--selected > div {
       if (cell.dataset.ctxLoaded === '1') return;
       targets.push({ nid: nid, cell: cell });
     });
-    var BATCH = 5;
+    var BATCH = 15;
     for (var i = 0; i < targets.length; i += BATCH) {
       var batch = targets.slice(i, i + BATCH);
       await Promise.all(batch.map(async function (t) {
@@ -7381,6 +7386,7 @@ li.tp-row--selected > div {
     }
   }
 
+  // v4.5.49: batched-parallel (by\u0142o 1 parametr na raz) + BATCH 15
   async function loadParameterProductCountsInBackground(doc) {
     if (!_panel) return;
     var rootItems = getRootItems(doc);
@@ -7394,16 +7400,11 @@ li.tp-row--selected > div {
       if (cell.querySelector('a')) { cell.dataset.countLoaded = '1'; return; }
       targets.push({ nid: nid, cell: cell });
     });
-    // Sequential (one parameter at a time, children in parallel within a param)
-    for (var i = 0; i < targets.length; i++) {
-      var t = targets[i];
+
+    async function processOne(t) {
       try {
-        // 1) try parameter-level count (cheap; some installs return correct data)
         var direct = await fetchValueProductCount(t.nid);
         var total = direct.count;
-        var productIds = direct.productIds.slice();
-
-        // 2) if parameter-level is 0, fall back to summing children's distinct products
         if (total === 0) {
           var children = await loadChildValues(t.nid);
           if (children && children.length > 0) {
@@ -7411,10 +7412,7 @@ li.tp-row--selected > div {
             var seen = {};
             perValue.forEach(function (pv) {
               pv.productIds.forEach(function (pid) { seen[pid] = true; });
-              if (pv.productIds.length === 0 && pv.count > 0) {
-                // No id list; add to total as approximate (may double-count across values)
-                total += pv.count;
-              }
+              if (pv.productIds.length === 0 && pv.count > 0) total += pv.count;
             });
             var distinctCount = Object.keys(seen).length;
             if (distinctCount > 0) total = distinctCount;
@@ -7438,7 +7436,13 @@ li.tp-row--selected > div {
         } else {
           t.cell.textContent = '0';
         }
-      } catch (e) { /* leave cell as-is */ }
+      } catch (e) {}
+    }
+
+    var BATCH = 15;
+    for (var i = 0; i < targets.length; i += BATCH) {
+      var batch = targets.slice(i, i + BATCH);
+      await Promise.all(batch.map(processOne));
     }
   }
 
@@ -7454,11 +7458,12 @@ li.tp-row--selected > div {
     if (_panel) rebuildViewsDropdown(doc);
     // v4.5.36: initial pagination — without this, totalVisible=0 -> pager empty until first search
     applyPagination(doc);
-    setTimeout(function () { loadChildrenCountsInBackground(doc); }, 800);
-    // v4.5.31: parameter product counts (parameters start with "\u2014" natively)
-    setTimeout(function () { loadParameterProductCountsInBackground(doc); }, 1000);
-    // v4.5.48: kontekst specjalny per parametr \u2014 w tle
-    setTimeout(function () { loadContextsInBackground(doc); }, 1200);
+    // v4.5.49: wszystkie 3 loadery startuj\u0105 r\u00f3wnolegle (by\u0142o staggered 800/1000/1200ms)
+    setTimeout(function () {
+      loadChildrenCountsInBackground(doc);
+      loadParameterProductCountsInBackground(doc);
+      loadContextsInBackground(doc);
+    }, 200);
     // v4.5.31: sections panel below parameters list — mount immediately
     mountSectionsPanel(doc);
     // v4.5.14: auto-sort after import
