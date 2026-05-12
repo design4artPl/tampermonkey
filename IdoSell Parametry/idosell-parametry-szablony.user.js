@@ -3580,6 +3580,15 @@ li.tp-row--selected > div {
     return Array.from(root.querySelectorAll(':scope > li[id^="m_"]'));
   }
 
+  // v4.5.53: tylko wiersze aktualnej strony — używane do priorytetowego ładowania danych
+  function getVisibleRootItems(doc) {
+    return getRootItems(doc).filter(function (li) {
+      return !li.classList.contains('tp-row--hidden') &&
+             !li.classList.contains('tp-row--filter-hidden') &&
+             !li.classList.contains('panel-pro--view-hidden');
+    });
+  }
+
   function applyPagination(doc) {
     var items = getRootItems(doc);
     // Collect items that are either visible or only hidden by pagination
@@ -7231,7 +7240,7 @@ li.tp-row--selected > div {
       ],
       pagination: { perPage: 50 },
       footer: {
-        version: 'v4.5.47',
+        version: 'v4.5.53',
         links: [
           { label: 'Propozycja', icon: 'star', tooltip: 'Zaproponuj funkcjonalność', variant: 'feature', href: 'https://github.com/design4artPl/tampermonkey/issues/new?labels=enhancement', target: '_blank' },
           { label: 'Zgłoś błąd', icon: 'bug_report', tooltip: 'Zgłoś błąd', variant: 'bug', href: 'https://github.com/design4artPl/tampermonkey/issues/new?labels=bug', target: '_blank' }
@@ -7244,9 +7253,9 @@ li.tp-row--selected > div {
     injectHeaderSelectAll(doc, panel);
     refreshPagination(doc, panel);
 
-    // v4.5.51: panel ZAMONTOWANY pomyślnie — dopiero teraz zdejmij splash
-    try { console.log('[parametry v4.5.51] mount success — reveal'); } catch (e) {}
-    _tpRevealReadyView();
+    // v4.5.53: reveal jest wyzwalany z waitForIframe po (a) załadowaniu danych
+    // dla widocznej strony LUB (b) timeoucie 3.5s. Tutaj nie odsłaniamy.
+    try { console.log('[parametry v4.5.53] panel-pro mounted'); } catch (e) {}
 
     return panel;
   }
@@ -7277,12 +7286,12 @@ li.tp-row--selected > div {
     );
   }
 
-  // v4.5.2: background loader for children counts (no DOM expand)
-  // v4.5.49: BATCH bumped 5 -> 15 (browser allows ~6 concurrent per host; loader runs alone here)
-  async function loadChildrenCountsInBackground(doc) {
+  // v4.5.2 / v4.5.53: background loader for children counts.
+  // Akceptuje opcjonalną listę wierszy (do priorytetu strony widocznej).
+  async function loadChildrenCountsInBackground(doc, rowsList) {
     if (!_panel) return;
-    var rootItems = getRootItems(doc);
-    var BATCH = 15;
+    var rootItems = rowsList || getRootItems(doc);
+    var BATCH = 20;
     for (var i = 0; i < rootItems.length; i += BATCH) {
       var batch = rootItems.slice(i, i + BATCH);
       await Promise.all(batch.map(async function (li) {
@@ -7440,7 +7449,7 @@ li.tp-row--selected > div {
       if (cell.dataset.ctxLoaded === '1') return;
       targets.push({ nid: nid, cell: cell });
     });
-    var BATCH = 15;
+    var BATCH = 20;
     for (var i = 0; i < targets.length; i += BATCH) {
       var batch = targets.slice(i, i + BATCH);
       await Promise.all(batch.map(async function (t) {
@@ -7453,10 +7462,10 @@ li.tp-row--selected > div {
     }
   }
 
-  // v4.5.49: batched-parallel (by\u0142o 1 parametr na raz) + BATCH 15
-  async function loadParameterProductCountsInBackground(doc) {
+  // v4.5.49 / v4.5.53: batched-parallel, akceptuje opcjonaln\u0105 list\u0119 wierszy
+  async function loadParameterProductCountsInBackground(doc, rowsList) {
     if (!_panel) return;
-    var rootItems = getRootItems(doc);
+    var rootItems = rowsList || getRootItems(doc);
     var targets = [];
     rootItems.forEach(function (li) {
       var nid = getNodeId(li); if (!nid) return;
@@ -7506,7 +7515,7 @@ li.tp-row--selected > div {
       } catch (e) {}
     }
 
-    var BATCH = 15;
+    var BATCH = 20;
     for (var i = 0; i < targets.length; i += BATCH) {
       var batch = targets.slice(i, i + BATCH);
       await Promise.all(batch.map(processOne));
@@ -7525,14 +7534,28 @@ li.tp-row--selected > div {
     if (_panel) rebuildViewsDropdown(doc);
     // v4.5.36: initial pagination — without this, totalVisible=0 -> pager empty until first search
     applyPagination(doc);
-    // v4.5.51: reveal przeniesiony do mountPanelPro success-path (odpala si\u0119 tylko po realnym mount)
 
-    // v4.5.49: wszystkie 3 loadery startuj\u0105 r\u00f3wnolegle (by\u0142o staggered 800/1000/1200ms)
-    setTimeout(function () {
-      loadChildrenCountsInBackground(doc);
-      loadParameterProductCountsInBackground(doc);
-      loadContextsInBackground(doc);
-    }, 200);
+    // v4.5.53: \u0142adujemy dane TYLKO dla widocznej strony PRZED zdj\u0119ciem splasha.
+    // Splash zostaje max 3.5s, potem ods\u0142aniamy \u2014 pozosta\u0142e strony doczytaj\u0105 si\u0119 w tle.
+    (function loadVisibleThenReveal() {
+      var visible = getVisibleRootItems(doc);
+      var firstPassPromise = Promise.all([
+        loadChildrenCountsInBackground(doc, visible),
+        loadParameterProductCountsInBackground(doc, visible),
+        loadContextsInBackground(doc, visible)
+      ]);
+      var timeoutPromise = new Promise(function (r) { setTimeout(r, 3500); });
+      Promise.race([firstPassPromise, timeoutPromise]).then(function () {
+        try { console.log('[parametry v4.5.53] visible loaded \u2014 reveal'); } catch (e) {}
+        _tpRevealReadyView();
+        // drugi przebieg dla pozosta\u0142ych wierszy \u2014 w tle, bez priorytetu
+        setTimeout(function () {
+          loadChildrenCountsInBackground(doc);
+          loadParameterProductCountsInBackground(doc);
+          loadContextsInBackground(doc);
+        }, 200);
+      });
+    })();
     // v4.5.31: sections panel below parameters list — mount immediately
     mountSectionsPanel(doc);
     // v4.5.14: auto-sort after import
