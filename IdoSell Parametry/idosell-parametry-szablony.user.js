@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         IdoSell - Parametry Toolbar
 // @namespace    https://idosell.com/
-// @version      4.5.60
+// @version      4.5.61
 // @description  Toolbar do grupowej edycji parametrow: panel-pro v1.2.4 inline + new-panel support, checkboxy, zaznaczanie, rozwijanie/zwijanie, grupowe usuwanie/edycja, import CSV
 // @author       SyncOffer
 // @match        https://*.iai-shop.com/panel/app/parameters.php*
@@ -7297,7 +7297,7 @@ li.tp-row--selected > div {
       ],
       pagination: { perPage: 50 },
       footer: {
-        version: 'v4.5.60',
+        version: 'v4.5.61',
         links: [
           { label: 'Propozycja', icon: 'star', tooltip: 'Zaproponuj funkcjonalność', variant: 'feature', href: 'https://github.com/design4artPl/tampermonkey/issues/new?labels=enhancement', target: '_blank' },
           { label: 'Zgłoś błąd', icon: 'bug_report', tooltip: 'Zgłoś błąd', variant: 'bug', href: 'https://github.com/design4artPl/tampermonkey/issues/new?labels=bug', target: '_blank' }
@@ -7545,39 +7545,52 @@ li.tp-row--selected > div {
 
     async function processOne(t) {
       try {
+        // 1) Pr\u00f3ba bezpo\u015brednia \u2014 czasem API zwraca count + list\u0119 productIds (real panele)
         var direct = await fetchValueProductCount(t.nid);
         var total = Number(direct.count) || 0;
-        var debugInfo = { paramId: t.nid, direct: direct.count, directType: typeof direct.count, total: 0, totalType: 'number', children: null };
+        var idsSeen = {};
+        if (direct.productIds && direct.productIds.length) {
+          direct.productIds.forEach(function (pid) { idsSeen[pid] = true; });
+          total = Object.keys(idsSeen).length;
+        }
+
         if (total === 0) {
+          // 2) Fallback po warto\u015bciach. Ka\u017cda warto\u015b\u0107: numberOfOccurrence -> count + IDs
           var children = await loadChildValues(t.nid);
           if (children && children.length > 0) {
-            var sum = 0;
-            for (var k = 0; k < children.length; k++) {
-              var pc = Number(children[k].productCount);
-              if (!isNaN(pc) && pc > 0) sum += pc;
+            var perValue = await Promise.all(children.map(function (c) { return fetchValueProductCount(c.id); }));
+            var anyHasIds = false;
+            var maxNativeCount = 0;
+            for (var k = 0; k < perValue.length; k++) {
+              var pv = perValue[k];
+              if (pv.productIds && pv.productIds.length) {
+                anyHasIds = true;
+                for (var j = 0; j < pv.productIds.length; j++) idsSeen[pv.productIds[j]] = true;
+              }
+              var nativeCnt = Number(children[k].productCount) || 0;
+              if (nativeCnt > maxNativeCount) maxNativeCount = nativeCnt;
             }
-            total = sum;
-            debugInfo.children = children.map(function (c) { return { id: c.id, pc: c.productCount, pcType: typeof c.productCount }; });
+            if (anyHasIds) {
+              // Distinct union ID produkt\u00f3w ze wszystkich warto\u015bci
+              total = Object.keys(idsSeen).length;
+            } else {
+              // API nie eksponuje ID per warto\u015b\u0107 (demo37) \u2014 u\u017cywamy MAX z natywnych licznik\u00f3w
+              // IdoSella. Unika over-countingu gdy produkt ma wiele warto\u015bci tego samego parametru
+              // (np. wszystkie warto\u015bci Bilecika wskazuj\u0105 na ten sam jeden towar => max=1).
+              total = maxNativeCount;
+            }
           }
         }
-        debugInfo.total = total;
-        debugInfo.totalType = typeof total;
-        debugInfo.totalIsArray = Array.isArray(total);
-        try { console.log('[parametry v4.5.60 products]', debugInfo); } catch (e) {}
         t.cell.dataset.countLoaded = '1';
         t.cell.textContent = '';
         if (total > 0) {
           var link = doc.createElement('a');
-          link.href = 'javascript:void(0)';
+          link.href = 'products-list.php?trait=' + encodeURIComponent(t.nid);
+          link.target = '_blank';
+          link.rel = 'noopener';
           link.textContent = String(total);
-          link.title = 'Poka\u017c produkty u\u017cywaj\u0105ce parametru';
-          (function (paramId) {
-            link.addEventListener('click', function (e) {
-              e.stopPropagation();
-              try { window.top.location.assign('products-list.php?trait=' + encodeURIComponent(paramId)); }
-              catch (err) { window.location.assign('products-list.php?trait=' + encodeURIComponent(paramId)); }
-            });
-          })(t.nid);
+          link.title = 'Poka\u017c produkty u\u017cywaj\u0105ce parametru (nowa karta)';
+          link.addEventListener('click', function (e) { e.stopPropagation(); });
           t.cell.appendChild(link);
         } else {
           t.cell.textContent = '0';
