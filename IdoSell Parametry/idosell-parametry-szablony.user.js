@@ -1301,6 +1301,7 @@
 
   async function loadChildValues(nodeId) {
     // v4.5.55: cache TTL 1h dla per-lang listy dzieci
+    // v4.5.57: parsujemy też natywną liczbę produktów per wartość z iteminfo ("towary: N")
     var cacheKey = nodeId + '_' + LANG;
     var cached = tpCacheGet('ch', cacheKey, TP_TTL_CHILDREN);
     if (cached !== null) return cached;
@@ -1313,11 +1314,18 @@
         try {
           const resp = JSON.parse(xhr.responseText);
           const html = resp.treeCode || '';
+          // Wyciągnij natywne liczby produktów per wartość: <a id="products_X" ...>towary: N</a>
+          var prodMap = {};
+          html.replace(/products_(\d+)[^>]*>[^<]*?(\d+)\s*<\/a>/g, function (_, id, n) {
+            prodMap[id] = Number(n);
+            return _;
+          });
           const children = [];
           const regex = /id="m_(\d+)"[\s\S]*?class="showMenuSub\s+value[^"]*">([^<]+)/g;
           let match;
           while ((match = regex.exec(html)) !== null) {
-            children.push({ id: match[1], name: match[2].trim() });
+            const cid = match[1];
+            children.push({ id: cid, name: match[2].trim(), productCount: prodMap[cid] || 0 });
           }
           tpCacheSet('ch', cacheKey, children);
           resolve(children);
@@ -7289,7 +7297,7 @@ li.tp-row--selected > div {
       ],
       pagination: { perPage: 50 },
       footer: {
-        version: 'v4.5.56',
+        version: 'v4.5.57',
         links: [
           { label: 'Propozycja', icon: 'star', tooltip: 'Zaproponuj funkcjonalność', variant: 'feature', href: 'https://github.com/design4artPl/tampermonkey/issues/new?labels=enhancement', target: '_blank' },
           { label: 'Zgłoś błąd', icon: 'bug_report', tooltip: 'Zgłoś błąd', variant: 'bug', href: 'https://github.com/design4artPl/tampermonkey/issues/new?labels=bug', target: '_blank' }
@@ -7540,24 +7548,13 @@ li.tp-row--selected > div {
         var direct = await fetchValueProductCount(t.nid);
         var total = direct.count;
         if (total === 0) {
+          // v4.5.57: zamiast 1+N fetchów (parametr + każde dziecko) bierzemy natywne liczby
+          // z treeCode (`towary: N` per wartość). Jedno wywołanie loadChildValues zwraca wszystko.
+          // To suma — nie distinct — ale opiera się na natywnych licznikach IdoSella, których
+          // numberOfOccurrence per wartość nieraz nie potwierdza (rozjazd po stronie IdoSella).
           var children = await loadChildValues(t.nid);
           if (children && children.length > 0) {
-            var perValue = await Promise.all(children.map(function (c) { return fetchValueProductCount(c.id); }));
-            // v4.5.56: poprawione liczenie — wartości BEZ ID produktów nie giną
-            // gdy są wartości Z ID. Łączymy distinct (z tych z ID) + sum (z tych bez ID).
-            var seen = {};
-            var sumWithoutIds = 0;
-            perValue.forEach(function (pv) {
-              if (pv.productIds.length > 0) {
-                pv.productIds.forEach(function (pid) { seen[pid] = true; });
-              } else if (pv.count > 0) {
-                sumWithoutIds += pv.count;
-              }
-            });
-            var distinctCount = Object.keys(seen).length;
-            // Best-effort: distinct z ID + count bez ID (może lekko przeszacować jeśli się nakładają,
-            // ale lepsze niż gubienie liczb wartości bez listy ID)
-            total = distinctCount + sumWithoutIds;
+            total = children.reduce(function (acc, c) { return acc + (Number(c.productCount) || 0); }, 0);
           }
         }
         t.cell.dataset.countLoaded = '1';
