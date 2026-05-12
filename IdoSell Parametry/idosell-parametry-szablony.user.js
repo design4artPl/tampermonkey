@@ -6,6 +6,8 @@
 // @author       SyncOffer
 // @match        https://*.iai-shop.com/panel/app/parameters.php*
 // @match        https://*.idosell.com/panel/app/parameters.php*
+// @match        https://*.iai-shop.com/panel/parameters.php*
+// @match        https://*.idosell.com/panel/parameters.php*
 // @grant        none
 // @run-at       document-start
 // ==/UserScript==
@@ -13,15 +15,24 @@
 (function () {
   'use strict';
 
-  // v4.5.50/51: pre-hide native panel + splash overlay before iframe even paints.
-  // Runs at @run-at document-start, so even on first load the user doesn't see the bare native tree.
+  // v4.5.52: strona jest React SPA (/panel/app/parameters.php) z iframe-em
+  // pod /panel/parameters.php. Skrypt powinien działać TYLKO w wewnętrznym
+  // iframe — tam mamy bezpośredni dostęp do drzewa #block_group0. W outer
+  // React SPA splash trafiał pod hydraty React i był maskowany.
+  if (location.pathname === '/panel/app/parameters.php') {
+    try { console.log('[parametry v4.5.52] outer React shell — skrypt nieaktywny tutaj, czekamy na iframe'); } catch (e) {}
+    return;
+  }
+
+  // v4.5.52: pre-hide native panel + splash overlay (uruchamiane w iframe).
+  // Hide'ujemy własne body — splash jako overlay nad nim.
   (function preHide() {
-    try { console.log('[parametry v4.5.51] preHide start, path=', location.pathname); } catch (e) {}
+    try { console.log('[parametry v4.5.52] preHide start, path=', location.pathname); } catch (e) {}
     var preStyle = document.createElement('style');
     preStyle.id = 'tp-prehide-style';
     preStyle.textContent = [
-      '/* Ukryj cały iframe panelu dopóki nie zamontujemy widoku */',
-      'iframe { visibility: hidden !important; }',
+      '/* Ukryj zawartość body dopóki nie zamontujemy widoku */',
+      'html.tp-prehide body > *:not(#tp-loading-splash) { visibility: hidden !important; }',
       '#tp-loading-splash { position: fixed; inset: 0; background: linear-gradient(180deg,#f8fafc,#eef2f7); z-index: 2147483645; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 18px; font-family: "Segoe UI",Roboto,sans-serif; color: #334155; transition: opacity 0.25s; }',
       '#tp-loading-splash .tp-splash-card { display: flex; flex-direction: column; align-items: center; gap: 14px; padding: 32px 48px; background: #fff; border-radius: 12px; box-shadow: 0 10px 30px rgba(0,0,0,0.08); border: 1px solid #e2e8f0; }',
       '#tp-loading-splash .tp-spinner { width: 48px; height: 48px; border: 4px solid #e2e8f0; border-top-color: #2563eb; border-radius: 50%; animation: tp-spin 0.8s linear infinite; }',
@@ -31,6 +42,7 @@
       '#tp-loading-splash.tp-hide { opacity: 0; pointer-events: none; }'
     ].join('\n');
     (document.head || document.documentElement).appendChild(preStyle);
+    document.documentElement.classList.add('tp-prehide');
 
     function ensureSplash() {
       if (!document.body) return;
@@ -57,6 +69,7 @@
   })();
 
   function _tpRevealReadyView() {
+    try { document.documentElement.classList.remove('tp-prehide'); } catch (e) {}
     var s = document.getElementById('tp-loading-splash');
     if (s) { s.classList.add('tp-hide'); setTimeout(function () { try { s.remove(); } catch (e) {} }, 250); }
     var st = document.getElementById('tp-prehide-style');
