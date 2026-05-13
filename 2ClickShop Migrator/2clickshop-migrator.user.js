@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         2ClickShop Migrator
 // @namespace    https://noblelashes.pl/
-// @version      1.2
+// @version      1.3
 // @description  Panel boczny do scrapowania i eksportu danych z panelu admina 2ClickShop (kategorie, produkty, klienci, blogi)
 // @author       SyncOffer
 // @match        https://noblelashes.pl/admin/*
@@ -64,35 +64,37 @@
     }
     #tcm-panel.open { right: 0; }
     #tcm-header {
-      padding: 14px 16px;
-      background-repeat: repeat-y;
+      padding: 0 16px;
+      height: 74px;
+      background-repeat: no-repeat;
+      background-size: 1200px 100%;
       background-position: left top;
       background-color: #2b2b2b;
       color: #fff;
       display: flex;
       justify-content: space-between;
       align-items: center;
-      gap: 12px;
-      min-height: 48px;
+      gap: 16px;
+      box-sizing: border-box;
     }
     #tcm-header-left {
       display: flex;
       align-items: center;
-      gap: 12px;
+      gap: 16px;
       flex: 1;
       min-width: 0;
     }
     #tcm-logo {
-      height: 28px;
+      height: 33px;
       width: auto;
       flex-shrink: 0;
     }
     #tcm-header h2 {
       margin: 0;
-      font-size: 14px;
+      font-size: 17px;
       font-weight: 600;
       color: #fff;
-      text-shadow: 0 1px 2px rgba(0,0,0,0.5);
+      text-shadow: 0 1px 2px rgba(0,0,0,0.6);
       white-space: nowrap;
       overflow: hidden;
       text-overflow: ellipsis;
