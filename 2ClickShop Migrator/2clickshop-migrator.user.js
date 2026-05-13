@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         2ClickShop Migrator
 // @namespace    https://noblelashes.pl/
-// @version      1.1
+// @version      1.2
 // @description  Panel boczny do scrapowania i eksportu danych z panelu admina 2ClickShop (kategorie, produkty, klienci, blogi)
 // @author       SyncOffer
 // @match        https://noblelashes.pl/admin/*
@@ -13,6 +13,12 @@
 
 (function () {
   'use strict';
+
+  // =========================================================================
+  // ASSETS (inline base64 — niezależne od zewnętrznych URLi)
+  // =========================================================================
+  const ASSET_HEADER_BG = 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAABLAAAAABCAYAAADO+FcMAAAACXBIWXMAAAsTAAALEwEAmpwYAAAAIGNIUk0AAHolAACAgwAA+f8AAIDpAAB1MAAA6mAAADqYAAAXb5JfxUYAAADVSURBVHja7JVLDsIwDET77oU4RO/K1Vgh0UWFRMH52JmEIsWbVGN7ZpzWKuvl+mTZ43WmnnlD8vkajLo6bD4Obsr6NdrlfgqecjwEeo6TErgfuZ7Fgb+Hiu8ofWLPQL2eTxe3x91L+h3cHvcvH4u1f9g76cU+91fP2YIh5oti5Os4kZdhGKFeuQ/oOmvv+9BjjNGlVMcJ9ravlx5+QpwofDJwft0/SeFN5c/FQ0x3hFe1fnsOKefve0kmS/2t/tQ1vjqkfN7aSP2MGTP+LzYAAAD//wMAQCIFhJ8oIucAAAAASUVORK5CYII=';
+  const ASSET_LOGO = 'data:image/png;base64,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';
 
   // =========================================================================
   // STYLES
@@ -59,9 +65,8 @@
     #tcm-panel.open { right: 0; }
     #tcm-header {
       padding: 14px 16px;
-      background-image: url('https://noblelashes.pl/admin/template/shop/images/head_l.png');
-      background-repeat: repeat-x;
-      background-position: left center;
+      background-repeat: repeat-y;
+      background-position: left top;
       background-color: #2b2b2b;
       color: #fff;
       display: flex;
@@ -476,13 +481,14 @@
       el('div', { id: 'tcm-header-left' }, [
         el('img', {
           id: 'tcm-logo',
-          src: 'https://noblelashes.pl/admin/template/shop/images/logo.png',
+          src: ASSET_LOGO,
           alt: 'logo',
         }),
         el('h2', {}, '2ClickShop Migrator'),
       ]),
       el('button', { id: 'tcm-close', onClick: () => panel.classList.remove('open') }, '×'),
     ]);
+    header.style.backgroundImage = `url('${ASSET_HEADER_BG}')`;
     const breadcrumb = el('div', { id: 'tcm-breadcrumb' });
     const content = el('div', { id: 'tcm-content' });
 
