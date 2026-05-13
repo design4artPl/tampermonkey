@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         2ClickShop Migrator
 // @namespace    https://noblelashes.pl/
-// @version      1.0
+// @version      1.1
 // @description  Panel boczny do scrapowania i eksportu danych z panelu admina 2ClickShop (kategorie, produkty, klienci, blogi)
 // @author       SyncOffer
 // @match        https://noblelashes.pl/admin/*
@@ -58,17 +58,43 @@
     }
     #tcm-panel.open { right: 0; }
     #tcm-header {
-      padding: 16px 20px;
-      background: linear-gradient(135deg, #1e3a8a, #3b82f6);
+      padding: 14px 16px;
+      background-image: url('https://noblelashes.pl/admin/template/shop/images/head_l.png');
+      background-repeat: repeat-x;
+      background-position: left center;
+      background-color: #2b2b2b;
       color: #fff;
       display: flex;
       justify-content: space-between;
       align-items: center;
+      gap: 12px;
+      min-height: 48px;
     }
-    #tcm-header h2 { margin: 0; font-size: 16px; font-weight: 600; }
+    #tcm-header-left {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+      flex: 1;
+      min-width: 0;
+    }
+    #tcm-logo {
+      height: 28px;
+      width: auto;
+      flex-shrink: 0;
+    }
+    #tcm-header h2 {
+      margin: 0;
+      font-size: 14px;
+      font-weight: 600;
+      color: #fff;
+      text-shadow: 0 1px 2px rgba(0,0,0,0.5);
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+    }
     #tcm-close {
-      background: rgba(255,255,255,0.2);
-      border: none;
+      background: rgba(0,0,0,0.35);
+      border: 1px solid rgba(255,255,255,0.2);
       color: #fff;
       width: 28px;
       height: 28px;
@@ -76,8 +102,9 @@
       cursor: pointer;
       font-size: 18px;
       line-height: 1;
+      flex-shrink: 0;
     }
-    #tcm-close:hover { background: rgba(255,255,255,0.35); }
+    #tcm-close:hover { background: rgba(0,0,0,0.55); }
     #tcm-breadcrumb {
       padding: 8px 20px;
       background: #e2e8f0;
@@ -446,7 +473,14 @@
     const handle = el('div', { id: 'tcm-handle', title: '2ClickShop Migrator' }, '2ClickShop Migrator');
     const panel = el('div', { id: 'tcm-panel' });
     const header = el('div', { id: 'tcm-header' }, [
-      el('h2', {}, '2ClickShop Migrator'),
+      el('div', { id: 'tcm-header-left' }, [
+        el('img', {
+          id: 'tcm-logo',
+          src: 'https://noblelashes.pl/admin/template/shop/images/logo.png',
+          alt: 'logo',
+        }),
+        el('h2', {}, '2ClickShop Migrator'),
+      ]),
       el('button', { id: 'tcm-close', onClick: () => panel.classList.remove('open') }, '×'),
     ]);
     const breadcrumb = el('div', { id: 'tcm-breadcrumb' });
