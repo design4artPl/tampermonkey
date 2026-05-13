@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         2ClickShop Migrator
 // @namespace    https://noblelashes.pl/
-// @version      1.8
+// @version      1.9
 // @description  Panel boczny do scrapowania i eksportu danych z panelu admina 2ClickShop (kategorie, produkty, klienci, blogi)
 // @author       SyncOffer
 // @match        https://noblelashes.pl/admin/*
@@ -420,7 +420,9 @@
     progress.appendChild(box);
 
     const all = [];
+    const seenIds = new Set();
     const maxPages = 100;
+    let lastPage = 0;
     try {
       for (let p = 1; p <= maxPages; p++) {
         label.textContent = `Pobieranie strony ${p}...`;
@@ -430,11 +432,15 @@
         const doc = new DOMParser().parseFromString(html, 'text/html');
         const rows = doc.querySelectorAll("tr[id^='news_']");
         if (rows.length === 0) break;
+
+        const pageNew = [];
         rows.forEach(tr => {
           const id = tr.id.replace('news_', '');
+          if (seenIds.has(id)) return;
           const tds = tr.querySelectorAll('td');
           if (tds.length < 3) return;
-          all.push({
+          seenIds.add(id);
+          pageNew.push({
             id,
             order: tds[0]?.textContent.trim().replace('.', '') || '',
             name: tds[1]?.textContent.trim().slice(0, 200) || '',
@@ -442,10 +448,15 @@
             category: tds[4]?.textContent.trim() || '',
           });
         });
+
+        // Brak nowych wpisów = ta sama strona co poprzednia (panel zwraca ostatnią przy przekroczeniu) → koniec
+        if (pageNew.length === 0) break;
+        all.push(...pageNew);
+        lastPage = p;
         fill.style.width = Math.min(p * 5, 95) + '%';
       }
       fill.style.width = '100%';
-      label.textContent = `✓ Pobrano ${all.length} wpisów`;
+      label.textContent = `✓ Pobrano ${all.length} wpisów z ${lastPage} stron`;
       state.blogList = all;
       GM_setValue('tcm_blogList', all);
       setTimeout(renderBlogs, 600);
