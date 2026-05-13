@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         2ClickShop Migrator
 // @namespace    https://noblelashes.pl/
-// @version      1.17
+// @version      1.18
 // @description  Panel boczny do scrapowania i eksportu danych z panelu admina 2ClickShop (kategorie, produkty, klienci, blogi)
 // @author       SyncOffer
 // @match        https://noblelashes.pl/admin/*
@@ -193,6 +193,15 @@
     .tcm-btn-sm { padding: 4px 8px; font-size: 12px; }
     .tcm-btn:disabled { opacity: 0.5; cursor: not-allowed; }
     .tcm-actions { display: flex; gap: 8px; flex-wrap: wrap; margin-bottom: 16px; }
+    .tcm-info {
+      background: #eff6ff;
+      border: 1px solid #bfdbfe;
+      color: #1e40af;
+      padding: 8px 12px;
+      border-radius: 6px;
+      font-size: 12px;
+      margin-bottom: 16px;
+    }
     .tcm-lang-switch {
       display: flex;
       gap: 4px;
@@ -506,22 +515,39 @@
     });
     wrap.appendChild(langSwitch);
 
-    // Actions - jeden przycisk pobiera wszystko
+    // Actions
     wrap.appendChild(el('div', { class: 'tcm-section-title' }, 'Akcje'));
     const actions = el('div', { class: 'tcm-actions' });
     const detailsCount = Object.keys(state.blogDetails).length;
-    const expectedTotal = state.blogStats
-      ? Math.max(...BLOG_LANGS.map(l => (state.blogStats[l]?.approxCount) || 0))
+    const langStat = state.blogStats && state.blogStats[state.blogLang];
+    const langApprox = langStat ? langStat.approxCount : 0;
+    const allApprox = state.blogStats
+      ? BLOG_LANGS.reduce((s, l) => s + ((state.blogStats[l]?.approxCount) || 0), 0)
       : 0;
 
     actions.appendChild(el('button', {
       class: 'tcm-btn',
       style: { background: '#944149' },
-      onClick: scrapeBlogAll,
-    }, detailsCount > 0
-      ? `Aktualizuj wpisy (${detailsCount} pobranych)`
-      : (expectedTotal ? `Pobierz wpisy (~${expectedTotal})` : 'Pobierz wpisy')));
-    wrap.appendChild(actions);
+      onClick: () => scrapeBlogAll(state.blogLang),
+    }, langApprox
+      ? `Pobierz wpisy ${state.blogLang.toUpperCase()} (~${langApprox})`
+      : `Pobierz wpisy ${state.blogLang.toUpperCase()}`));
+
+    actions.appendChild(el('button', {
+      class: 'tcm-btn tcm-btn-secondary',
+      onClick: () => scrapeBlogAll('__all__'),
+    }, allApprox
+      ? `Pobierz wpisy wszystkich języków (~${allApprox} łącznie)`
+      : 'Pobierz wpisy wszystkich języków'));
+
+    if (detailsCount > 0) {
+      const statusInfo = el('div', { class: 'tcm-info' },
+        `Pobrane pełne dane: ${detailsCount} wpisów`);
+      wrap.appendChild(actions);
+      wrap.appendChild(statusInfo);
+    } else {
+      wrap.appendChild(actions);
+    }
 
     // Export row
     const exports = el('div', { class: 'tcm-actions' });
@@ -668,49 +694,29 @@
   }
 
   function detectTotalPages(doc) {
-    let max = 1;
-    // Wzorzec 1: dowolne linki/elementy z page=N w href, onclick, data-href
-    const allAttrs = ['href', 'onclick', 'data-href', 'data-url', 'action'];
-    doc.querySelectorAll('a, button, [onclick], form, [data-href], [data-url]').forEach(e => {
-      allAttrs.forEach(attr => {
-        const v = e.getAttribute(attr);
-        if (!v) return;
-        const matches = v.matchAll(/[?&]?page=(\d+)/g);
-        for (const m of matches) {
-          const n = parseInt(m[1], 10);
-          if (n > max && n < 10000) max = n;
+    // 2ClickShop używa select[name="page"] z opcjami 1..N do paginacji.
+    // Inne selecty (np. per_page) mogą zawierać liczby ale nie reprezentują stron.
+    const sel = doc.querySelector('select[name="page"]');
+    if (sel) {
+      let max = 1;
+      sel.querySelectorAll('option').forEach(opt => {
+        const v = opt.value || '';
+        if (/^\d+$/.test(v)) {
+          const n = parseInt(v, 10);
+          if (n > max) max = n;
         }
       });
-    });
-    // Wzorzec 2: select option value z liczbą stron
-    doc.querySelectorAll('select option').forEach(opt => {
-      const v = opt.value || '';
-      if (/^\d+$/.test(v)) {
-        const n = parseInt(v, 10);
+      if (max > 1) return max;
+    }
+    // Fallback: linki z page=N (zazwyczaj jest tylko Następna page=2, więc to słabe źródło)
+    let max = 1;
+    doc.querySelectorAll('a[href*="page="]').forEach(a => {
+      const m = a.getAttribute('href').match(/[?&]page=(\d+)/);
+      if (m) {
+        const n = parseInt(m[1], 10);
         if (n > max && n < 10000) max = n;
       }
     });
-    // Wzorzec 3: data-page attribute
-    doc.querySelectorAll('[data-page]').forEach(e => {
-      const n = parseInt(e.getAttribute('data-page'), 10);
-      if (n > max && n < 10000) max = n;
-    });
-    // Wzorzec 4: tekst "X z Y" / "X of Y" / "X / Y stron"
-    const text = (doc.body ? doc.body.textContent : '');
-    const patterns = [
-      /strona\s+\d+\s+z\s+(\d+)/i,
-      /\bz\s+(\d+)\s+stron/i,
-      /page\s+\d+\s+of\s+(\d+)/i,
-      /(\d+)\s+strona/i,
-      /Łącznie[:\s]+(\d+)/i,
-    ];
-    for (const p of patterns) {
-      const m = text.match(p);
-      if (m) {
-        const n = parseInt(m[1], 10);
-        if (n > max && n < 100000) max = n;
-      }
-    }
     return max;
   }
 
@@ -750,7 +756,7 @@
 
   function buildBlogUrl(page, lang) {
     let url = `/admin/index.php?k=news&w=blog&page=${page}`;
-    if (lang && lang !== 'pl') url += `&jezyk=${lang}`;
+    if (lang && lang !== 'pl') url += `&lang=${lang}`;
     return url;
   }
 
@@ -965,12 +971,16 @@
     return data;
   }
 
-  // Łączone: zbierz wszystkie ID z paginowanej listy PL, potem pełne dane per ID
-  async function scrapeBlogAll() {
+  // Pobierz wpisy: dla jednego języka lub union ze wszystkich
+  // sourceLang = 'pl'|'en'|...|'__all__'
+  async function scrapeBlogAll(sourceLang) {
+    sourceLang = sourceLang || state.blogLang;
+    const langs = sourceLang === '__all__' ? BLOG_LANGS : [sourceLang];
+
     const progress = document.getElementById('tcm-blog-progress');
     progress.innerHTML = '';
     const box = el('div', { class: 'tcm-progress' });
-    const label = el('div', {}, 'Wykrywanie liczby stron...');
+    const label = el('div', {}, 'Zbieranie ID-ków...');
     const bar = el('div', { class: 'tcm-progress-bar' });
     const fill = el('div', { class: 'tcm-progress-fill', style: { width: '0%' } });
     bar.appendChild(fill);
@@ -979,27 +989,15 @@
     progress.appendChild(box);
 
     try {
-      // Etap 1: zbieranie ID-ków z listy PL (paginowanej)
-      const res1 = await fetch(buildBlogUrl(1, 'pl'), { credentials: 'include' });
-      const html1 = await res1.text();
-      const doc1 = new DOMParser().parseFromString(html1, 'text/html');
-      const rowsOnFirst = doc1.querySelectorAll("tr[id^='news_']").length;
-      let totalPages = detectTotalPages(doc1);
-      if (totalPages <= 2 && rowsOnFirst >= 10) {
-        label.textContent = 'Szukanie ostatniej strony (binary jump)...';
-        totalPages = await findLastBlogPage('pl', doc1);
-      }
-
       const idsSet = new Set();
-      const basicList = [];
-      const parseRows = (doc) => {
+
+      const parseRowsInto = (doc, perLangList) => {
         doc.querySelectorAll("tr[id^='news_']").forEach(tr => {
           const id = tr.id.replace('news_', '');
-          if (idsSet.has(id)) return;
           const tds = tr.querySelectorAll('td');
           if (tds.length < 3) return;
-          idsSet.add(id);
-          basicList.push({
+          if (!idsSet.has(id)) idsSet.add(id);
+          perLangList.push({
             id,
             order: tds[0]?.textContent.trim().replace('.', '') || '',
             name: tds[1]?.textContent.trim().slice(0, 200) || '',
@@ -1008,24 +1006,59 @@
           });
         });
       };
-      parseRows(doc1);
 
-      for (let p = 2; p <= totalPages; p++) {
-        label.textContent = `Lista ID-ków: strona ${p}/${totalPages}...`;
-        const res = await fetch(buildBlogUrl(p, 'pl'), { credentials: 'include' });
-        const html = await res.text();
-        const doc = new DOMParser().parseFromString(html, 'text/html');
-        const before = idsSet.size;
-        parseRows(doc);
-        if (idsSet.size === before) break;
-        fill.style.width = (p / totalPages * 20) + '%'; // pierwsze 20% to ID-ki
+      // Etap 1: zbieranie ID-ków z list (jednego lub wszystkich języków)
+      for (let i = 0; i < langs.length; i++) {
+        const lang = langs[i];
+        label.textContent = `Lista ${lang.toUpperCase()}: wykrywanie liczby stron...`;
+        const res1 = await fetch(buildBlogUrl(1, lang), { credentials: 'include' });
+        const html1 = await res1.text();
+        const doc1 = new DOMParser().parseFromString(html1, 'text/html');
+        const rowsOnFirst = doc1.querySelectorAll("tr[id^='news_']").length;
+        let totalPages = detectTotalPages(doc1);
+        if (totalPages <= 1 && rowsOnFirst >= 10) {
+          totalPages = await findLastBlogPage(lang, doc1);
+        }
+
+        const perLangList = [];
+        const seenInLang = new Set();
+        const captureRow = (doc) => {
+          doc.querySelectorAll("tr[id^='news_']").forEach(tr => {
+            const id = tr.id.replace('news_', '');
+            if (seenInLang.has(id)) return;
+            seenInLang.add(id);
+            idsSet.add(id);
+            const tds = tr.querySelectorAll('td');
+            perLangList.push({
+              id,
+              order: tds[0]?.textContent.trim().replace('.', '') || '',
+              name: tds[1]?.textContent.trim().slice(0, 200) || '',
+              key: tds[2]?.textContent.trim() || '',
+              category: tds[4]?.textContent.trim() || '',
+            });
+          });
+        };
+        captureRow(doc1);
+
+        for (let p = 2; p <= totalPages; p++) {
+          label.textContent = `Lista ${lang.toUpperCase()}: strona ${p}/${totalPages}...`;
+          const res = await fetch(buildBlogUrl(p, lang), { credentials: 'include' });
+          const html = await res.text();
+          const doc = new DOMParser().parseFromString(html, 'text/html');
+          const before = seenInLang.size;
+          captureRow(doc);
+          if (seenInLang.size === before) break;
+        }
+        state.blogData[lang] = perLangList;
+        GM_setValue('tcm_blogData', state.blogData);
+
+        // Pasek po etapie 1: pierwsze 20% podzielone proporcjonalnie między języki
+        fill.style.width = ((i + 1) / langs.length * 20) + '%';
       }
-      state.blogData.pl = basicList;
-      GM_setValue('tcm_blogData', state.blogData);
 
       const ids = Array.from(idsSet).sort((a, b) => parseInt(a) - parseInt(b));
 
-      // Etap 2: pełne dane per ID (popup + SEO)
+      // Etap 2: pełne dane per ID (popup + SEO) - wszystkie 7 języków na raz
       let done = 0, errors = 0;
       for (const id of ids) {
         done++;
@@ -1042,7 +1075,10 @@
       }
       GM_setValue('tcm_blogDetails', state.blogDetails);
       fill.style.width = '100%';
-      label.textContent = `✓ Pobrano ${done - errors}/${ids.length} wpisów (błędów: ${errors})`;
+      const label2 = `✓ Pobrano ${done - errors}/${ids.length} wpisów`
+        + ` (źródło: ${sourceLang === '__all__' ? 'wszystkie języki' : sourceLang.toUpperCase()},`
+        + ` błędów: ${errors})`;
+      label.textContent = label2;
       setTimeout(renderBlogs, 800);
     } catch (e) {
       label.textContent = '✗ Błąd: ' + e.message;
