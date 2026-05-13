@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         2ClickShop Migrator
 // @namespace    https://noblelashes.pl/
-// @version      1.15
+// @version      1.16
 // @description  Panel boczny do scrapowania i eksportu danych z panelu admina 2ClickShop (kategorie, produkty, klienci, blogi)
 // @author       SyncOffer
 // @match        https://noblelashes.pl/admin/*
@@ -506,37 +506,21 @@
     });
     wrap.appendChild(langSwitch);
 
-    // Actions
+    // Actions - jeden przycisk pobiera wszystko
     wrap.appendChild(el('div', { class: 'tcm-section-title' }, 'Akcje'));
     const actions = el('div', { class: 'tcm-actions' });
-    const currentHas = blogListForCurrentLang().length > 0;
-    const plIds = (state.blogData.pl || []).map(b => b.id);
     const detailsCount = Object.keys(state.blogDetails).length;
+    const expectedTotal = state.blogStats
+      ? Math.max(...BLOG_LANGS.map(l => (state.blogStats[l]?.approxCount) || 0))
+      : 0;
 
     actions.appendChild(el('button', {
       class: 'tcm-btn',
-      onClick: () => scrapeBlogList(state.blogLang),
-    }, currentHas ? `Pobierz ponownie listę (${state.blogLang.toUpperCase()})` : `Pobierz listę (${state.blogLang.toUpperCase()})`));
-
-    actions.appendChild(el('button', {
-      class: 'tcm-btn tcm-btn-secondary',
-      onClick: scrapeAllLangLists,
-    }, 'Pobierz listy wszystkich języków'));
-
-    // Union ID-ków ze wszystkich list językowych
-    const allIdsSet = new Set();
-    BLOG_LANGS.forEach(l => (state.blogData[l] || []).forEach(b => allIdsSet.add(b.id)));
-    const allIdsCount = allIdsSet.size;
-
-    if (allIdsCount > 0) {
-      actions.appendChild(el('button', {
-        class: 'tcm-btn',
-        style: { background: '#944149' },
-        onClick: scrapeBlogDetails,
-      }, detailsCount > 0
-        ? `Aktualizuj pełne dane (${detailsCount}/${allIdsCount}, wszystkie języki)`
-        : `Pobierz pełne dane (${allIdsCount} wpisów, wszystkie języki)`));
-    }
+      style: { background: '#944149' },
+      onClick: scrapeBlogAll,
+    }, detailsCount > 0
+      ? `Aktualizuj wpisy (${detailsCount} pobranych)`
+      : (expectedTotal ? `Pobierz wpisy (~${expectedTotal})` : 'Pobierz wpisy')));
     wrap.appendChild(actions);
 
     // Export row
@@ -906,6 +890,85 @@
     }
 
     return data;
+  }
+
+  // Łączone: zbierz wszystkie ID z paginowanej listy PL, potem pełne dane per ID
+  async function scrapeBlogAll() {
+    const progress = document.getElementById('tcm-blog-progress');
+    progress.innerHTML = '';
+    const box = el('div', { class: 'tcm-progress' });
+    const label = el('div', {}, 'Wykrywanie liczby stron...');
+    const bar = el('div', { class: 'tcm-progress-bar' });
+    const fill = el('div', { class: 'tcm-progress-fill', style: { width: '0%' } });
+    bar.appendChild(fill);
+    box.appendChild(label);
+    box.appendChild(bar);
+    progress.appendChild(box);
+
+    try {
+      // Etap 1: zbieranie ID-ków z listy PL (paginowanej)
+      const res1 = await fetch(buildBlogUrl(1, 'pl'), { credentials: 'include' });
+      const html1 = await res1.text();
+      const doc1 = new DOMParser().parseFromString(html1, 'text/html');
+      const totalPages = detectTotalPages(doc1);
+
+      const idsSet = new Set();
+      const basicList = [];
+      const parseRows = (doc) => {
+        doc.querySelectorAll("tr[id^='news_']").forEach(tr => {
+          const id = tr.id.replace('news_', '');
+          if (idsSet.has(id)) return;
+          const tds = tr.querySelectorAll('td');
+          if (tds.length < 3) return;
+          idsSet.add(id);
+          basicList.push({
+            id,
+            order: tds[0]?.textContent.trim().replace('.', '') || '',
+            name: tds[1]?.textContent.trim().slice(0, 200) || '',
+            key: tds[2]?.textContent.trim() || '',
+            category: tds[4]?.textContent.trim() || '',
+          });
+        });
+      };
+      parseRows(doc1);
+
+      for (let p = 2; p <= totalPages; p++) {
+        label.textContent = `Lista ID-ków: strona ${p}/${totalPages}...`;
+        const res = await fetch(buildBlogUrl(p, 'pl'), { credentials: 'include' });
+        const html = await res.text();
+        const doc = new DOMParser().parseFromString(html, 'text/html');
+        const before = idsSet.size;
+        parseRows(doc);
+        if (idsSet.size === before) break;
+        fill.style.width = (p / totalPages * 20) + '%'; // pierwsze 20% to ID-ki
+      }
+      state.blogData.pl = basicList;
+      GM_setValue('tcm_blogData', state.blogData);
+
+      const ids = Array.from(idsSet).sort((a, b) => parseInt(a) - parseInt(b));
+
+      // Etap 2: pełne dane per ID (popup + SEO)
+      let done = 0, errors = 0;
+      for (const id of ids) {
+        done++;
+        label.textContent = `Pełne dane ${done}/${ids.length} (id=${id})...`;
+        try {
+          const d = await scrapeBlogPostDetail(id);
+          state.blogDetails[id] = d;
+          if (done % 25 === 0) GM_setValue('tcm_blogDetails', state.blogDetails);
+        } catch (e) {
+          errors++;
+          state.blogDetails[id] = { id: String(id), error: e.message };
+        }
+        fill.style.width = (20 + (done / ids.length * 80)) + '%';
+      }
+      GM_setValue('tcm_blogDetails', state.blogDetails);
+      fill.style.width = '100%';
+      label.textContent = `✓ Pobrano ${done - errors}/${ids.length} wpisów (błędów: ${errors})`;
+      setTimeout(renderBlogs, 800);
+    } catch (e) {
+      label.textContent = '✗ Błąd: ' + e.message;
+    }
   }
 
   async function scrapeBlogDetails() {
