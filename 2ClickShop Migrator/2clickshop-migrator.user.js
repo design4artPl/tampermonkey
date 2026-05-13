@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         2ClickShop Migrator
 // @namespace    https://noblelashes.pl/
-// @version      1.10
+// @version      1.11
 // @description  Panel boczny do scrapowania i eksportu danych z panelu admina 2ClickShop (kategorie, produkty, klienci, blogi)
 // @author       SyncOffer
 // @match        https://noblelashes.pl/admin/*
@@ -291,10 +291,21 @@
   // =========================================================================
   const BLOG_LANGS = ['pl', 'en', 'de', 'ua', 'cz', 'pt', 'fr'];
   const BLOG_PAGE_SIZE = 25;
+  const BLOG_DOMAINS = {
+    pl: 'https://noblelashes.pl',
+    en: 'https://noblelashes.eu',
+    de: 'https://noble-lashes.de',
+    ua: 'https://noblelashes.com.ua',
+    cz: 'https://noblelashes.cz',
+    pt: 'https://noblelashes.pl',
+    fr: 'https://noblelashes.pl',
+  };
+  const LANG_CLASS_MAP = {pl:'pl_PL', en:'en_EN', de:'de_DE', ua:'ua_UA', cz:'cz_CZ', pt:'pt_PT', fr:'fr_FR'};
 
   const state = {
     currentView: 'menu',
     blogData: GM_getValue('tcm_blogData', {}),
+    blogDetails: GM_getValue('tcm_blogDetails', {}),
     blogLang: 'pl',
     blogPage: 1,
   };
@@ -432,27 +443,55 @@
     wrap.appendChild(el('div', { class: 'tcm-section-title' }, 'Akcje'));
     const actions = el('div', { class: 'tcm-actions' });
     const currentHas = blogListForCurrentLang().length > 0;
+    const plIds = (state.blogData.pl || []).map(b => b.id);
+    const detailsCount = Object.keys(state.blogDetails).length;
+
     actions.appendChild(el('button', {
       class: 'tcm-btn',
       onClick: () => scrapeBlogList(state.blogLang),
-    }, currentHas ? `Pobierz ponownie (${state.blogLang.toUpperCase()})` : `Pobierz listę (${state.blogLang.toUpperCase()})`));
-    actions.appendChild(el('button', {
-      class: 'tcm-btn tcm-btn-secondary',
-      onClick: exportBlogListJSON,
-    }, 'Eksport JSON'));
-    if (Object.keys(state.blogData).length > 0) {
+    }, currentHas ? `Pobierz ponownie listę (${state.blogLang.toUpperCase()})` : `Pobierz listę (${state.blogLang.toUpperCase()})`));
+
+    if (plIds.length > 0) {
       actions.appendChild(el('button', {
-        class: 'tcm-btn tcm-btn-secondary',
-        onClick: clearBlogList,
-      }, 'Wyczyść wszystko'));
+        class: 'tcm-btn',
+        style: { background: '#944149' },
+        onClick: scrapeBlogDetails,
+      }, detailsCount > 0 ? `Aktualizuj pełne dane (${detailsCount}/${plIds.length})` : `Pobierz pełne dane (${plIds.length} wpisów)`));
     }
     wrap.appendChild(actions);
+
+    // Export row
+    const exports = el('div', { class: 'tcm-actions' });
+    exports.appendChild(el('button', { class: 'tcm-btn tcm-btn-secondary', onClick: () => exportBlog('json') }, 'JSON'));
+    exports.appendChild(el('button', { class: 'tcm-btn tcm-btn-secondary', onClick: () => exportBlog('csv') }, 'CSV'));
+    exports.appendChild(el('button', { class: 'tcm-btn tcm-btn-secondary', onClick: () => exportBlog('xml') }, 'XML'));
+    if (Object.keys(state.blogData).length > 0 || detailsCount > 0) {
+      exports.appendChild(el('button', {
+        class: 'tcm-btn tcm-btn-secondary',
+        onClick: clearBlogList,
+      }, 'Wyczyść'));
+    }
+    wrap.appendChild(exports);
 
     const progress = el('div', { id: 'tcm-blog-progress' });
     wrap.appendChild(progress);
 
-    // List for current language
-    const list = blogListForCurrentLang();
+    // List for current language - prefer details if available
+    const lang = state.blogLang;
+    const detailsArr = Object.values(state.blogDetails);
+    let list;
+    let usingDetails = false;
+    if (detailsArr.length > 0) {
+      list = detailsArr.map(d => ({
+        id: d.id,
+        name: (d.name && d.name[lang]) || (d.name && d.name.pl) || '(brak)',
+        key: (d.key && d.key[lang]) || '',
+        category: (d.categories && d.categories[0] && d.categories[0][lang]) || (d.sub || ''),
+      })).sort((a, b) => parseInt(a.id) - parseInt(b.id));
+      usingDetails = true;
+    } else {
+      list = blogListForCurrentLang();
+    }
     if (list.length === 0) {
       wrap.appendChild(el('div', { class: 'tcm-empty' }, `Brak danych dla języka ${state.blogLang.toUpperCase()}. Kliknij "Pobierz listę" aby pobrać.`));
     } else {
@@ -461,7 +500,7 @@
       const start = (cur - 1) * BLOG_PAGE_SIZE;
       const end = Math.min(start + BLOG_PAGE_SIZE, list.length);
       wrap.appendChild(el('div', { class: 'tcm-section-title' },
-        `Lista (${list.length} wpisów, strona ${cur}/${totalPages})`));
+        `Lista ${usingDetails ? '(pełne dane)' : '(podstawowe)'} – ${list.length} wpisów, strona ${cur}/${totalPages}`));
       const listEl = el('div', { class: 'tcm-list' });
       list.slice(start, end).forEach(b => {
         listEl.appendChild(el('div', { class: 'tcm-list-item' }, [
@@ -579,25 +618,384 @@
     }
   }
 
-  function exportBlogListJSON() {
-    const list = blogListForCurrentLang();
-    if (!list.length) {
-      alert(`Brak danych dla ${state.blogLang.toUpperCase()}.`);
+  // -------------------------------------------------------------------------
+  // Scrape pełnych detali per wpis (popup edycji + popup SEO)
+  // -------------------------------------------------------------------------
+  async function scrapeBlogPostDetail(id) {
+    const data = { id: String(id) };
+
+    // Popup edycji
+    const r1 = await fetch(`/admin/popup.php?k=news&w=blog&id=${id}`, { credentials: 'include' });
+    const html1 = await r1.text();
+    const doc = new DOMParser().parseFromString(html1, 'text/html');
+
+    const val = n => {
+      const e = doc.querySelector(`input[name="${n}"],textarea[name="${n}"]`);
+      return e ? e.value : '';
+    };
+    const chk = n => {
+      const e = doc.querySelector(`input[name="${n}"]`);
+      return e ? e.checked : false;
+    };
+    const sel = n => {
+      const e = doc.querySelector(`select[name="${n}"]`);
+      if (!e) return '';
+      const opt = e.options[e.selectedIndex];
+      return opt ? opt.textContent.trim() : '';
+    };
+
+    data.author = val('author');
+    data.date = val('date');
+    data.sub = sel('sub');
+    data.name = {}; data.key = {}; data.desc = {}; data.link = {};
+    data.visible = {}; data.visible_slider = {};
+    data.photo_icon = {};
+    data.photo_banner = '';
+
+    BLOG_LANGS.forEach(lang => {
+      data.name[lang] = val(`name_${lang}`);
+      data.key[lang] = val(`key_${lang}`);
+      let desc = val(`desc_${lang}`);
+      // Zamień względne URL-e na bezwzględne
+      if (desc) {
+        desc = desc.replace(/(src=["'])(\/?)(?!https?:\/\/)(files\/|images\/|template\/)/g,
+          `$1${BLOG_DOMAINS.pl}/$3`);
+      }
+      data.desc[lang] = desc;
+      data.visible[lang] = chk(`visible_${lang}`);
+      data.visible_slider[lang] = chk(`visible_blogSlider_${lang}`);
+      if (data.key[lang]) {
+        data.link[lang] = `${BLOG_DOMAINS[lang]}/blog/${data.key[lang]}.html`;
+      }
+    });
+
+    // Kategorie - per język ze spanów lang_field
+    data.categories = [];
+    doc.querySelectorAll('input[name="news_category[]"]').forEach(cb => {
+      if (!cb.checked) return;
+      const container = cb.closest('tr, div, li') || cb.parentElement;
+      const item = {};
+      BLOG_LANGS.forEach(lang => {
+        const cls = LANG_CLASS_MAP[lang];
+        let span = null;
+        container.querySelectorAll('span.lang_field, span[class*="lang_field"]').forEach(s => {
+          if (s.className.includes(cls)) span = s;
+        });
+        item[lang] = span ? span.textContent.trim() : '';
+      });
+      if (!item.pl) {
+        const plSpan = container.querySelector('.pl_PL');
+        item.pl = plSpan ? plSpan.textContent.trim() : cb.value;
+      }
+      data.categories.push(item);
+    });
+
+    // Zdjęcia
+    doc.querySelectorAll('img').forEach(img => {
+      const src = img.src || '';
+      if (!src.includes('news') && !src.includes('blog')) return;
+      if (src.includes('fotob')) { data.photo_banner = src; return; }
+      BLOG_LANGS.forEach(lang => {
+        if (src.includes(`foto-${lang}.`) || src.includes(`foto_${lang}.`)) {
+          data.photo_icon[lang] = src;
+        }
+      });
+    });
+
+    // Załączniki - próba różnych wzorców 2ClickShop
+    data.attachments = [];
+    // Wzorzec 1: input[name^="files"] z indeksem
+    const fileInputs = {};
+    doc.querySelectorAll('input[name^="files"], input[name^="attachment"], input[name^="zalacznik"]').forEach(inp => {
+      const m = inp.name.match(/^(?:files|attachment|zalacznik)\[?(\d+)\]?(?:\[(.*?)\])?(?:\[(.*?)\])?/);
+      if (!m) return;
+      const idx = m[1] || '0';
+      const key = m[2] || 'value';
+      const lang = m[3] || '';
+      fileInputs[idx] = fileInputs[idx] || {};
+      if (lang) {
+        fileInputs[idx][key] = fileInputs[idx][key] || {};
+        fileInputs[idx][key][lang] = inp.value;
+      } else {
+        fileInputs[idx][key] = inp.value;
+      }
+    });
+    Object.values(fileInputs).forEach(f => {
+      if (f.name || f.url || f.file) data.attachments.push(f);
+    });
+    // Wzorzec 2: <tr class="file"> lub linki do plików w sekcji "Załączniki"
+    doc.querySelectorAll('a[href*="/news/"][href*="/files/"], a[href*="files.php"]').forEach(a => {
+      const href = a.href;
+      if (!data.attachments.some(x => JSON.stringify(x).includes(href))) {
+        data.attachments.push({ url: { pl: href }, name: { pl: a.textContent.trim() } });
+      }
+    });
+
+    // Popup SEO
+    try {
+      const r2 = await fetch(`/admin/popup.php?k=seo&key=news_${id}&no_parent_refresh`, { credentials: 'include' });
+      const html2 = await r2.text();
+      const seoDoc = new DOMParser().parseFromString(html2, 'text/html');
+      const sVal = n => {
+        const e = seoDoc.querySelector(`input[name="${n}"],textarea[name="${n}"]`);
+        return e ? e.value : '';
+      };
+      const sChk = n => {
+        const e = seoDoc.querySelector(`input[name="${n}"]`);
+        return e ? e.checked : false;
+      };
+      data.seo = {};
+      BLOG_LANGS.forEach(lang => {
+        data.seo[lang] = {
+          title: sVal(`seo[${lang}][title]`),
+          description: sVal(`seo[${lang}][description]`),
+          keywords: sVal(`seo[${lang}][keywords]`),
+          noindex: sChk(`seo[${lang}][noindex]`),
+        };
+      });
+    } catch (e) {
+      data.seo_error = e.message;
+    }
+
+    return data;
+  }
+
+  async function scrapeBlogDetails() {
+    const ids = (state.blogData.pl || []).map(b => b.id);
+    if (!ids.length) {
+      alert('Najpierw pobierz listę PL.');
       return;
     }
-    const blob = new Blob([JSON.stringify(list, null, 2)], { type: 'application/json' });
+    if (!confirm(`Pobrać pełne dane dla ${ids.length} wpisów? Każdy wpis = 2 requesty (popup + SEO). Może potrwać kilka minut.`)) return;
+
+    const progress = document.getElementById('tcm-blog-progress');
+    progress.innerHTML = '';
+    const box = el('div', { class: 'tcm-progress' });
+    const label = el('div', {}, `Pobieranie detali 0/${ids.length}...`);
+    const bar = el('div', { class: 'tcm-progress-bar' });
+    const fill = el('div', { class: 'tcm-progress-fill', style: { width: '0%' } });
+    bar.appendChild(fill);
+    box.appendChild(label);
+    box.appendChild(bar);
+    progress.appendChild(box);
+
+    let done = 0, errors = 0;
+    for (const id of ids) {
+      done++;
+      label.textContent = `Pobieranie detali ${done}/${ids.length} (id=${id})...`;
+      try {
+        const d = await scrapeBlogPostDetail(id);
+        state.blogDetails[id] = d;
+        // Autosave co 25
+        if (done % 25 === 0) GM_setValue('tcm_blogDetails', state.blogDetails);
+      } catch (e) {
+        errors++;
+        state.blogDetails[id] = { id: String(id), error: e.message };
+      }
+      fill.style.width = (done / ids.length * 100) + '%';
+    }
+    GM_setValue('tcm_blogDetails', state.blogDetails);
+    label.textContent = `✓ Pobrano detale ${done - errors}/${ids.length} (błędów: ${errors})`;
+    setTimeout(renderBlogs, 800);
+  }
+
+  // -------------------------------------------------------------------------
+  // Eksport: JSON / CSV / XML
+  // -------------------------------------------------------------------------
+  function exportBlog(format) {
+    const detailsArr = Object.values(state.blogDetails).sort((a, b) =>
+      parseInt(a.id) - parseInt(b.id));
+    const ts = new Date().toISOString().slice(0, 10);
+
+    let blob, ext;
+    if (detailsArr.length > 0) {
+      // Eksport pełnych detali
+      if (format === 'json') {
+        blob = new Blob([JSON.stringify(detailsArr, null, 2)], { type: 'application/json' });
+        ext = 'json';
+      } else if (format === 'csv') {
+        blob = new Blob(['﻿' + blogToCSV(detailsArr)], { type: 'text/csv;charset=utf-8' });
+        ext = 'csv';
+      } else if (format === 'xml') {
+        blob = new Blob([blogToXML(detailsArr)], { type: 'application/xml' });
+        ext = 'xml';
+      }
+    } else {
+      // Fallback: eksport podstawowej listy bieżącego języka
+      const list = blogListForCurrentLang();
+      if (!list.length) { alert('Brak danych do eksportu.'); return; }
+      if (format === 'json') {
+        blob = new Blob([JSON.stringify(list, null, 2)], { type: 'application/json' });
+        ext = 'json';
+      } else if (format === 'csv') {
+        const cols = ['id', 'order', 'name', 'key', 'category'];
+        const rows = [cols.join(';')].concat(
+          list.map(b => cols.map(c => csvCell(b[c])).join(';'))
+        );
+        blob = new Blob(['﻿' + rows.join('\n')], { type: 'text/csv;charset=utf-8' });
+        ext = 'csv';
+      } else if (format === 'xml') {
+        let xml = '<?xml version="1.0" encoding="UTF-8"?>\n<blogs>\n';
+        list.forEach(b => {
+          xml += `  <blog id="${b.id}">\n`;
+          ['order', 'name', 'key', 'category'].forEach(k => {
+            xml += `    <${k}>${xmlEscape(b[k] || '')}</${k}>\n`;
+          });
+          xml += '  </blog>\n';
+        });
+        xml += '</blogs>\n';
+        blob = new Blob([xml], { type: 'application/xml' });
+        ext = 'xml';
+      }
+    }
     const a = document.createElement('a');
     a.href = URL.createObjectURL(blob);
-    a.download = `blogs_${state.blogLang}_${new Date().toISOString().slice(0, 10)}.json`;
+    a.download = `blogs_${detailsArr.length ? 'full' : state.blogLang}_${ts}.${ext}`;
     a.click();
     URL.revokeObjectURL(a.href);
   }
 
+  function csvCell(v) {
+    if (v === null || v === undefined) return '';
+    const s = String(v).replace(/"/g, '""');
+    return /[;\n"]/.test(s) ? `"${s}"` : s;
+  }
+
+  function xmlEscape(s) {
+    return String(s == null ? '' : s)
+      .replace(/&/g, '&amp;')
+      .replace(/</g, '&lt;')
+      .replace(/>/g, '&gt;')
+      .replace(/"/g, '&quot;');
+  }
+
+  function blogToCSV(arr) {
+    const cols = ['id', 'date', 'author', 'sub', 'photo_banner'];
+    BLOG_LANGS.forEach(l => cols.push(`name_${l}`));
+    BLOG_LANGS.forEach(l => cols.push(`link_${l}`));
+    BLOG_LANGS.forEach(l => cols.push(`key_${l}`));
+    BLOG_LANGS.forEach(l => cols.push(`visible_${l}`));
+    BLOG_LANGS.forEach(l => cols.push(`category_${l}`));
+    BLOG_LANGS.forEach(l => cols.push(`photo_icon_${l}`));
+    BLOG_LANGS.forEach(l => cols.push(`desc_${l}`));
+    BLOG_LANGS.forEach(l => cols.push(`seo_title_${l}`));
+    BLOG_LANGS.forEach(l => cols.push(`seo_description_${l}`));
+    BLOG_LANGS.forEach(l => cols.push(`seo_keywords_${l}`));
+    BLOG_LANGS.forEach(l => cols.push(`seo_noindex_${l}`));
+    BLOG_LANGS.forEach(l => cols.push(`attachments_name_${l}`));
+    BLOG_LANGS.forEach(l => cols.push(`attachments_url_${l}`));
+
+    const lines = [cols.join(';')];
+    arr.forEach(d => {
+      const row = [];
+      const get = k => d[k] || '';
+      cols.forEach(col => {
+        let v = '';
+        if (['id', 'date', 'author', 'sub', 'photo_banner'].includes(col)) {
+          v = get(col);
+        } else {
+          const m = col.match(/^(name|link|key|visible|desc|photo_icon)_(\w+)$/);
+          const m2 = col.match(/^(category)_(\w+)$/);
+          const m3 = col.match(/^seo_(title|description|keywords|noindex)_(\w+)$/);
+          const m4 = col.match(/^attachments_(name|url)_(\w+)$/);
+          if (m) v = (d[m[1]] && d[m[1]][m[2]]) || '';
+          else if (m2) {
+            const lang = m2[2];
+            v = (d.categories || []).map(c => c[lang]).filter(Boolean).join('\n');
+          } else if (m3) {
+            v = (d.seo && d.seo[m3[2]] && d.seo[m3[2]][m3[1]]) || '';
+          } else if (m4) {
+            const lang = m4[2];
+            v = (d.attachments || []).map(a => (a[m4[1]] && a[m4[1]][lang]) || '').filter(Boolean).join('\n');
+          }
+        }
+        row.push(csvCell(v));
+      });
+      lines.push(row.join(';'));
+    });
+    return lines.join('\n');
+  }
+
+  function blogToXML(arr) {
+    let xml = '<?xml version="1.0" encoding="UTF-8"?>\n<blogs>\n';
+    arr.forEach(d => {
+      xml += `  <blog id="${d.id}">\n`;
+      xml += `    <date>${xmlEscape(d.date)}</date>\n`;
+      xml += `    <author>${xmlEscape(d.author)}</author>\n`;
+      xml += `    <sub>${xmlEscape(d.sub)}</sub>\n`;
+      xml += `    <photo_banner>${xmlEscape(d.photo_banner)}</photo_banner>\n`;
+      // Per-lang fields
+      ['name', 'key', 'link', 'visible', 'photo_icon', 'desc'].forEach(field => {
+        if (!d[field]) return;
+        xml += `    <${field}s>\n`;
+        BLOG_LANGS.forEach(lang => {
+          const v = d[field][lang];
+          if (v === undefined || v === '') return;
+          if (field === 'desc') {
+            xml += `      <${field} lang="${lang}"><![CDATA[${v}]]></${field}>\n`;
+          } else {
+            xml += `      <${field} lang="${lang}">${xmlEscape(v)}</${field}>\n`;
+          }
+        });
+        xml += `    </${field}s>\n`;
+      });
+      // Categories
+      xml += `    <categories>\n`;
+      (d.categories || []).forEach(c => {
+        xml += `      <category>\n`;
+        BLOG_LANGS.forEach(lang => {
+          if (c[lang]) xml += `        <name lang="${lang}">${xmlEscape(c[lang])}</name>\n`;
+        });
+        xml += `      </category>\n`;
+      });
+      xml += `    </categories>\n`;
+      // SEO
+      xml += `    <seo>\n`;
+      BLOG_LANGS.forEach(lang => {
+        const s = (d.seo || {})[lang];
+        if (!s) return;
+        xml += `      <lang code="${lang}">\n`;
+        xml += `        <title>${xmlEscape(s.title)}</title>\n`;
+        xml += `        <description>${xmlEscape(s.description)}</description>\n`;
+        xml += `        <keywords>${xmlEscape(s.keywords)}</keywords>\n`;
+        xml += `        <noindex>${s.noindex ? 'true' : 'false'}</noindex>\n`;
+        xml += `      </lang>\n`;
+      });
+      xml += `    </seo>\n`;
+      // Attachments
+      xml += `    <attachments>\n`;
+      (d.attachments || []).forEach(a => {
+        xml += `      <attachment>\n`;
+        if (a.name) {
+          xml += `        <names>\n`;
+          BLOG_LANGS.forEach(lang => {
+            if (a.name[lang]) xml += `          <name lang="${lang}">${xmlEscape(a.name[lang])}</name>\n`;
+          });
+          xml += `        </names>\n`;
+        }
+        if (a.url) {
+          xml += `        <urls>\n`;
+          BLOG_LANGS.forEach(lang => {
+            if (a.url[lang]) xml += `          <url lang="${lang}">${xmlEscape(a.url[lang])}</url>\n`;
+          });
+          xml += `        </urls>\n`;
+        }
+        xml += `      </attachment>\n`;
+      });
+      xml += `    </attachments>\n`;
+      xml += `  </blog>\n`;
+    });
+    xml += '</blogs>\n';
+    return xml;
+  }
+
   function clearBlogList() {
-    if (!confirm('Wyczyścić zapisane listy blogów dla wszystkich języków?')) return;
+    if (!confirm('Wyczyścić wszystkie pobrane dane blogów (listy + detale)?')) return;
     state.blogData = {};
+    state.blogDetails = {};
     state.blogPage = 1;
     GM_setValue('tcm_blogData', {});
+    GM_setValue('tcm_blogDetails', {});
     renderBlogs();
   }
 
