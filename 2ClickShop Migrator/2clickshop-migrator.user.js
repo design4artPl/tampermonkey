@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         2ClickShop Migrator
 // @namespace    https://noblelashes.pl/
-// @version      1.6
+// @version      1.7
 // @description  Panel boczny do scrapowania i eksportu danych z panelu admina 2ClickShop (kategorie, produkty, klienci, blogi)
 // @author       SyncOffer
 // @match        https://noblelashes.pl/admin/*
@@ -70,7 +70,7 @@
     #tcm-header {
       padding: 0;
       height: 71px;
-      background-color: #2b2b2b;
+      background-color: #944149;
       color: #fff;
       display: flex;
       align-items: center;
