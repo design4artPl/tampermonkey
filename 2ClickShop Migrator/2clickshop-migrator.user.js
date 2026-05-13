@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         2ClickShop Migrator
 // @namespace    https://noblelashes.pl/
-// @version      1.16
+// @version      1.17
 // @description  Panel boczny do scrapowania i eksportu danych z panelu admina 2ClickShop (kategorie, produkty, klienci, blogi)
 // @author       SyncOffer
 // @match        https://noblelashes.pl/admin/*
@@ -641,8 +641,12 @@
         const res = await fetch(buildBlogUrl(1, lang), { credentials: 'include' });
         const html = await res.text();
         const doc = new DOMParser().parseFromString(html, 'text/html');
-        const pages = detectTotalPages(doc);
         const rowsOnFirst = doc.querySelectorAll("tr[id^='news_']").length;
+        let pages = detectTotalPages(doc);
+        // Jeśli wykryto bardzo mało stron, a pierwsza strona jest pełna → zrób binary jump search
+        if (pages <= 2 && rowsOnFirst >= 10) {
+          pages = await findLastBlogPage(lang, doc);
+        }
         return [lang, { pages, rowsOnFirst, approxCount: pages * rowsOnFirst }];
       } catch (e) {
         return [lang, { error: e.message }];
@@ -665,14 +669,83 @@
 
   function detectTotalPages(doc) {
     let max = 1;
-    doc.querySelectorAll('a[href*="page="]').forEach(a => {
-      const m = a.getAttribute('href').match(/[?&]page=(\d+)/);
-      if (m) {
-        const n = parseInt(m[1], 10);
-        if (n > max) max = n;
+    // Wzorzec 1: dowolne linki/elementy z page=N w href, onclick, data-href
+    const allAttrs = ['href', 'onclick', 'data-href', 'data-url', 'action'];
+    doc.querySelectorAll('a, button, [onclick], form, [data-href], [data-url]').forEach(e => {
+      allAttrs.forEach(attr => {
+        const v = e.getAttribute(attr);
+        if (!v) return;
+        const matches = v.matchAll(/[?&]?page=(\d+)/g);
+        for (const m of matches) {
+          const n = parseInt(m[1], 10);
+          if (n > max && n < 10000) max = n;
+        }
+      });
+    });
+    // Wzorzec 2: select option value z liczbą stron
+    doc.querySelectorAll('select option').forEach(opt => {
+      const v = opt.value || '';
+      if (/^\d+$/.test(v)) {
+        const n = parseInt(v, 10);
+        if (n > max && n < 10000) max = n;
       }
     });
+    // Wzorzec 3: data-page attribute
+    doc.querySelectorAll('[data-page]').forEach(e => {
+      const n = parseInt(e.getAttribute('data-page'), 10);
+      if (n > max && n < 10000) max = n;
+    });
+    // Wzorzec 4: tekst "X z Y" / "X of Y" / "X / Y stron"
+    const text = (doc.body ? doc.body.textContent : '');
+    const patterns = [
+      /strona\s+\d+\s+z\s+(\d+)/i,
+      /\bz\s+(\d+)\s+stron/i,
+      /page\s+\d+\s+of\s+(\d+)/i,
+      /(\d+)\s+strona/i,
+      /Łącznie[:\s]+(\d+)/i,
+    ];
+    for (const p of patterns) {
+      const m = text.match(p);
+      if (m) {
+        const n = parseInt(m[1], 10);
+        if (n > max && n < 100000) max = n;
+      }
+    }
     return max;
+  }
+
+  // Iteracyjne wyszukiwanie ostatniej strony (binary jump) gdy detectTotalPages zwraca podejrzanie mało
+  async function findLastBlogPage(lang, firstPageDoc) {
+    const firstId = firstPageDoc.querySelector("tr[id^='news_']")?.id || '';
+    const rowsOnFirst = firstPageDoc.querySelectorAll("tr[id^='news_']").length;
+    if (rowsOnFirst === 0) return 0;
+
+    const fetchFirstId = async (p) => {
+      const r = await fetch(buildBlogUrl(p, lang), { credentials: 'include' });
+      const html = await r.text();
+      const doc = new DOMParser().parseFromString(html, 'text/html');
+      const rows = doc.querySelectorAll("tr[id^='news_']");
+      return { firstId: rows[0]?.id || '', count: rows.length };
+    };
+
+    // Skoki: 2, 4, 8, 16, 32, 64, 128, 256...
+    let lo = 1, hi = -1, p = 2;
+    while (p <= 512) {
+      const r = await fetchFirstId(p);
+      if (r.count === 0 || r.firstId === firstId) { hi = p; break; }
+      lo = p;
+      p *= 2;
+    }
+    if (hi === -1) return lo; // limit safety
+
+    // Binary search między lo+1 a hi-1
+    while (lo + 1 < hi) {
+      const mid = Math.floor((lo + hi) / 2);
+      const r = await fetchFirstId(mid);
+      if (r.count === 0 || r.firstId === firstId) hi = mid;
+      else lo = mid;
+    }
+    return lo;
   }
 
   function buildBlogUrl(page, lang) {
@@ -910,7 +983,12 @@
       const res1 = await fetch(buildBlogUrl(1, 'pl'), { credentials: 'include' });
       const html1 = await res1.text();
       const doc1 = new DOMParser().parseFromString(html1, 'text/html');
-      const totalPages = detectTotalPages(doc1);
+      const rowsOnFirst = doc1.querySelectorAll("tr[id^='news_']").length;
+      let totalPages = detectTotalPages(doc1);
+      if (totalPages <= 2 && rowsOnFirst >= 10) {
+        label.textContent = 'Szukanie ostatniej strony (binary jump)...';
+        totalPages = await findLastBlogPage('pl', doc1);
+      }
 
       const idsSet = new Set();
       const basicList = [];
