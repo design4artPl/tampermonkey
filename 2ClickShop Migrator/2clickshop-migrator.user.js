@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         2ClickShop Migrator
 // @namespace    https://noblelashes.pl/
-// @version      1.14
+// @version      1.15
 // @description  Panel boczny do scrapowania i eksportu danych z panelu admina 2ClickShop (kategorie, produkty, klienci, blogi)
 // @author       SyncOffer
 // @match        https://noblelashes.pl/admin/*
@@ -521,14 +521,21 @@
     actions.appendChild(el('button', {
       class: 'tcm-btn tcm-btn-secondary',
       onClick: scrapeAllLangLists,
-    }, 'Pobierz wszystkie języki'));
+    }, 'Pobierz listy wszystkich języków'));
 
-    if (plIds.length > 0) {
+    // Union ID-ków ze wszystkich list językowych
+    const allIdsSet = new Set();
+    BLOG_LANGS.forEach(l => (state.blogData[l] || []).forEach(b => allIdsSet.add(b.id)));
+    const allIdsCount = allIdsSet.size;
+
+    if (allIdsCount > 0) {
       actions.appendChild(el('button', {
         class: 'tcm-btn',
         style: { background: '#944149' },
         onClick: scrapeBlogDetails,
-      }, detailsCount > 0 ? `Aktualizuj pełne dane (${detailsCount}/${plIds.length})` : `Pobierz pełne dane (${plIds.length} wpisów)`));
+      }, detailsCount > 0
+        ? `Aktualizuj pełne dane (${detailsCount}/${allIdsCount}, wszystkie języki)`
+        : `Pobierz pełne dane (${allIdsCount} wpisów, wszystkie języki)`));
     }
     wrap.appendChild(actions);
 
@@ -902,12 +909,18 @@
   }
 
   async function scrapeBlogDetails() {
-    const ids = (state.blogData.pl || []).map(b => b.id);
+    // Union ID-ków ze wszystkich list językowych
+    const idsSet = new Set();
+    BLOG_LANGS.forEach(lang => (state.blogData[lang] || []).forEach(b => idsSet.add(b.id)));
+    const ids = Array.from(idsSet).sort((a, b) => parseInt(a) - parseInt(b));
     if (!ids.length) {
-      alert('Najpierw pobierz listę PL.');
+      if (confirm('Brak listy ID-ków. Pobrać najpierw listę PL?')) {
+        await scrapeBlogList('pl');
+        return scrapeBlogDetails();
+      }
       return;
     }
-    if (!confirm(`Pobrać pełne dane dla ${ids.length} wpisów? Każdy wpis = 2 requesty (popup + SEO). Może potrwać kilka minut.`)) return;
+    if (!confirm(`Pobrać pełne dane dla ${ids.length} wpisów? Każdy wpis = 2 requesty (popup + SEO) i zawiera wszystkie 7 języków jednocześnie. Może potrwać kilka minut.`)) return;
 
     const progress = document.getElementById('tcm-blog-progress');
     progress.innerHTML = '';
