@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         IdoSell - Parametry Toolbar
 // @namespace    https://idosell.com/
-// @version      4.5.64
+// @version      4.5.65
 // @description  Toolbar do grupowej edycji parametrow: panel-pro v1.2.4 inline + new-panel support, checkboxy, zaznaczanie, rozwijanie/zwijanie, grupowe usuwanie/edycja, import CSV
 // @author       SyncOffer
 // @match        https://*.iai-shop.com/panel/app/parameters.php*
@@ -5749,7 +5749,7 @@ li.tp-row--selected > div {
     var stateExtras = [
       { key: 'priority', label: 'Priorytety', desc: 'Pozycja parametru/wartości w drzewie', on: true },
       { key: 'context', label: 'Konteksty specjalne', desc: 'context_id parametrów + context_value_id wartości', on: true },
-      { key: 'productCount', label: 'Liczby produktów', desc: 'Liczba towarów przypisanych do każdej wartości', on: false }
+      { key: 'products', label: 'Lista produktów (ID + kody)', desc: 'ID przypisanych towarów per wartość; kody jeśli zwracane przez API', on: false }
     ];
 
     var CSS = [
@@ -6065,7 +6065,7 @@ li.tp-row--selected > div {
   }
 
   async function runExport(doc, opts) {
-    var extras = opts.extras || { priority: true, context: true, productCount: false };
+    var extras = opts.extras || { priority: true, context: true, products: false };
     var paramIds = [];
     if (opts.scope === 'selected') {
       Array.from(selectedNodes).forEach(function (nid) {
@@ -6103,6 +6103,37 @@ li.tp-row--selected > div {
       }
     }
 
+    // v4.5.65: opcjonalnie dociągnij listę produktów per wartość gdy extras.products
+    if (extras.products) {
+      var prodTargets = [];
+      data.parameters.forEach(function (p) {
+        // ID parametru — zbieramy direct (czasem API zwraca dla parametru)
+        prodTargets.push({ ref: p, id: p.id, isValue: false });
+        p.values.forEach(function (v) { prodTargets.push({ ref: v, id: v.id, isValue: true }); });
+      });
+      var BATCH2 = 15;
+      for (var pi = 0; pi < prodTargets.length; pi += BATCH2) {
+        var batch2 = prodTargets.slice(pi, pi + BATCH2);
+        await Promise.all(batch2.map(async function (t) {
+          try {
+            var r = await fetchValueProductCount(t.id);
+            t.ref.products = (r && r.productIds) ? r.productIds.slice() : [];
+          } catch (e) { t.ref.products = []; }
+        }));
+        if (_panel) _panel.showStatus('Eksport: produkty (' + Math.min(pi + BATCH2, prodTargets.length) + '/' + prodTargets.length + ')');
+      }
+      // Dla parametru: jeśli direct nie zwrócił nic, weź union ID z wartości
+      data.parameters.forEach(function (p) {
+        if (!p.products || !p.products.length) {
+          var seen = {};
+          p.values.forEach(function (v) {
+            (v.products || []).forEach(function (pid) { seen[pid] = true; });
+          });
+          p.products = Object.keys(seen);
+        }
+      });
+    }
+
     var ts = new Date().toISOString().replace(/[:.]/g, '-');
     var fileBase = 'parametry_' + opts.langs.join('-') + '_' + ts;
     var content, mime, ext;
@@ -6112,7 +6143,7 @@ li.tp-row--selected > div {
       var obj = { id: n.id, names: n.names };
       if (extras.priority) obj.priority = n.priority;
       if (extras.context) obj.context_id = n.context_id || null;
-      if (extras.productCount && isValue) obj.productCount = n.productCount || 0;
+      if (extras.products) obj.products = (n.products || []).map(function (pid) { return { id: String(pid) }; });
       return obj;
     }
 
@@ -6129,11 +6160,12 @@ li.tp-row--selected > div {
       if (extras.priority) header.push('parameter_priority');
       opts.langs.forEach(function (l) { header.push('parameter_name_' + l); });
       if (extras.context) header.push('parameter_context_id');
+      if (extras.products) header.push('parameter_product_ids');
       header.push('value_id');
       if (extras.priority) header.push('value_priority');
       opts.langs.forEach(function (l) { header.push('value_name_' + l); });
       if (extras.context) header.push('value_context_id');
-      if (extras.productCount) header.push('value_product_count');
+      if (extras.products) header.push('value_product_ids');
       var rows = [header.join(',')];
 
       function paramCols(p) {
@@ -6141,6 +6173,7 @@ li.tp-row--selected > div {
         if (extras.priority) r.push(p.priority);
         opts.langs.forEach(function (l) { r.push(csvEsc(p.names[l])); });
         if (extras.context) r.push(p.context_id || '');
+        if (extras.products) r.push(csvEsc((p.products || []).join(';')));
         return r;
       }
 
@@ -6151,7 +6184,7 @@ li.tp-row--selected > div {
           if (extras.priority) row.push('');
           opts.langs.forEach(function () { row.push(''); });
           if (extras.context) row.push('');
-          if (extras.productCount) row.push('');
+          if (extras.products) row.push('');
           rows.push(row.join(','));
         } else {
           p.values.forEach(function (v) {
@@ -6160,7 +6193,7 @@ li.tp-row--selected > div {
             if (extras.priority) row.push(v.priority);
             opts.langs.forEach(function (l) { row.push(csvEsc(v.names[l])); });
             if (extras.context) row.push(v.context_id || '');
-            if (extras.productCount) row.push(v.productCount || 0);
+            if (extras.products) row.push(csvEsc((v.products || []).join(';')));
             rows.push(row.join(','));
           });
         }
@@ -6174,18 +6207,29 @@ li.tp-row--selected > div {
         if (extras.context && node.context_id) a += ' contextId="' + xmlEsc(node.context_id) + '"';
         return a;
       }
+      function productsXml(node, indent) {
+        if (!extras.products) return '';
+        var arr = node.products || [];
+        if (!arr.length) return '';
+        var lines = [indent + '<products>'];
+        arr.forEach(function (pid) { lines.push(indent + '  <product id="' + xmlEsc(pid) + '"/>'); });
+        lines.push(indent + '</products>');
+        return '\n' + lines.join('\n');
+      }
       var x = ['<?xml version="1.0" encoding="UTF-8"?>'];
       x.push('<parameters exportedAt="' + xmlEsc(new Date().toISOString()) + '" langs="' + xmlEsc(opts.langs.join(',')) + '">');
       data.parameters.forEach(function (p) {
         x.push('  <parameter' + attr(p) + '>');
         opts.langs.forEach(function (l) { x.push('    <name lang="' + l + '">' + xmlEsc(p.names[l]) + '</name>'); });
+        var pProducts = productsXml(p, '    ');
+        if (pProducts) x.push(pProducts.slice(1));
         if (p.values.length) {
           x.push('    <values>');
           p.values.forEach(function (v) {
-            var valAttr = attr(v);
-            if (extras.productCount) valAttr += ' productCount="' + (v.productCount || 0) + '"';
-            x.push('      <value' + valAttr + '>');
+            x.push('      <value' + attr(v) + '>');
             opts.langs.forEach(function (l) { x.push('        <name lang="' + l + '">' + xmlEsc(v.names[l]) + '</name>'); });
+            var vProducts = productsXml(v, '        ');
+            if (vProducts) x.push(vProducts.slice(1));
             x.push('      </value>');
           });
           x.push('    </values>');
@@ -7475,7 +7519,7 @@ li.tp-row--selected > div {
       ],
       pagination: { perPage: 50 },
       footer: {
-        version: 'v4.5.64',
+        version: 'v4.5.65',
         links: [
           { label: 'Propozycja', icon: 'star', tooltip: 'Zaproponuj funkcjonalność', variant: 'feature', href: 'https://github.com/design4artPl/tampermonkey/issues/new?labels=enhancement', target: '_blank' },
           { label: 'Zgłoś błąd', icon: 'bug_report', tooltip: 'Zgłoś błąd', variant: 'bug', href: 'https://github.com/design4artPl/tampermonkey/issues/new?labels=bug', target: '_blank' }
