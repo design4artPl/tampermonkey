@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         2ClickShop Migrator
 // @namespace    https://noblelashes.pl/
-// @version      1.11
+// @version      1.12
 // @description  Panel boczny do scrapowania i eksportu danych z panelu admina 2ClickShop (kategorie, produkty, klienci, blogi)
 // @author       SyncOffer
 // @match        https://noblelashes.pl/admin/*
@@ -223,6 +223,46 @@
       color: #475569;
       font-weight: 600;
     }
+    .tcm-stats {
+      background: #fff;
+      border: 1px solid #e2e8f0;
+      border-radius: 8px;
+      margin-bottom: 16px;
+      overflow: hidden;
+    }
+    .tcm-stats-loading {
+      padding: 12px;
+      color: #94a3b8;
+      font-size: 12px;
+      text-align: center;
+    }
+    .tcm-stats-row {
+      display: flex;
+      align-items: center;
+      padding: 8px 12px;
+      border-bottom: 1px solid #f1f5f9;
+      font-size: 12px;
+      gap: 8px;
+    }
+    .tcm-stats-row:last-child { border-bottom: none; }
+    .tcm-stats-lang {
+      font-weight: 700;
+      color: #944149;
+      width: 32px;
+      flex-shrink: 0;
+    }
+    .tcm-stats-pages { color: #64748b; min-width: 70px; }
+    .tcm-stats-count { color: #475569; flex: 1; }
+    .tcm-stats-downloaded {
+      font-size: 11px;
+      color: #94a3b8;
+      font-style: italic;
+    }
+    .tcm-stats-downloaded.ok {
+      color: #16a34a;
+      font-style: normal;
+      font-weight: 600;
+    }
     .tcm-list { background: #fff; border: 1px solid #e2e8f0; border-radius: 8px; overflow: hidden; }
     .tcm-list-item {
       padding: 10px 14px;
@@ -308,6 +348,7 @@
     blogDetails: GM_getValue('tcm_blogDetails', {}),
     blogLang: 'pl',
     blogPage: 1,
+    blogStats: null,
   };
 
   // =========================================================================
@@ -316,10 +357,11 @@
   function el(tag, attrs = {}, children = []) {
     const e = document.createElement(tag);
     Object.entries(attrs).forEach(([k, v]) => {
+      if (v === null || v === undefined || v === false) return;
       if (k === 'style') Object.assign(e.style, v);
       else if (k.startsWith('on')) e.addEventListener(k.slice(2).toLowerCase(), v);
       else if (k === 'html') e.innerHTML = v;
-      else e.setAttribute(k, v);
+      else e.setAttribute(k, v === true ? '' : v);
     });
     (Array.isArray(children) ? children : [children]).forEach(c => {
       if (c) e.appendChild(typeof c === 'string' ? document.createTextNode(c) : c);
@@ -415,12 +457,19 @@
   }
 
   function renderBlogs() {
+    const firstEntry = state.currentView !== 'blogs';
     state.currentView = 'blogs';
     showBreadcrumb([
       { label: '← Menu', onClick: renderMenu },
       { label: 'Blogi' },
     ]);
     const wrap = el('div');
+
+    // Statystyki per język
+    wrap.appendChild(el('div', { class: 'tcm-section-title' }, 'Dostępne dane'));
+    const statsBox = el('div', { id: 'tcm-blog-stats', class: 'tcm-stats' });
+    renderBlogStats(statsBox);
+    wrap.appendChild(statsBox);
 
     // Language switcher
     wrap.appendChild(el('div', { class: 'tcm-section-title' }, 'Język'));
@@ -450,6 +499,11 @@
       class: 'tcm-btn',
       onClick: () => scrapeBlogList(state.blogLang),
     }, currentHas ? `Pobierz ponownie listę (${state.blogLang.toUpperCase()})` : `Pobierz listę (${state.blogLang.toUpperCase()})`));
+
+    actions.appendChild(el('button', {
+      class: 'tcm-btn tcm-btn-secondary',
+      onClick: scrapeAllLangLists,
+    }, 'Pobierz wszystkie języki'));
 
     if (plIds.length > 0) {
       actions.appendChild(el('button', {
@@ -529,6 +583,68 @@
     }
 
     setContent(wrap);
+
+    // Po pierwszym wejściu - auto preview stats jeśli ich nie ma
+    if (firstEntry && !state.blogStats) {
+      previewBlogStats();
+    }
+  }
+
+  function renderBlogStats(box) {
+    box.innerHTML = '';
+    const stats = state.blogStats;
+    if (!stats) {
+      box.appendChild(el('div', { class: 'tcm-stats-loading' }, 'Sprawdzanie liczby wpisów per język...'));
+      return;
+    }
+    BLOG_LANGS.forEach(lang => {
+      const info = stats[lang] || {};
+      const downloaded = (state.blogData[lang] || []).length;
+      const totalPages = info.pages || 0;
+      const approxCount = info.approxCount || 0;
+      const row = el('div', { class: 'tcm-stats-row' }, [
+        el('span', { class: 'tcm-stats-lang' }, lang.toUpperCase()),
+        el('span', { class: 'tcm-stats-pages' },
+          totalPages ? `${totalPages} stron` : (info.error ? '❌ błąd' : '...')),
+        el('span', { class: 'tcm-stats-count' },
+          approxCount ? `≈ ${approxCount} wpisów` : ''),
+        el('span', { class: 'tcm-stats-downloaded' + (downloaded ? ' ok' : '') },
+          downloaded ? `✓ pobrane: ${downloaded}` : 'nie pobrane'),
+      ]);
+      box.appendChild(row);
+    });
+  }
+
+  async function previewBlogStats() {
+    state.blogStats = {};
+    const box = document.getElementById('tcm-blog-stats');
+    if (box) renderBlogStats(box);
+
+    const results = await Promise.all(BLOG_LANGS.map(async lang => {
+      try {
+        const res = await fetch(buildBlogUrl(1, lang), { credentials: 'include' });
+        const html = await res.text();
+        const doc = new DOMParser().parseFromString(html, 'text/html');
+        const pages = detectTotalPages(doc);
+        const rowsOnFirst = doc.querySelectorAll("tr[id^='news_']").length;
+        return [lang, { pages, rowsOnFirst, approxCount: pages * rowsOnFirst }];
+      } catch (e) {
+        return [lang, { error: e.message }];
+      }
+    }));
+    state.blogStats = Object.fromEntries(results);
+    const box2 = document.getElementById('tcm-blog-stats');
+    if (box2) renderBlogStats(box2);
+  }
+
+  async function scrapeAllLangLists() {
+    if (!confirm(`Pobrać listy dla wszystkich 7 języków sekwencyjnie?`)) return;
+    for (const lang of BLOG_LANGS) {
+      state.blogLang = lang;
+      await scrapeBlogList(lang);
+    }
+    state.blogLang = 'pl';
+    renderBlogs();
   }
 
   function detectTotalPages(doc) {
