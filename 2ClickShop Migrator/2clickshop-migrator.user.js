@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         2ClickShop Migrator
 // @namespace    https://noblelashes.pl/
-// @version      1.12
+// @version      1.13
 // @description  Panel boczny do scrapowania i eksportu danych z panelu admina 2ClickShop (kategorie, produkty, klienci, blogi)
 // @author       SyncOffer
 // @match        https://noblelashes.pl/admin/*
@@ -129,6 +129,15 @@
       flex: 1;
       overflow-y: auto;
       padding: 16px;
+    }
+    #tcm-footer {
+      padding: 10px 16px;
+      background: #f1f5f9;
+      border-top: 1px solid #e2e8f0;
+      font-size: 11px;
+      color: #64748b;
+      text-align: center;
+      flex-shrink: 0;
     }
     .tcm-menu-item {
       display: flex;
@@ -1139,9 +1148,12 @@
     const breadcrumb = el('div', { id: 'tcm-breadcrumb' });
     const content = el('div', { id: 'tcm-content' });
 
+    const footer = el('div', { id: 'tcm-footer' }, 'by Maciej Dobroń');
+
     panel.appendChild(header);
     panel.appendChild(breadcrumb);
     panel.appendChild(content);
+    panel.appendChild(footer);
 
     document.body.appendChild(handle);
     document.body.appendChild(panel);
