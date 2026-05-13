@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         2ClickShop Migrator
 // @namespace    https://noblelashes.pl/
-// @version      1.3
+// @version      1.4
 // @description  Panel boczny do scrapowania i eksportu danych z panelu admina 2ClickShop (kategorie, produkty, klienci, blogi)
 // @author       SyncOffer
 // @match        https://noblelashes.pl/admin/*
@@ -29,9 +29,9 @@
       right: 0;
       top: 50%;
       transform: translateY(-50%);
-      width: 28px;
-      height: 90px;
-      background: linear-gradient(135deg, #1e3a8a, #3b82f6);
+      width: 38px;
+      height: 160px;
+      background: #e94555;
       color: #fff;
       cursor: pointer;
       z-index: 999998;
@@ -39,15 +39,19 @@
       display: flex;
       align-items: center;
       justify-content: center;
-      font-size: 11px;
-      writing-mode: vertical-rl;
-      text-orientation: mixed;
-      letter-spacing: 1px;
-      box-shadow: -2px 0 8px rgba(0,0,0,0.2);
+      box-shadow: -2px 0 8px rgba(0,0,0,0.25);
       user-select: none;
       transition: background 0.2s;
+      overflow: hidden;
     }
-    #tcm-handle:hover { background: linear-gradient(135deg, #1e40af, #2563eb); }
+    #tcm-handle:hover { background: #d63848; }
+    #tcm-handle img {
+      width: 120px;
+      height: auto;
+      transform: rotate(-90deg);
+      pointer-events: none;
+      filter: brightness(0) invert(1);
+    }
     #tcm-panel {
       position: fixed;
       right: -380px;
@@ -64,32 +68,33 @@
     }
     #tcm-panel.open { right: 0; }
     #tcm-header {
-      padding: 0 16px;
-      height: 74px;
+      padding: 0;
+      height: 71px;
       background-repeat: no-repeat;
       background-size: 1200px 100%;
       background-position: left top;
       background-color: #2b2b2b;
       color: #fff;
       display: flex;
-      justify-content: space-between;
       align-items: center;
-      gap: 16px;
       box-sizing: border-box;
     }
-    #tcm-header-left {
+    #tcm-logo-area {
+      width: 222px;
+      height: 100%;
+      flex-shrink: 0;
       display: flex;
       align-items: center;
-      gap: 16px;
-      flex: 1;
-      min-width: 0;
+      justify-content: center;
+      box-sizing: border-box;
     }
     #tcm-logo {
       height: 33px;
       width: auto;
-      flex-shrink: 0;
+      display: block;
     }
-    #tcm-header h2 {
+    #tcm-title {
+      flex: 1;
       margin: 0;
       font-size: 17px;
       font-weight: 600;
@@ -98,6 +103,7 @@
       white-space: nowrap;
       overflow: hidden;
       text-overflow: ellipsis;
+      padding-left: 16px;
     }
     #tcm-close {
       background: rgba(0,0,0,0.35);
@@ -110,6 +116,7 @@
       font-size: 18px;
       line-height: 1;
       flex-shrink: 0;
+      margin-right: 16px;
     }
     #tcm-close:hover { background: rgba(0,0,0,0.55); }
     #tcm-breadcrumb {
@@ -477,17 +484,19 @@
   function createPanel() {
     if (document.getElementById('tcm-panel')) return;
 
-    const handle = el('div', { id: 'tcm-handle', title: '2ClickShop Migrator' }, '2ClickShop Migrator');
+    const handle = el('div', { id: 'tcm-handle', title: 'Migrator' }, [
+      el('img', { src: ASSET_LOGO, alt: '' }),
+    ]);
     const panel = el('div', { id: 'tcm-panel' });
     const header = el('div', { id: 'tcm-header' }, [
-      el('div', { id: 'tcm-header-left' }, [
+      el('div', { id: 'tcm-logo-area' }, [
         el('img', {
           id: 'tcm-logo',
           src: ASSET_LOGO,
           alt: 'logo',
         }),
-        el('h2', {}, '2ClickShop Migrator'),
       ]),
+      el('h2', { id: 'tcm-title' }, 'Migrator'),
       el('button', { id: 'tcm-close', onClick: () => panel.classList.remove('open') }, '×'),
     ]);
     header.style.backgroundImage = `url('${ASSET_HEADER_BG}')`;
