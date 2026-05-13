@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         2ClickShop Migrator
 // @namespace    https://noblelashes.pl/
-// @version      1.19
+// @version      1.20
 // @description  Panel boczny do scrapowania i eksportu danych z panelu admina 2ClickShop (kategorie, produkty, klienci, blogi)
 // @author       SyncOffer
 // @match        https://noblelashes.pl/admin/*
@@ -248,6 +248,14 @@
       margin-bottom: 16px;
       overflow: hidden;
     }
+    .tcm-stats-total {
+      padding: 10px 12px;
+      background: #fef2f4;
+      border-bottom: 1px solid #e2e8f0;
+      font-size: 13px;
+      color: #475569;
+    }
+    .tcm-stats-total strong { color: #944149; font-size: 16px; }
     .tcm-stats-loading {
       padding: 12px;
       color: #94a3b8;
@@ -294,6 +302,18 @@
     .tcm-list-item:hover { background: #f8fafc; }
     .tcm-list-id { color: #94a3b8; font-family: monospace; font-size: 11px; min-width: 40px; }
     .tcm-list-name { flex: 1; color: #1e293b; }
+    .tcm-list-name.tcm-list-empty { color: #cbd5e1; font-style: italic; }
+    .tcm-list-badges { display: flex; gap: 2px; flex-shrink: 0; }
+    .tcm-badge-lang {
+      font-size: 9px;
+      font-weight: 700;
+      padding: 2px 4px;
+      background: #f1f5f9;
+      color: #94a3b8;
+      border-radius: 3px;
+      letter-spacing: 0.5px;
+    }
+    .tcm-badge-lang.active { background: #944149; color: #fff; }
     .tcm-progress {
       background: #fff;
       border: 1px solid #e2e8f0;
@@ -583,19 +603,24 @@
     let list;
     let listSource = '';
     if (detailsArr.length > 0) {
-      list = detailsArr.map(d => ({
-        id: d.id,
-        name: (d.name && d.name[lang]) || (d.name && d.name.pl) || '(brak)',
-        key: (d.key && d.key[lang]) || '',
-        category: (d.categories && d.categories[0] && d.categories[0][lang]) || (d.sub || ''),
-      })).sort((a, b) => parseInt(a.id) - parseInt(b.id));
+      list = detailsArr.map(d => {
+        const availableLangs = BLOG_LANGS.filter(l => d.name && d.name[l] && d.name[l].length > 0);
+        const nameInLang = d.name && d.name[lang];
+        return {
+          id: d.id,
+          name: nameInLang || (d.name && d.name.pl) || '(brak)',
+          hasInLang: !!nameInLang,
+          availableLangs,
+          key: (d.key && d.key[lang]) || '',
+          category: (d.categories && d.categories[0] && d.categories[0][lang]) || (d.sub || ''),
+        };
+      }).sort((a, b) => parseInt(a.id) - parseInt(b.id));
       listSource = `pełne dane (${lang.toUpperCase()})`;
     } else if ((state.blogData[lang] || []).length > 0) {
-      list = state.blogData[lang];
+      list = state.blogData[lang].map(b => ({ ...b, hasInLang: b.hasTranslation }));
       listSource = `lista podstawowa (${lang.toUpperCase()})`;
     } else if ((state.blogData.pl || []).length > 0) {
-      // Fallback: pokazuj listę PL gdy bieżący język nie jest pobrany
-      list = state.blogData.pl;
+      list = state.blogData.pl.map(b => ({ ...b, hasInLang: b.hasTranslation }));
       listSource = `lista PL (fallback - brak ${lang.toUpperCase()})`;
     } else {
       list = [];
@@ -611,10 +636,22 @@
         `Lista – ${listSource} – ${list.length} wpisów, strona ${cur}/${totalPages}`));
       const listEl = el('div', { class: 'tcm-list' });
       list.slice(start, end).forEach(b => {
-        listEl.appendChild(el('div', { class: 'tcm-list-item' }, [
+        const children = [
           el('span', { class: 'tcm-list-id' }, '#' + b.id),
-          el('span', { class: 'tcm-list-name' }, b.name || '(brak nazwy)'),
-        ]));
+          el('span', {
+            class: 'tcm-list-name' + (b.hasInLang === false ? ' tcm-list-empty' : '')
+          }, b.name || '(brak tłumaczenia)'),
+        ];
+        if (b.availableLangs && b.availableLangs.length) {
+          const badges = el('span', { class: 'tcm-list-badges' });
+          b.availableLangs.forEach(l => {
+            badges.appendChild(el('span', {
+              class: 'tcm-badge-lang' + (l === lang ? ' active' : '')
+            }, l.toUpperCase()));
+          });
+          children.push(badges);
+        }
+        listEl.appendChild(el('div', { class: 'tcm-list-item' }, children));
       });
       wrap.appendChild(listEl);
 
@@ -651,19 +688,40 @@
       box.appendChild(el('div', { class: 'tcm-stats-loading' }, 'Sprawdzanie liczby wpisów per język...'));
       return;
     }
+
+    // Łączna liczba unikalnych: union ze wszystkich pobranych list lub max z preview
+    const allIds = new Set();
+    BLOG_LANGS.forEach(l => (state.blogData[l] || []).forEach(b => allIds.add(b.id)));
+    Object.keys(state.blogDetails).forEach(id => allIds.add(id));
+    const uniqueCount = allIds.size
+      || Math.max(...BLOG_LANGS.map(l => (stats[l]?.exactCount) || 0));
+
+    box.appendChild(el('div', { class: 'tcm-stats-total' }, [
+      el('span', {}, 'Łącznie unikalnych wpisów: '),
+      el('strong', {}, String(uniqueCount)),
+    ]));
+
     BLOG_LANGS.forEach(lang => {
       const info = stats[lang] || {};
-      const downloaded = (state.blogData[lang] || []).length;
-      const totalPages = info.pages || 0;
-      const exactCount = info.exactCount || 0;
+      const listData = state.blogData[lang] || [];
+      // Liczba z faktyczną nazwą (tłumaczeniem) jeśli mamy listę
+      const translated = listData.length > 0
+        ? listData.filter(b => b.hasTranslation).length
+        : 0;
+      const totalRows = listData.length || info.exactCount || 0;
+      const detailsTranslated = Object.values(state.blogDetails)
+        .filter(d => d.name && d.name[lang] && d.name[lang].length > 0).length;
+
       const row = el('div', { class: 'tcm-stats-row' }, [
         el('span', { class: 'tcm-stats-lang' }, lang.toUpperCase()),
         el('span', { class: 'tcm-stats-pages' },
-          totalPages ? `${totalPages} stron` : (info.error ? '❌ błąd' : '...')),
+          info.pages ? `${info.pages} stron` : (info.error ? '❌ błąd' : '...')),
         el('span', { class: 'tcm-stats-count' },
-          exactCount ? `${exactCount} wpisów` : ''),
-        el('span', { class: 'tcm-stats-downloaded' + (downloaded ? ' ok' : '') },
-          downloaded ? `✓ pobrane: ${downloaded}` : 'nie pobrane'),
+          totalRows
+            ? (translated > 0 ? `${translated}/${totalRows} tłumaczeń` : `${totalRows} wpisów`)
+            : ''),
+        el('span', { class: 'tcm-stats-downloaded' + (detailsTranslated ? ' ok' : '') },
+          detailsTranslated ? `✓ ${detailsTranslated}` : ''),
       ]);
       box.appendChild(row);
     });
@@ -858,22 +916,31 @@
 
     // Popup edycji
     const r1 = await fetch(`/admin/popup.php?k=news&w=blog&id=${id}`, { credentials: 'include' });
+    if (!r1.ok) throw new Error(`HTTP ${r1.status} popup id=${id}`);
     const html1 = await r1.text();
     const doc = new DOMParser().parseFromString(html1, 'text/html');
 
+    // Robust extraction: .value (live) → getAttribute('value') → textContent
     const val = n => {
       const e = doc.querySelector(`input[name="${n}"],textarea[name="${n}"]`);
-      return e ? e.value : '';
+      if (!e) return '';
+      if (e.tagName === 'TEXTAREA') {
+        // Dla textarea: .value zwykle == innerHTML/textContent po parsowaniu
+        return e.value || e.textContent || '';
+      }
+      return e.value || e.getAttribute('value') || '';
     };
     const chk = n => {
       const e = doc.querySelector(`input[name="${n}"]`);
-      return e ? e.checked : false;
+      if (!e) return false;
+      // .checked może nie działać na detached DOMParser → fallback do hasAttribute
+      return e.checked || e.hasAttribute('checked');
     };
     const sel = n => {
       const e = doc.querySelector(`select[name="${n}"]`);
       if (!e) return '';
-      const opt = e.options[e.selectedIndex];
-      return opt ? opt.textContent.trim() : '';
+      const selected = e.querySelector('option[selected]') || e.options[0];
+      return selected ? selected.textContent.trim() : '';
     };
 
     data.author = val('author');
@@ -1050,12 +1117,14 @@
             seenInLang.add(id);
             idsSet.add(id);
             const tds = tr.querySelectorAll('td');
+            const name = tds[1]?.textContent.trim() || '';
             perLangList.push({
               id,
               order: tds[0]?.textContent.trim().replace('.', '') || '',
-              name: tds[1]?.textContent.trim().slice(0, 200) || '',
+              name: name.slice(0, 200),
               key: tds[2]?.textContent.trim() || '',
               category: tds[4]?.textContent.trim() || '',
+              hasTranslation: name.length > 0,
             });
           });
         };
@@ -1080,16 +1149,28 @@
       const ids = Array.from(idsSet).sort((a, b) => parseInt(a) - parseInt(b));
 
       // Etap 2: pełne dane per ID (popup + SEO) - wszystkie 7 języków na raz
+      console.log(`[Migrator] Etap 2: pobieram detale dla ${ids.length} unikalnych ID`);
       let done = 0, errors = 0;
       for (const id of ids) {
         done++;
         label.textContent = `Pełne dane ${done}/${ids.length} (id=${id})...`;
         try {
           const d = await scrapeBlogPostDetail(id);
+          // Diagnostic dla pierwszego wpisu - sprawdź czy pola są wypełnione
+          if (done === 1) {
+            console.log(`[Migrator] Sample detail id=${id}:`, {
+              name_pl: d.name?.pl,
+              name_en: d.name?.en,
+              desc_pl_len: (d.desc?.pl || '').length,
+              date: d.date,
+              author: d.author,
+            });
+          }
           state.blogDetails[id] = d;
           if (done % 25 === 0) GM_setValue('tcm_blogDetails', state.blogDetails);
         } catch (e) {
           errors++;
+          console.error(`[Migrator] Error id=${id}:`, e);
           state.blogDetails[id] = { id: String(id), error: e.message };
         }
         fill.style.width = (20 + (done / ids.length * 80)) + '%';
