@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         2ClickShop Migrator
 // @namespace    https://noblelashes.pl/
-// @version      1.13
+// @version      1.14
 // @description  Panel boczny do scrapowania i eksportu danych z panelu admina 2ClickShop (kategorie, produkty, klienci, blogi)
 // @author       SyncOffer
 // @match        https://noblelashes.pl/admin/*
@@ -484,15 +484,24 @@
     wrap.appendChild(el('div', { class: 'tcm-section-title' }, 'Język'));
     const langSwitch = el('div', { class: 'tcm-lang-switch' });
     BLOG_LANGS.forEach(code => {
-      const has = !!(state.blogData[code] && state.blogData[code].length);
-      const btn = el('button', {
-        class: 'tcm-lang-btn' + (state.blogLang === code ? ' active' : '') + (has ? ' has-data' : ''),
-        onClick: () => {
-          state.blogLang = code;
-          state.blogPage = 1;
-          renderBlogs();
-        },
-      }, code.toUpperCase() + (has ? ` (${state.blogData[code].length})` : ''));
+      const detailsCountForLang = Object.values(state.blogDetails)
+        .filter(d => d.name && d.name[code]).length;
+      const basicCountForLang = (state.blogData[code] || []).length;
+      const has = basicCountForLang > 0 || detailsCountForLang > 0;
+      const count = basicCountForLang || detailsCountForLang;
+      const btn = document.createElement('button');
+      btn.className = 'tcm-lang-btn'
+        + (state.blogLang === code ? ' active' : '')
+        + (has ? ' has-data' : '');
+      btn.textContent = code.toUpperCase() + (count ? ` (${count})` : '');
+      btn.type = 'button';
+      btn.addEventListener('click', (ev) => {
+        ev.preventDefault();
+        ev.stopPropagation();
+        state.blogLang = code;
+        state.blogPage = 1;
+        renderBlogs();
+      });
       langSwitch.appendChild(btn);
     });
     wrap.appendChild(langSwitch);
@@ -539,11 +548,11 @@
     const progress = el('div', { id: 'tcm-blog-progress' });
     wrap.appendChild(progress);
 
-    // List for current language - prefer details if available
+    // List for current language - prefer details if available, fallback to other lang lists
     const lang = state.blogLang;
     const detailsArr = Object.values(state.blogDetails);
     let list;
-    let usingDetails = false;
+    let listSource = '';
     if (detailsArr.length > 0) {
       list = detailsArr.map(d => ({
         id: d.id,
@@ -551,19 +560,26 @@
         key: (d.key && d.key[lang]) || '',
         category: (d.categories && d.categories[0] && d.categories[0][lang]) || (d.sub || ''),
       })).sort((a, b) => parseInt(a.id) - parseInt(b.id));
-      usingDetails = true;
+      listSource = `pełne dane (${lang.toUpperCase()})`;
+    } else if ((state.blogData[lang] || []).length > 0) {
+      list = state.blogData[lang];
+      listSource = `lista podstawowa (${lang.toUpperCase()})`;
+    } else if ((state.blogData.pl || []).length > 0) {
+      // Fallback: pokazuj listę PL gdy bieżący język nie jest pobrany
+      list = state.blogData.pl;
+      listSource = `lista PL (fallback - brak ${lang.toUpperCase()})`;
     } else {
-      list = blogListForCurrentLang();
+      list = [];
     }
     if (list.length === 0) {
-      wrap.appendChild(el('div', { class: 'tcm-empty' }, `Brak danych dla języka ${state.blogLang.toUpperCase()}. Kliknij "Pobierz listę" aby pobrać.`));
+      wrap.appendChild(el('div', { class: 'tcm-empty' }, `Brak żadnych pobranych danych. Kliknij "Pobierz listę" aby zacząć.`));
     } else {
       const totalPages = Math.ceil(list.length / BLOG_PAGE_SIZE);
       const cur = Math.min(state.blogPage, totalPages);
       const start = (cur - 1) * BLOG_PAGE_SIZE;
       const end = Math.min(start + BLOG_PAGE_SIZE, list.length);
       wrap.appendChild(el('div', { class: 'tcm-section-title' },
-        `Lista ${usingDetails ? '(pełne dane)' : '(podstawowe)'} – ${list.length} wpisów, strona ${cur}/${totalPages}`));
+        `Lista – ${listSource} – ${list.length} wpisów, strona ${cur}/${totalPages}`));
       const listEl = el('div', { class: 'tcm-list' });
       list.slice(start, end).forEach(b => {
         listEl.appendChild(el('div', { class: 'tcm-list-item' }, [
