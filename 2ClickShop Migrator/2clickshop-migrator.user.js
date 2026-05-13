@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         2ClickShop Migrator
 // @namespace    https://noblelashes.pl/
-// @version      1.18
+// @version      1.19
 // @description  Panel boczny do scrapowania i eksportu danych z panelu admina 2ClickShop (kategorie, produkty, klienci, blogi)
 // @author       SyncOffer
 // @match        https://noblelashes.pl/admin/*
@@ -363,11 +363,23 @@
   const state = {
     currentView: 'menu',
     blogData: GM_getValue('tcm_blogData', {}),
-    blogDetails: GM_getValue('tcm_blogDetails', {}),
+    blogDetails: cleanBlogDetails(GM_getValue('tcm_blogDetails', {})),
     blogLang: 'pl',
     blogPage: 1,
     blogStats: null,
   };
+
+  function cleanBlogDetails(d) {
+    if (!d || typeof d !== 'object') return {};
+    const out = {};
+    Object.entries(d).forEach(([k, v]) => {
+      // Klucz musi być liczbowy (id wpisu), wartość musi być obiektem
+      if (!/^\d+$/.test(String(k))) return;
+      if (!v || typeof v !== 'object') return;
+      out[k] = v;
+    });
+    return out;
+  }
 
   // =========================================================================
   // UI HELPERS
@@ -520,24 +532,24 @@
     const actions = el('div', { class: 'tcm-actions' });
     const detailsCount = Object.keys(state.blogDetails).length;
     const langStat = state.blogStats && state.blogStats[state.blogLang];
-    const langApprox = langStat ? langStat.approxCount : 0;
-    const allApprox = state.blogStats
-      ? BLOG_LANGS.reduce((s, l) => s + ((state.blogStats[l]?.approxCount) || 0), 0)
+    const langCount = langStat ? langStat.exactCount : 0;
+    const allCount = state.blogStats
+      ? BLOG_LANGS.reduce((s, l) => s + ((state.blogStats[l]?.exactCount) || 0), 0)
       : 0;
 
     actions.appendChild(el('button', {
       class: 'tcm-btn',
       style: { background: '#944149' },
       onClick: () => scrapeBlogAll(state.blogLang),
-    }, langApprox
-      ? `Pobierz wpisy ${state.blogLang.toUpperCase()} (~${langApprox})`
+    }, langCount
+      ? `Pobierz wpisy ${state.blogLang.toUpperCase()} (${langCount})`
       : `Pobierz wpisy ${state.blogLang.toUpperCase()}`));
 
     actions.appendChild(el('button', {
       class: 'tcm-btn tcm-btn-secondary',
       onClick: () => scrapeBlogAll('__all__'),
-    }, allApprox
-      ? `Pobierz wpisy wszystkich języków (~${allApprox} łącznie)`
+    }, allCount
+      ? `Pobierz wpisy wszystkich języków (${allCount} łącznie)`
       : 'Pobierz wpisy wszystkich języków'));
 
     if (detailsCount > 0) {
@@ -643,13 +655,13 @@
       const info = stats[lang] || {};
       const downloaded = (state.blogData[lang] || []).length;
       const totalPages = info.pages || 0;
-      const approxCount = info.approxCount || 0;
+      const exactCount = info.exactCount || 0;
       const row = el('div', { class: 'tcm-stats-row' }, [
         el('span', { class: 'tcm-stats-lang' }, lang.toUpperCase()),
         el('span', { class: 'tcm-stats-pages' },
           totalPages ? `${totalPages} stron` : (info.error ? '❌ błąd' : '...')),
         el('span', { class: 'tcm-stats-count' },
-          approxCount ? `≈ ${approxCount} wpisów` : ''),
+          exactCount ? `${exactCount} wpisów` : ''),
         el('span', { class: 'tcm-stats-downloaded' + (downloaded ? ' ok' : '') },
           downloaded ? `✓ pobrane: ${downloaded}` : 'nie pobrane'),
       ]);
@@ -664,16 +676,25 @@
 
     const results = await Promise.all(BLOG_LANGS.map(async lang => {
       try {
+        // Page 1
         const res = await fetch(buildBlogUrl(1, lang), { credentials: 'include' });
         const html = await res.text();
         const doc = new DOMParser().parseFromString(html, 'text/html');
         const rowsOnFirst = doc.querySelectorAll("tr[id^='news_']").length;
         let pages = detectTotalPages(doc);
-        // Jeśli wykryto bardzo mało stron, a pierwsza strona jest pełna → zrób binary jump search
-        if (pages <= 2 && rowsOnFirst >= 10) {
+        if (pages <= 1 && rowsOnFirst >= 10) {
           pages = await findLastBlogPage(lang, doc);
         }
-        return [lang, { pages, rowsOnFirst, approxCount: pages * rowsOnFirst }];
+        // Page last - liczy partial rows na ostatniej stronie
+        let exactCount = rowsOnFirst;
+        if (pages > 1) {
+          const resL = await fetch(buildBlogUrl(pages, lang), { credentials: 'include' });
+          const htmlL = await resL.text();
+          const docL = new DOMParser().parseFromString(htmlL, 'text/html');
+          const rowsOnLast = docL.querySelectorAll("tr[id^='news_']").length;
+          exactCount = (pages - 1) * rowsOnFirst + rowsOnLast;
+        }
+        return [lang, { pages, rowsOnFirst, exactCount }];
       } catch (e) {
         return [lang, { error: e.message }];
       }
