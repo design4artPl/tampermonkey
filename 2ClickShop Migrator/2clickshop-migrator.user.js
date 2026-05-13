@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         2ClickShop Migrator
 // @namespace    https://noblelashes.pl/
-// @version      1.9
+// @version      1.10
 // @description  Panel boczny do scrapowania i eksportu danych z panelu admina 2ClickShop (kategorie, produkty, klienci, blogi)
 // @author       SyncOffer
 // @match        https://noblelashes.pl/admin/*
@@ -184,6 +184,45 @@
     .tcm-btn-sm { padding: 4px 8px; font-size: 12px; }
     .tcm-btn:disabled { opacity: 0.5; cursor: not-allowed; }
     .tcm-actions { display: flex; gap: 8px; flex-wrap: wrap; margin-bottom: 16px; }
+    .tcm-lang-switch {
+      display: flex;
+      gap: 4px;
+      flex-wrap: wrap;
+      margin-bottom: 16px;
+    }
+    .tcm-lang-btn {
+      background: #fff;
+      border: 1px solid #cbd5e1;
+      color: #64748b;
+      padding: 6px 10px;
+      border-radius: 6px;
+      cursor: pointer;
+      font-size: 12px;
+      font-weight: 600;
+    }
+    .tcm-lang-btn:hover { background: #f1f5f9; }
+    .tcm-lang-btn.has-data {
+      color: #1e293b;
+      border-color: #94a3b8;
+    }
+    .tcm-lang-btn.active {
+      background: #944149;
+      color: #fff;
+      border-color: #944149;
+    }
+    .tcm-pager {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 8px;
+      margin-top: 12px;
+      padding: 8px 0;
+    }
+    .tcm-pager-info {
+      font-size: 12px;
+      color: #475569;
+      font-weight: 600;
+    }
     .tcm-list { background: #fff; border: 1px solid #e2e8f0; border-radius: 8px; overflow: hidden; }
     .tcm-list-item {
       padding: 10px 14px;
@@ -250,9 +289,14 @@
   // =========================================================================
   // STATE
   // =========================================================================
+  const BLOG_LANGS = ['pl', 'en', 'de', 'ua', 'cz', 'pt', 'fr'];
+  const BLOG_PAGE_SIZE = 25;
+
   const state = {
     currentView: 'menu',
-    blogList: GM_getValue('tcm_blogList', null),
+    blogData: GM_getValue('tcm_blogData', {}),
+    blogLang: 'pl',
+    blogPage: 1,
   };
 
   // =========================================================================
@@ -355,6 +399,10 @@
   // =========================================================================
   // BLOGS MODULE
   // =========================================================================
+  function blogListForCurrentLang() {
+    return (state.blogData && state.blogData[state.blogLang]) || [];
+  }
+
   function renderBlogs() {
     state.currentView = 'blogs';
     showBreadcrumb([
@@ -363,55 +411,111 @@
     ]);
     const wrap = el('div');
 
-    wrap.appendChild(el('div', { class: 'tcm-section-title' }, 'Akcje'));
+    // Language switcher
+    wrap.appendChild(el('div', { class: 'tcm-section-title' }, 'Język'));
+    const langSwitch = el('div', { class: 'tcm-lang-switch' });
+    BLOG_LANGS.forEach(code => {
+      const has = !!(state.blogData[code] && state.blogData[code].length);
+      const btn = el('button', {
+        class: 'tcm-lang-btn' + (state.blogLang === code ? ' active' : '') + (has ? ' has-data' : ''),
+        onClick: () => {
+          state.blogLang = code;
+          state.blogPage = 1;
+          renderBlogs();
+        },
+      }, code.toUpperCase() + (has ? ` (${state.blogData[code].length})` : ''));
+      langSwitch.appendChild(btn);
+    });
+    wrap.appendChild(langSwitch);
 
+    // Actions
+    wrap.appendChild(el('div', { class: 'tcm-section-title' }, 'Akcje'));
     const actions = el('div', { class: 'tcm-actions' });
+    const currentHas = blogListForCurrentLang().length > 0;
     actions.appendChild(el('button', {
       class: 'tcm-btn',
-      onClick: scrapeBlogList,
-    }, 'Pobierz listę z admina'));
+      onClick: () => scrapeBlogList(state.blogLang),
+    }, currentHas ? `Pobierz ponownie (${state.blogLang.toUpperCase()})` : `Pobierz listę (${state.blogLang.toUpperCase()})`));
     actions.appendChild(el('button', {
       class: 'tcm-btn tcm-btn-secondary',
       onClick: exportBlogListJSON,
-    }, 'Eksport listy (JSON)'));
-    if (state.blogList && state.blogList.length) {
+    }, 'Eksport JSON'));
+    if (Object.keys(state.blogData).length > 0) {
       actions.appendChild(el('button', {
         class: 'tcm-btn tcm-btn-secondary',
         onClick: clearBlogList,
-      }, 'Wyczyść'));
+      }, 'Wyczyść wszystko'));
     }
     wrap.appendChild(actions);
 
     const progress = el('div', { id: 'tcm-blog-progress' });
     wrap.appendChild(progress);
 
-    if (!state.blogList || state.blogList.length === 0) {
-      wrap.appendChild(el('div', { class: 'tcm-empty' }, 'Brak danych. Kliknij "Pobierz listę z admina" aby zacząć.'));
+    // List for current language
+    const list = blogListForCurrentLang();
+    if (list.length === 0) {
+      wrap.appendChild(el('div', { class: 'tcm-empty' }, `Brak danych dla języka ${state.blogLang.toUpperCase()}. Kliknij "Pobierz listę" aby pobrać.`));
     } else {
-      const meta = el('div', { class: 'tcm-section-title' }, `Lista wpisów (${state.blogList.length})`);
-      wrap.appendChild(meta);
-      const list = el('div', { class: 'tcm-list' });
-      state.blogList.slice(0, 100).forEach(b => {
-        list.appendChild(el('div', { class: 'tcm-list-item' }, [
+      const totalPages = Math.ceil(list.length / BLOG_PAGE_SIZE);
+      const cur = Math.min(state.blogPage, totalPages);
+      const start = (cur - 1) * BLOG_PAGE_SIZE;
+      const end = Math.min(start + BLOG_PAGE_SIZE, list.length);
+      wrap.appendChild(el('div', { class: 'tcm-section-title' },
+        `Lista (${list.length} wpisów, strona ${cur}/${totalPages})`));
+      const listEl = el('div', { class: 'tcm-list' });
+      list.slice(start, end).forEach(b => {
+        listEl.appendChild(el('div', { class: 'tcm-list-item' }, [
           el('span', { class: 'tcm-list-id' }, '#' + b.id),
-          el('span', { class: 'tcm-list-name' }, b.name || '(brak)'),
+          el('span', { class: 'tcm-list-name' }, b.name || '(brak nazwy)'),
         ]));
       });
-      wrap.appendChild(list);
-      if (state.blogList.length > 100) {
-        wrap.appendChild(el('div', { class: 'tcm-empty' },
-          `... + ${state.blogList.length - 100} wpisów (eksportuj JSON aby zobaczyć wszystkie)`));
+      wrap.appendChild(listEl);
+
+      // Pagination controls
+      if (totalPages > 1) {
+        const pager = el('div', { class: 'tcm-pager' });
+        pager.appendChild(el('button', {
+          class: 'tcm-btn tcm-btn-sm tcm-btn-secondary',
+          disabled: cur === 1 ? '' : null,
+          onClick: () => { if (cur > 1) { state.blogPage = cur - 1; renderBlogs(); } },
+        }, '‹ Poprzednia'));
+        pager.appendChild(el('span', { class: 'tcm-pager-info' }, `${cur} / ${totalPages}`));
+        pager.appendChild(el('button', {
+          class: 'tcm-btn tcm-btn-sm tcm-btn-secondary',
+          disabled: cur === totalPages ? '' : null,
+          onClick: () => { if (cur < totalPages) { state.blogPage = cur + 1; renderBlogs(); } },
+        }, 'Następna ›'));
+        wrap.appendChild(pager);
       }
     }
 
     setContent(wrap);
   }
 
-  async function scrapeBlogList() {
+  function detectTotalPages(doc) {
+    let max = 1;
+    doc.querySelectorAll('a[href*="page="]').forEach(a => {
+      const m = a.getAttribute('href').match(/[?&]page=(\d+)/);
+      if (m) {
+        const n = parseInt(m[1], 10);
+        if (n > max) max = n;
+      }
+    });
+    return max;
+  }
+
+  function buildBlogUrl(page, lang) {
+    let url = `/admin/index.php?k=news&w=blog&page=${page}`;
+    if (lang && lang !== 'pl') url += `&jezyk=${lang}`;
+    return url;
+  }
+
+  async function scrapeBlogList(lang) {
+    lang = lang || state.blogLang || 'pl';
     const progress = document.getElementById('tcm-blog-progress');
     progress.innerHTML = '';
     const box = el('div', { class: 'tcm-progress' });
-    const label = el('div', {}, 'Pobieranie strony 1...');
+    const label = el('div', {}, `Wykrywanie liczby stron (${lang.toUpperCase()})...`);
     const bar = el('div', { class: 'tcm-progress-bar' });
     const fill = el('div', { class: 'tcm-progress-fill', style: { width: '0%' } });
     bar.appendChild(fill);
@@ -419,28 +523,25 @@
     box.appendChild(bar);
     progress.appendChild(box);
 
-    const all = [];
-    const seenIds = new Set();
-    const maxPages = 100;
-    let lastPage = 0;
     try {
-      for (let p = 1; p <= maxPages; p++) {
-        label.textContent = `Pobieranie strony ${p}...`;
-        const url = `/admin/index.php?k=news&w=blog&page=${p}`;
-        const res = await fetch(url, { credentials: 'include' });
-        const html = await res.text();
-        const doc = new DOMParser().parseFromString(html, 'text/html');
-        const rows = doc.querySelectorAll("tr[id^='news_']");
-        if (rows.length === 0) break;
+      // 1. Pobierz pierwszą stronę i wykryj total
+      const res1 = await fetch(buildBlogUrl(1, lang), { credentials: 'include' });
+      const html1 = await res1.text();
+      const doc1 = new DOMParser().parseFromString(html1, 'text/html');
+      const total = detectTotalPages(doc1);
 
-        const pageNew = [];
-        rows.forEach(tr => {
+      const all = [];
+      const seenIds = new Set();
+
+      const parseRows = (doc) => {
+        const out = [];
+        doc.querySelectorAll("tr[id^='news_']").forEach(tr => {
           const id = tr.id.replace('news_', '');
           if (seenIds.has(id)) return;
           const tds = tr.querySelectorAll('td');
           if (tds.length < 3) return;
           seenIds.add(id);
-          pageNew.push({
+          out.push({
             id,
             order: tds[0]?.textContent.trim().replace('.', '') || '',
             name: tds[1]?.textContent.trim().slice(0, 200) || '',
@@ -448,17 +549,30 @@
             category: tds[4]?.textContent.trim() || '',
           });
         });
+        return out;
+      };
 
-        // Brak nowych wpisów = ta sama strona co poprzednia (panel zwraca ostatnią przy przekroczeniu) → koniec
+      // 2. Strona 1 z już pobranego HTML
+      label.textContent = `Pobieranie 1/${total} (${lang.toUpperCase()})...`;
+      all.push(...parseRows(doc1));
+      fill.style.width = (1 / total * 100) + '%';
+
+      // 3. Reszta stron
+      for (let p = 2; p <= total; p++) {
+        label.textContent = `Pobieranie ${p}/${total} (${lang.toUpperCase()})...`;
+        const res = await fetch(buildBlogUrl(p, lang), { credentials: 'include' });
+        const html = await res.text();
+        const doc = new DOMParser().parseFromString(html, 'text/html');
+        const pageNew = parseRows(doc);
         if (pageNew.length === 0) break;
         all.push(...pageNew);
-        lastPage = p;
-        fill.style.width = Math.min(p * 5, 95) + '%';
+        fill.style.width = (p / total * 100) + '%';
       }
+
       fill.style.width = '100%';
-      label.textContent = `✓ Pobrano ${all.length} wpisów z ${lastPage} stron`;
-      state.blogList = all;
-      GM_setValue('tcm_blogList', all);
+      label.textContent = `✓ Pobrano ${all.length} wpisów z ${total} stron (${lang.toUpperCase()})`;
+      state.blogData[lang] = all;
+      GM_setValue('tcm_blogData', state.blogData);
       setTimeout(renderBlogs, 600);
     } catch (e) {
       label.textContent = '✗ Błąd: ' + e.message;
@@ -466,22 +580,24 @@
   }
 
   function exportBlogListJSON() {
-    if (!state.blogList || !state.blogList.length) {
-      alert('Najpierw pobierz listę z admina.');
+    const list = blogListForCurrentLang();
+    if (!list.length) {
+      alert(`Brak danych dla ${state.blogLang.toUpperCase()}.`);
       return;
     }
-    const blob = new Blob([JSON.stringify(state.blogList, null, 2)], { type: 'application/json' });
+    const blob = new Blob([JSON.stringify(list, null, 2)], { type: 'application/json' });
     const a = document.createElement('a');
     a.href = URL.createObjectURL(blob);
-    a.download = `blogs_${new Date().toISOString().slice(0, 10)}.json`;
+    a.download = `blogs_${state.blogLang}_${new Date().toISOString().slice(0, 10)}.json`;
     a.click();
     URL.revokeObjectURL(a.href);
   }
 
   function clearBlogList() {
-    if (!confirm('Wyczyścić zapisaną listę blogów?')) return;
-    state.blogList = null;
-    GM_setValue('tcm_blogList', null);
+    if (!confirm('Wyczyścić zapisane listy blogów dla wszystkich języków?')) return;
+    state.blogData = {};
+    state.blogPage = 1;
+    GM_setValue('tcm_blogData', {});
     renderBlogs();
   }
 
