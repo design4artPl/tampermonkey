@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         IdoSell - Parametry Toolbar
 // @namespace    https://idosell.com/
-// @version      4.6.0
+// @version      4.6.1
 // @description  Toolbar do grupowej edycji parametrow: panel-pro v1.2.4 inline + new-panel support, checkboxy, zaznaczanie, rozwijanie/zwijanie, grupowe usuwanie/edycja, import CSV
 // @author       SyncOffer
 // @match        https://*.iai-shop.com/panel/app/parameters.php*
@@ -3666,9 +3666,21 @@ li.tp-row--selected > div {
       sortAction.dataset.tooltip = 'Posortuj warto\u015bci';
       sortAction.addEventListener('click', function(e) {
         e.stopPropagation();
-        sortChildValuesNatural(doc, nodeId);
+        sortChildValuesNatural(doc, nodeId, 'name');
       });
       actionsCell.appendChild(sortAction);
+
+      // v4.6.1: sortowanie wartości po ID (rosnąco)
+      var sortIdAction = doc.createElement('span');
+      sortIdAction.className = 'material-symbols-outlined tp-action-btn';
+      sortIdAction.textContent = 'tag';
+      sortIdAction.title = 'Posortuj wartości wg ID (rosnąco)';
+      sortIdAction.dataset.tooltip = 'Posortuj wartości wg ID';
+      sortIdAction.addEventListener('click', function(e) {
+        e.stopPropagation();
+        sortChildValuesNatural(doc, nodeId, 'id');
+      });
+      actionsCell.appendChild(sortIdAction);
     }
 
     // e) Merge element (połącz) — click-based merge mode for values
@@ -5945,13 +5957,19 @@ li.tp-row--selected > div {
 
   // Per-parameter child value sort (natural ordering: 1, 2, 10, 20, 100)
   // Sorts DOM + saves order to server via saveManualSort API
-  function sortChildValuesNatural(doc, parentNodeId) {
+  function sortChildValuesNatural(doc, parentNodeId, mode) {
+    // v4.6.1: mode 'name' (domyślny, naturalny) lub 'id' (po ID rosnąco)
+    mode = mode || 'name';
     var childUl = doc.getElementById('block_group' + parentNodeId);
+    var _modeLabel = mode === 'id' ? 'wg ID' : 'naturalnie';
 
     function doNaturalSort(ul) {
       var items = Array.prototype.slice.call(ul.querySelectorAll(':scope > li[id^="m_"]'));
       if (items.length === 0) return;
       items.sort(function(a, b) {
+        if (mode === 'id') {
+          return (parseInt(getNodeId(a), 10) || 0) - (parseInt(getNodeId(b), 10) || 0);
+        }
         var nameA = getNodeName(doc, getNodeId(a));
         var nameB = getNodeName(doc, getNodeId(b));
         return nameA.localeCompare(nameB, 'pl', { numeric: true, sensitivity: 'base' });
@@ -5974,7 +5992,7 @@ li.tp-row--selected > div {
       xhr.setRequestHeader('Content-Type', 'application/x-www-form-urlencoded');
       xhr.onload = function() {
         if (xhr.status === 200) {
-          showForceDeleteStatus(doc, 'Posortowano naturalnie i zapisano (' + items.length + ' wartości)');
+          showForceDeleteStatus(doc, 'Posortowano ' + _modeLabel + ' i zapisano (' + items.length + ' wartości)');
         } else {
           showForceDeleteStatus(doc, 'Posortowano w widoku, ale błąd zapisu na serwerze');
         }
@@ -5984,7 +6002,7 @@ li.tp-row--selected > div {
       };
       xhr.send('action=saveManualSort&parameters=' + encodeURIComponent(JSON.stringify(sortOrder)));
 
-      showForceDeleteStatus(doc, 'Sortowanie naturalne — zapisywanie...');
+      showForceDeleteStatus(doc, 'Sortowanie ' + _modeLabel + ' — zapisywanie...');
     }
 
     if (childUl && childUl.querySelectorAll(':scope > li[id^="m_"]').length > 0) {
@@ -8240,7 +8258,7 @@ li.tp-row--selected > div {
       },
       pagination: { perPage: loadPerPagePref('Sec') },
       footer: {
-        version: 'v4.6.0',
+        version: 'v4.6.1',
         links: []
       }
     });
@@ -8917,7 +8935,7 @@ li.tp-row--selected > div {
       ],
       pagination: { perPage: 50 },
       footer: {
-        version: 'v4.6.0',
+        version: 'v4.6.1',
         links: []
       }
     });
