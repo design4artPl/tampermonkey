@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         IdoSell - Parametry Toolbar
 // @namespace    https://idosell.com/
-// @version      4.5.93
+// @version      4.5.94
 // @description  Toolbar do grupowej edycji parametrow: panel-pro v1.2.4 inline + new-panel support, checkboxy, zaznaczanie, rozwijanie/zwijanie, grupowe usuwanie/edycja, import CSV
 // @author       SyncOffer
 // @match        https://*.iai-shop.com/panel/app/parameters.php*
@@ -115,16 +115,17 @@
     } catch (e) {}
   }
   // v4.5.89: trwały wybór liczby elementów na stronę (bez TTL — ustawienie użytkownika)
-  function loadPerPagePref() {
+  // v4.5.94: opcjonalny scope ('' = parametry, 'Sec' = sekcje)
+  function loadPerPagePref(scope) {
     try {
-      var raw = localStorage.getItem(_tpCacheKey('pref', 'perPage'));
+      var raw = localStorage.getItem(_tpCacheKey('pref', 'perPage' + (scope || '')));
       if (raw === null || raw === '') return 50;
       var n = parseInt(raw, 10);
       return isNaN(n) ? 50 : n; // 0 = "wszystko"
     } catch (e) { return 50; }
   }
-  function savePerPagePref(n) {
-    try { localStorage.setItem(_tpCacheKey('pref', 'perPage'), String(n)); } catch (e) {}
+  function savePerPagePref(n, scope) {
+    try { localStorage.setItem(_tpCacheKey('pref', 'perPage' + (scope || '')), String(n)); } catch (e) {}
   }
 
   // Expose na window dla diagnostyki (F12: tpCacheClearAll())
@@ -277,7 +278,7 @@
     'li.panel-pro__row.panel-pro--selected { background: #eff6ff !important; }',
     'li.panel-pro__row.panel-pro--selected > * { background: transparent !important; box-shadow: none !important; }',
     'li.panel-pro__row.panel-pro--selected:hover { background: #dbeafe; }',
-    'li.panel-pro__row.panel-pro--hidden, li.panel-pro__row.panel-pro--filter-hidden, li.panel-pro__row.panel-pro--view-hidden { display: none !important; }',
+    'li.panel-pro__row.panel-pro--hidden, li.panel-pro__row.panel-pro--filter-hidden, li.panel-pro__row.panel-pro--view-hidden, li.panel-pro__row.panel-pro--page-hidden { display: none !important; }',
 
     /* Status toast */
     '.panel-pro__status { position: fixed; bottom: 20px; right: 20px; background: #323232; color: #fff; padding: 12px 20px; border-radius: 8px; font-size: 14px; font-family: inherit; box-shadow: 0 4px 16px rgba(0,0,0,0.25); z-index: 999999; max-width: calc(100vw - 40px); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; animation: panel-pro-fade-in 0.2s ease; }',
@@ -301,8 +302,8 @@
     '.panel-pro__footer__left { display: flex; align-items: center; gap: 16px; flex-wrap: wrap; }',
     '.panel-pro__footer__right { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; }',
     '.panel-pro__counter { color: #5f6368; font-size: 13px; font-weight: 400; }',
-    '.panel-pro__counter--selected { color: #1a73e8; font-weight: 600; }',
-    '.panel-pro__counter--total { font-weight: 600; }',
+    '.panel-pro__counter--selected { color: #1a73e8; font-weight: 400; }',
+    '.panel-pro__counter--total { font-weight: 400; }',
     '.panel-pro__footer-link { display: inline-flex; align-items: center; gap: 5px; padding: 4px 10px; border: 1px solid #dadce0; border-radius: 6px; background: transparent; color: #5f6368; font-size: 11px; font-weight: 500; font-family: inherit; cursor: pointer; transition: all 0.15s; text-decoration: none; }',
     '.panel-pro__footer-link .material-symbols-outlined { font-size: 14px; }',
     '.panel-pro__footer-link:hover { background: #f1f3f4; }',
@@ -727,7 +728,7 @@
     var totalPages = perPage === 0 ? 1 : Math.max(1, Math.ceil(total / perPage));
     var start = perPage === 0 ? 1 : (page - 1) * perPage + 1;
     var end = perPage === 0 ? total : Math.min(page * perPage, total);
-    container.appendChild(el(doc, 'span', { className: 'panel-pro__pagination__info', textContent: 'Widoczne: ' + start + '-' + end }));
+    container.appendChild(el(doc, 'span', { className: 'panel-pro__pagination__info', textContent: '| Widoczne: ' + start + '-' + end + ' |' }));
     var prev = el(doc, 'button', { className: 'panel-pro__pagination__btn', type: 'button' });
     prev.appendChild(icon(doc, 'chevron_left'));
     if (page <= 1) prev.disabled = true;
@@ -7658,6 +7659,8 @@ li.tp-row--selected > div {
     var items = _sectionsMount.listEl.querySelectorAll(':scope > li');
     if (!view) {
       items.forEach(function (li) { li.classList.remove('panel-pro--view-hidden'); });
+      _secPagination.currentPage = 1;
+      applySectionsPagination(doc);
       return;
     }
     var want = {};
@@ -7666,6 +7669,8 @@ li.tp-row--selected > div {
       if (want[String(li.dataset.sectionId)]) li.classList.remove('panel-pro--view-hidden');
       else li.classList.add('panel-pro--view-hidden');
     });
+    _secPagination.currentPage = 1;
+    applySectionsPagination(doc);
   }
 
   function reapplyActiveSectionView(doc) {
@@ -8159,8 +8164,9 @@ li.tp-row--selected > div {
         ],
         onClear: function () { toggleAllSections(doc, false); }
       },
+      pagination: { perPage: loadPerPagePref('Sec') },
       footer: {
-        version: 'v4.5.93',
+        version: 'v4.5.94',
         links: []
       }
     });
@@ -8192,8 +8198,9 @@ li.tp-row--selected > div {
     getAllSections(doc).then(function (sections) {
       renderSectionRows(doc, sectionsPanel, ul, sections);
       _sectionsMount.totalCount = sections.length;
-      updateSectionsCounter();
       reapplyActiveSectionView(doc);
+      _secPagination.currentPage = 1;
+      applySectionsPagination(doc);
       loadSectionsProductCountsInBackground(doc, sections);
     }).catch(function (e) {
       sectionsPanel.setCounter('Wszystkich sekcji: <span class="panel-pro__counter--total">b\u0142\u0105d</span>');
@@ -8306,6 +8313,9 @@ li.tp-row--selected > div {
       var match = !q || name.indexOf(q) !== -1 || id.indexOf(q) !== -1;
       li.classList.toggle('panel-pro--filter-hidden', !match);
     });
+    // v4.5.94: po filtrze przelicz paginację od strony 1
+    _secPagination.currentPage = 1;
+    applySectionsPagination(doc);
   }
 
   function _setSectionRowSelected(li, on) {
@@ -8317,7 +8327,9 @@ li.tp-row--selected > div {
     if (!_sectionsMount || !_sectionsMount.listEl) return;
     var items = _sectionsMount.listEl.querySelectorAll(':scope > li');
     items.forEach(function (li) {
-      if (li.classList.contains('panel-pro--filter-hidden')) return;
+      if (li.classList.contains('panel-pro--filter-hidden') ||
+          li.classList.contains('panel-pro--view-hidden') ||
+          li.classList.contains('panel-pro--page-hidden')) return;
       var cb = li.querySelector('input.tp-checkbox');
       if (cb) { cb.checked = !!on; _setSectionRowSelected(li, on); }
     });
@@ -8328,7 +8340,9 @@ li.tp-row--selected > div {
     if (!_sectionsMount || !_sectionsMount.listEl) return;
     var items = _sectionsMount.listEl.querySelectorAll(':scope > li');
     items.forEach(function (li) {
-      if (li.classList.contains('panel-pro--filter-hidden')) return;
+      if (li.classList.contains('panel-pro--filter-hidden') ||
+          li.classList.contains('panel-pro--view-hidden') ||
+          li.classList.contains('panel-pro--page-hidden')) return;
       var cb = li.querySelector('input.tp-checkbox');
       if (cb) { cb.checked = !cb.checked; _setSectionRowSelected(li, cb.checked); }
     });
@@ -8351,6 +8365,47 @@ li.tp-row--selected > div {
     var h = 'Wszystkich sekcji: <span class="panel-pro__counter--total">' + total + '</span>';
     if (sel > 0) h += ' | Zaznaczone: <span class="panel-pro__counter--selected">' + sel + '</span>';
     _sectionsMount.panel.setCounter(h);
+  }
+
+  // v4.5.94: paginacja listy sekcji (analogiczna do drzewa parametrów)
+  var _secPagination = { currentPage: 1, perPage: loadPerPagePref('Sec') };
+
+  function _sectionVisiblePool() {
+    if (!_sectionsMount || !_sectionsMount.listEl) return [];
+    return Array.prototype.slice.call(_sectionsMount.listEl.querySelectorAll(':scope > li')).filter(function (li) {
+      return !li.classList.contains('panel-pro--filter-hidden') && !li.classList.contains('panel-pro--view-hidden');
+    });
+  }
+
+  function applySectionsPagination(doc) {
+    if (!_sectionsMount || !_sectionsMount.panel) return;
+    var pool = _sectionVisiblePool();
+    var pp = _secPagination.perPage;
+    var total = pool.length;
+    var totalPages = pp === 0 ? 1 : Math.max(1, Math.ceil(total / pp));
+    if (_secPagination.currentPage > totalPages) _secPagination.currentPage = totalPages;
+    if (_secPagination.currentPage < 1) _secPagination.currentPage = 1;
+    var start = pp === 0 ? 0 : (_secPagination.currentPage - 1) * pp;
+    var end = pp === 0 ? total : start + pp;
+    pool.forEach(function (li, idx) {
+      if (idx >= start && idx < end) li.classList.remove('panel-pro--page-hidden');
+      else li.classList.add('panel-pro--page-hidden');
+    });
+    // li poza pulą (filter/view-hidden) — zdejmij page-hidden (i tak ukryte inną klasą)
+    Array.prototype.slice.call(_sectionsMount.listEl.querySelectorAll(':scope > li.panel-pro--page-hidden')).forEach(function (li) {
+      if (li.classList.contains('panel-pro--filter-hidden') || li.classList.contains('panel-pro--view-hidden')) li.classList.remove('panel-pro--page-hidden');
+    });
+    if (_sectionsMount.panel.renderPagination) {
+      _sectionsMount.panel.renderPagination(
+        { page: _secPagination.currentPage, perPage: pp, total: total },
+        {
+          perPageOptions: [10, 25, 50, 100, 200, 0],
+          onPageChange: function (p) { _secPagination.currentPage = p; applySectionsPagination(doc); },
+          onPerPageChange: function (n) { _secPagination.perPage = n; _secPagination.currentPage = 1; savePerPagePref(n, 'Sec'); applySectionsPagination(doc); }
+        }
+      );
+    }
+    updateSectionsCounter();
   }
 
   async function bulkDeleteSelectedSections(doc) {
@@ -8758,7 +8813,7 @@ li.tp-row--selected > div {
       ],
       pagination: { perPage: 50 },
       footer: {
-        version: 'v4.5.93',
+        version: 'v4.5.94',
         links: []
       }
     });
