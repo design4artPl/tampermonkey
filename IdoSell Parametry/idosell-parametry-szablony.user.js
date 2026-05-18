@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         IdoSell - Parametry Toolbar
 // @namespace    https://idosell.com/
-// @version      4.5.76
+// @version      4.5.77
 // @description  Toolbar do grupowej edycji parametrow: panel-pro v1.2.4 inline + new-panel support, checkboxy, zaznaczanie, rozwijanie/zwijanie, grupowe usuwanie/edycja, import CSV
 // @author       SyncOffer
 // @match        https://*.iai-shop.com/panel/app/parameters.php*
@@ -172,7 +172,8 @@
     '.panel-pro__search-clear:hover { background: #e8eaed; color: #202124; }',
     '.panel-pro__search-clear .material-symbols-outlined { font-size: 18px; color: inherit; }',
     '.panel-pro__search input { border: none !important; outline: none !important; flex: 1; background: transparent !important; font-size: 14px !important; padding: 0 !important; margin: 0 !important; box-shadow: none !important; color: #202124 !important; font-family: inherit; min-width: 0; }',
-    '.panel-pro__search input::placeholder { color: #9aa0a6; }',
+    '.panel-pro__search input::placeholder { color: #9aa0a6; transition: opacity 0.15s; }',
+    '.panel-pro__search input:focus::placeholder { opacity: 0; }',
 
     /* Buttons */
     '.panel-pro__btn { display: inline-flex; align-items: center; gap: 4px; padding: 5px 10px; border: 1px solid transparent; border-radius: 4px; background: transparent; cursor: pointer; font-size: 13px; font-weight: 500; font-family: inherit; color: #334155; transition: background 0.15s; white-space: nowrap; }',
@@ -7796,7 +7797,7 @@ li.tp-row--selected > div {
       },
       toolbar: {
         search: {
-          placeholder: 'Szukaj sekcji...',
+          placeholder: 'Szukaj sekcji po nazwie lub id',
           onChange: function (q) { _sectionsSearch = (q || '').toLowerCase(); filterSectionsList(doc); }
         },
         sections: [
@@ -8326,7 +8327,7 @@ li.tp-row--selected > div {
       },
       toolbar: {
         search: {
-          placeholder: 'Szukaj w drzewie...',
+          placeholder: 'Szukaj parametrów i ich wartości po nazwie lub id',
           onChange: function (q) { filterTree(doc, q); }
         },
         sections: [
@@ -8385,7 +8386,7 @@ li.tp-row--selected > div {
       ],
       pagination: { perPage: 50 },
       footer: {
-        version: 'v4.5.76',
+        version: 'v4.5.77',
         links: [
           { label: 'Propozycja', icon: 'star', tooltip: 'Zaproponuj funkcjonalność', variant: 'feature', href: 'https://github.com/design4artPl/tampermonkey/issues/new?labels=enhancement', target: '_blank' },
           { label: 'Zgłoś błąd', icon: 'bug_report', tooltip: 'Zgłoś błąd', variant: 'bug', href: 'https://github.com/design4artPl/tampermonkey/issues/new?labels=bug', target: '_blank' }
