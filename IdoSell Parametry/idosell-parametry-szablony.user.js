@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         IdoSell - Parametry Toolbar
 // @namespace    https://idosell.com/
-// @version      4.5.67
+// @version      4.5.68
 // @description  Toolbar do grupowej edycji parametrow: panel-pro v1.2.4 inline + new-panel support, checkboxy, zaznaczanie, rozwijanie/zwijanie, grupowe usuwanie/edycja, import CSV
 // @author       SyncOffer
 // @match        https://*.iai-shop.com/panel/app/parameters.php*
@@ -6101,10 +6101,20 @@ li.tp-row--selected > div {
   async function runExport(doc, opts) {
     var extras = opts.extras || { priority: true, context: true, products: false };
     var paramIds = [];
+    var selValuesByParam = {}; // paramId -> { valueId: true } — gdy zaznaczono konkretne wartości
     if (opts.scope === 'selected') {
       // v4.5.66: zaznaczone parametry + rodzice zaznaczonych wartości
       paramIds = getSelectedParamIds(doc);
       if (!paramIds.length) { alert('Brak zaznaczenia — zaznacz parametr lub przynajmniej jedną jego wartość'); return; }
+      // v4.5.68: które wartości zaznaczono explicite (do filtrowania per parametr)
+      selectedNodes.forEach(function (nid) {
+        if (isValue(doc, nid)) {
+          var pid = getParentId(doc, nid);
+          if (pid && pid !== '0') {
+            (selValuesByParam[String(pid)] = selValuesByParam[String(pid)] || {})[String(nid)] = true;
+          }
+        }
+      });
     }
 
     if (_panel) _panel.showStatus('Eksport: rozpoczynanie...');
@@ -6115,6 +6125,17 @@ li.tp-row--selected > div {
         _panel.showStatus('Eksport ' + opts.format.toUpperCase() + ': ' + msg + ' (' + pct + '%)');
       }
     });
+
+    // v4.5.68: jeśli dla parametru zaznaczono konkretne wartości — eksportuj tylko je.
+    // Brak zaznaczonych wartości (zaznaczony sam parametr / collapsed) => wszystkie wartości.
+    if (opts.scope === 'selected') {
+      data.parameters.forEach(function (p) {
+        var sel = selValuesByParam[String(p.id)];
+        if (sel && Object.keys(sel).length) {
+          p.values = p.values.filter(function (v) { return sel[String(v.id)]; });
+        }
+      });
+    }
 
     // v4.5.64: opcjonalnie dociągnij konteksty per parametr+wartość gdy ekstras.context
     if (extras.context) {
@@ -7580,7 +7601,7 @@ li.tp-row--selected > div {
       ],
       pagination: { perPage: 50 },
       footer: {
-        version: 'v4.5.67',
+        version: 'v4.5.68',
         links: [
           { label: 'Propozycja', icon: 'star', tooltip: 'Zaproponuj funkcjonalność', variant: 'feature', href: 'https://github.com/design4artPl/tampermonkey/issues/new?labels=enhancement', target: '_blank' },
           { label: 'Zgłoś błąd', icon: 'bug_report', tooltip: 'Zgłoś błąd', variant: 'bug', href: 'https://github.com/design4artPl/tampermonkey/issues/new?labels=bug', target: '_blank' }
