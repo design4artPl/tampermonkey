@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         IdoSell - Parametry Toolbar
 // @namespace    https://idosell.com/
-// @version      4.5.90
+// @version      4.5.91
 // @description  Toolbar do grupowej edycji parametrow: panel-pro v1.2.4 inline + new-panel support, checkboxy, zaznaczanie, rozwijanie/zwijanie, grupowe usuwanie/edycja, import CSV
 // @author       SyncOffer
 // @match        https://*.iai-shop.com/panel/app/parameters.php*
@@ -8147,7 +8147,7 @@ li.tp-row--selected > div {
         onClear: function () { toggleAllSections(doc, false); }
       },
       footer: {
-        version: 'v4.5.90',
+        version: 'v4.5.91',
         links: []
       }
     });
@@ -8732,7 +8732,7 @@ li.tp-row--selected > div {
       ],
       pagination: { perPage: 50 },
       footer: {
-        version: 'v4.5.90',
+        version: 'v4.5.91',
         links: []
       }
     });
@@ -8977,18 +8977,14 @@ li.tp-row--selected > div {
 
     async function processOne(t) {
       try {
-        // v4.5.62: bierzemy MAX z trzech \u017ar\u00f3de\u0142, bo \u017cadne nie jest zawsze prawdziwe:
-        //   A) parent-level numberOfOccurrence (czasem zwraca distinct ID)
-        //   B) union value-level numberOfOccurrence productIds
-        //   C) MAX z natywnych licznik\u00f3w iteminfo z treeCode
-        // Na demo37 native UI bywa \u017ar\u00f3d\u0142em prawdy gdy API podlicza (np. Ko\u0142ek 20631:
-        // API => 2, native iteminfo "towary: 3" przy obu warto\u015bciach).
-        var direct = await fetchValueProductCount(t.nid);
+        // v4.5.91: liczba przy parametrze = liczba UNIKALNYCH towar\u00f3w z jego warto\u015bci
+        // (to samo co pokazuje link products-list.php?trait=). NIE dorzucamy
+        // parametr-level numberOfOccurrence (zawy\u017ca, bo bywa sum\u0105/cross-warto\u015bci)
+        // ani Math.max z natywnymi (zawy\u017ca\u0142o, gdy produkt ma kilka warto\u015bci).
         var idsSeen = {};
-        if (direct.productIds && direct.productIds.length) {
-          direct.productIds.forEach(function (pid) { idsSeen[pid] = true; });
-        }
-        var maxNativeCount = 0;
+        var anyValueIds = false;
+        var sumNative = 0;
+        var total = 0;
 
         var children = await loadChildValues(t.nid);
         if (children && children.length > 0) {
@@ -8996,15 +8992,21 @@ li.tp-row--selected > div {
           for (var k = 0; k < perValue.length; k++) {
             var pv = perValue[k];
             if (pv.productIds && pv.productIds.length) {
+              anyValueIds = true;
               for (var j = 0; j < pv.productIds.length; j++) idsSeen[pv.productIds[j]] = true;
             }
-            var nativeCnt = Number(children[k].productCount) || 0;
-            if (nativeCnt > maxNativeCount) maxNativeCount = nativeCnt;
+            sumNative += Number(children[k].productCount) || 0;
           }
+          // Mamy ID per warto\u015b\u0107 -> distinct (zgodne z list\u0105 towar\u00f3w po klikni\u0119ciu).
+          // Brak ID z API (demo37 czasem nie zwraca) -> suma natywnych "towary: N".
+          total = anyValueIds ? Object.keys(idsSeen).length : sumNative;
+        } else {
+          // Parametr bez warto\u015bci \u2014 jedyny sygna\u0142 to parametr-level numberOfOccurrence.
+          var direct = await fetchValueProductCount(t.nid);
+          total = (direct.productIds && direct.productIds.length)
+            ? Object.keys(direct.productIds.reduce(function (m, id) { m[id] = 1; return m; }, {})).length
+            : (Number(direct.count) || 0);
         }
-
-        var apiDistinct = Object.keys(idsSeen).length;
-        var total = Math.max(apiDistinct, maxNativeCount);
         t.cell.dataset.countLoaded = '1';
         t.cell.textContent = '';
         if (total > 0) {
