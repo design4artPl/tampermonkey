@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         IdoSell - Parametry Toolbar
 // @namespace    https://idosell.com/
-// @version      4.5.88
+// @version      4.5.89
 // @description  Toolbar do grupowej edycji parametrow: panel-pro v1.2.4 inline + new-panel support, checkboxy, zaznaczanie, rozwijanie/zwijanie, grupowe usuwanie/edycja, import CSV
 // @author       SyncOffer
 // @match        https://*.iai-shop.com/panel/app/parameters.php*
@@ -114,6 +114,19 @@
       toDel.forEach(function (k) { localStorage.removeItem(k); });
     } catch (e) {}
   }
+  // v4.5.89: trwały wybór liczby elementów na stronę (bez TTL — ustawienie użytkownika)
+  function loadPerPagePref() {
+    try {
+      var raw = localStorage.getItem(_tpCacheKey('pref', 'perPage'));
+      if (raw === null || raw === '') return 50;
+      var n = parseInt(raw, 10);
+      return isNaN(n) ? 50 : n; // 0 = "wszystko"
+    } catch (e) { return 50; }
+  }
+  function savePerPagePref(n) {
+    try { localStorage.setItem(_tpCacheKey('pref', 'perPage'), String(n)); } catch (e) {}
+  }
+
   // Expose na window dla diagnostyki (F12: tpCacheClearAll())
   try { window.tpCacheClearAll = tpCacheClearAll; } catch (e) {}
 
@@ -3774,7 +3787,7 @@ li.tp-row--selected > div {
 
   var _paginationState = {
     currentPage: 1,
-    perPage: 50,
+    perPage: loadPerPagePref(),
     totalVisible: 0,
     doc: null
   };
@@ -3918,6 +3931,7 @@ li.tp-row--selected > div {
       perPageSelect.addEventListener('change', function() {
         _paginationState.perPage = parseInt(this.value, 10);
         _paginationState.currentPage = 1;
+        savePerPagePref(_paginationState.perPage);
         applyPagination(doc);
       });
     }
@@ -8133,7 +8147,7 @@ li.tp-row--selected > div {
         onClear: function () { toggleAllSections(doc, false); }
       },
       footer: {
-        version: 'v4.5.88',
+        version: 'v4.5.89',
         links: []
       }
     });
@@ -8718,7 +8732,7 @@ li.tp-row--selected > div {
       ],
       pagination: { perPage: 50 },
       footer: {
-        version: 'v4.5.88',
+        version: 'v4.5.89',
         links: []
       }
     });
@@ -8756,7 +8770,7 @@ li.tp-row--selected > div {
       {
         perPageOptions: [10, 25, 50, 100, 200, 0],
         onPageChange: function (p) { _paginationState.currentPage = p; applyPagination(doc); },
-        onPerPageChange: function (n) { _paginationState.perPage = n; _paginationState.currentPage = 1; applyPagination(doc); }
+        onPerPageChange: function (n) { _paginationState.perPage = n; _paginationState.currentPage = 1; savePerPagePref(n); applyPagination(doc); }
       }
     );
   }
