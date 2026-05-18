@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         IdoSell - Parametry Toolbar
 // @namespace    https://idosell.com/
-// @version      4.5.98
+// @version      4.5.99
 // @description  Toolbar do grupowej edycji parametrow: panel-pro v1.2.4 inline + new-panel support, checkboxy, zaznaczanie, rozwijanie/zwijanie, grupowe usuwanie/edycja, import CSV
 // @author       SyncOffer
 // @match        https://*.iai-shop.com/panel/app/parameters.php*
@@ -8173,7 +8173,7 @@ li.tp-row--selected > div {
       },
       pagination: { perPage: loadPerPagePref('Sec') },
       footer: {
-        version: 'v4.5.98',
+        version: 'v4.5.99',
         links: []
       }
     });
@@ -8665,15 +8665,44 @@ li.tp-row--selected > div {
   }
 
   function createNewSection(doc) {
-    var name = prompt('Nazwa nowej sekcji:');
-    if (!name) return;
-    fetchAjax('action=checkEl&type=section&lang=' + LANG + '&name=' + encodeURIComponent(name))
-      .then(function (resp) {
-        if (resp && resp.error) { alert('B\u0142\u0105d: ' + resp.error); return; }
-        if (_panel) _panel.showStatus('Utworzono sekcj\u0119 "' + name + '"');
-        setTimeout(function () { (doc.defaultView || window).location.reload(); }, 900);
-      })
-      .catch(function (e) { alert('B\u0142\u0105d tworzenia sekcji: ' + (e.message || e)); });
+    showInputModal(doc, {
+      icon: 'create_new_folder',
+      title: 'Dodaj sekcj\u0119',
+      subtitle: 'Nowa sekcja na poziomie g\u0142\u00f3wnym',
+      label: 'Nazwa sekcji',
+      placeholder: 'np. Sekcja techniczna',
+      okLabel: 'Utw\u00f3rz',
+      onOk: function (name) {
+        fetchAjax('action=checkEl&type=section&lang=' + LANG + '&name=' + encodeURIComponent(name))
+          .then(function (resp) {
+            if (resp && resp.error) { alert('B\u0142\u0105d: ' + resp.error); return; }
+            if (_panel) _panel.showStatus('Utworzono sekcj\u0119 "' + name + '"');
+            setTimeout(function () { (doc.defaultView || window).location.reload(); }, 900);
+          })
+          .catch(function (e) { alert('B\u0142\u0105d tworzenia sekcji: ' + (e.message || e)); });
+      }
+    });
+  }
+
+  // v4.5.99: dodawanie parametru przez ujednolicony modal (zamiast natywnego dialogu)
+  function createNewParameter(doc) {
+    showInputModal(doc, {
+      icon: 'add',
+      title: 'Dodaj parametr',
+      subtitle: 'Nowy parametr na poziomie g\u0142\u00f3wnym',
+      label: 'Nazwa parametru',
+      placeholder: 'np. Kolor',
+      okLabel: 'Utw\u00f3rz',
+      onOk: function (name) {
+        fetchAjax('action=checkEl&type=parameter&lang=' + LANG + '&name=' + encodeURIComponent(name))
+          .then(function (resp) {
+            if (resp && resp.error) { alert('B\u0142\u0105d: ' + resp.error); return; }
+            if (_panel) _panel.showStatus('Utworzono parametr "' + name + '"');
+            setTimeout(function () { (doc.defaultView || window).location.reload(); }, 900);
+          })
+          .catch(function (e) { alert('B\u0142\u0105d tworzenia parametru: ' + (e.message || e)); });
+      }
+    });
   }
 
   // v4.5.47: bardziej cierpliwe + reaktywne wykrywanie #block_group0. Bez sztywnego limitu
@@ -8755,7 +8784,7 @@ li.tp-row--selected > div {
           label: 'Operacje na drzewie',
           buttons: [
             { icon: 'sort_by_alpha', label: 'Sortuj alfabetycznie', tooltip: 'Posortuj wg nazwy', variant: 'text',    onClick: function () { sortAlphabetically(doc); } },
-            { icon: 'add',           label: 'Dodaj parametr',       tooltip: 'Dodaj nowy parametr', variant: 'primary', onClick: function () { triggerNativeAddParameter(doc); } }
+            { icon: 'add',           label: 'Dodaj parametr',       tooltip: 'Dodaj nowy parametr', variant: 'primary', onClick: function () { createNewParameter(doc); } }
           ]
         }
       },
@@ -8820,7 +8849,7 @@ li.tp-row--selected > div {
       ],
       pagination: { perPage: 50 },
       footer: {
-        version: 'v4.5.98',
+        version: 'v4.5.99',
         links: []
       }
     });
