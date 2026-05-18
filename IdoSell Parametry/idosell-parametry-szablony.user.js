@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         IdoSell - Parametry Toolbar
 // @namespace    https://idosell.com/
-// @version      4.5.70
+// @version      4.5.71
 // @description  Toolbar do grupowej edycji parametrow: panel-pro v1.2.4 inline + new-panel support, checkboxy, zaznaczanie, rozwijanie/zwijanie, grupowe usuwanie/edycja, import CSV
 // @author       SyncOffer
 // @match        https://*.iai-shop.com/panel/app/parameters.php*
@@ -176,8 +176,13 @@
     '.panel-pro__btn:hover:not(:disabled) { background: #f1f5f9; }',
     '.panel-pro__btn:disabled { opacity: 0.5; cursor: not-allowed; }',
     '.panel-pro__btn .material-symbols-outlined { font-size: 18px; color: #5f6368; }',
-    '.panel-pro__btn--icon { padding: 5px; }',
+    '.panel-pro__btn--icon { padding: 5px; border: 1px solid #dadce0; border-radius: 6px; }',
+    '.panel-pro__btn--icon:hover:not(:disabled) { background: #f1f5f9; border-color: #c4c7c5; }',
     '.panel-pro__btn--icon .material-symbols-outlined { font-size: 20px; }',
+    '.panel-pro__dropdown__menu--cols { min-width: 180px; padding: 6px 0; }',
+    '.panel-pro__dropdown__check { display: flex; align-items: center; gap: 8px; padding: 7px 14px; cursor: pointer; font-size: 13px; color: #334155; user-select: none; }',
+    '.panel-pro__dropdown__check:hover { background: #f1f5f9; }',
+    '.panel-pro__dropdown__check input { margin: 0; cursor: pointer; accent-color: #2563eb; }',
     '.panel-pro__btn--text { background: transparent; }',
     '.panel-pro__btn--primary { background: #2563eb; color: #fff; }',
     '.panel-pro__btn--primary:hover:not(:disabled) { background: #1d4ed8; }',
@@ -475,7 +480,61 @@
     return wrap;
   }
 
-  function buildToolbar(doc, cfg, ctx) {
+  // v4.5.71: trwałość widoczności kolumn (localStorage)
+  function loadColPrefs(key) {
+    try { var raw = localStorage.getItem(key); return raw ? JSON.parse(raw) : null; }
+    catch (e) { return null; }
+  }
+  function saveColPrefs(key, hiddenIds) {
+    try { localStorage.setItem(key, JSON.stringify(hiddenIds || [])); } catch (e) {}
+  }
+  function applyColPrefs(columns, cfg) {
+    if (!cfg || !cfg.key) return;
+    var hidden = loadColPrefs(cfg.key);
+    if (!hidden || !hidden.length) return;
+    var tog = cfg.toggleable || [];
+    columns.forEach(function (c) {
+      if (tog.indexOf(c.id) >= 0) c.hidden = hidden.indexOf(c.id) >= 0;
+    });
+  }
+
+  // v4.5.71: ikona "Pokaż/ukryj kolumny" + menu z checkboxami
+  function buildColumnsMenu(doc, columns, cfg, ctx) {
+    var wrap = el(doc, 'div', { className: 'panel-pro__dropdown' });
+    var toggle = el(doc, 'button', { className: 'panel-pro__btn panel-pro__btn--icon', type: 'button' });
+    toggle.setAttribute('data-pp-tooltip', cfg.tooltip || 'Pokaż / ukryj kolumny');
+    toggle.appendChild(icon(doc, 'view_week'));
+    var menu = el(doc, 'div', { className: 'panel-pro__dropdown__menu panel-pro__dropdown__menu--cols' });
+    (cfg.toggleable || []).forEach(function (cid) {
+      var col = columns.filter(function (c) { return c.id === cid; })[0];
+      if (!col) return;
+      var label = (cfg.labels && cfg.labels[cid]) || col.label || cid;
+      var item = el(doc, 'label', { className: 'panel-pro__dropdown__check' });
+      var cb = doc.createElement('input');
+      cb.type = 'checkbox';
+      cb.checked = !col.hidden;
+      cb.addEventListener('click', function (e) { e.stopPropagation(); });
+      cb.addEventListener('change', function () {
+        if (ctx.api && ctx.api.setColumnVisible) ctx.api.setColumnVisible(cid, cb.checked);
+        var hid = columns.filter(function (c) {
+          return (cfg.toggleable.indexOf(c.id) >= 0) && c.hidden;
+        }).map(function (c) { return c.id; });
+        saveColPrefs(cfg.key, hid);
+      });
+      item.appendChild(cb);
+      item.appendChild(doc.createTextNode(' ' + label));
+      menu.appendChild(item);
+    });
+    toggle.addEventListener('click', function (e) { e.stopPropagation(); menu.classList.toggle('panel-pro--open'); });
+    doc.addEventListener('click', function (e) {
+      if (!e.target.closest('.panel-pro__dropdown')) menu.classList.remove('panel-pro--open');
+    });
+    wrap.appendChild(toggle);
+    wrap.appendChild(menu);
+    return wrap;
+  }
+
+  function buildToolbar(doc, cfg, ctx, columns, columnsMenuCfg) {
     var toolbar = el(doc, 'div', { className: 'panel-pro__toolbar' });
     var leftWrap = el(doc, 'div', { className: 'panel-pro__toolbar__left' });
     var rightWrap = el(doc, 'div', { className: 'panel-pro__toolbar__right' });
@@ -495,6 +554,7 @@
       if (section.label) group.appendChild(el(doc, 'span', { className: 'panel-pro__label', textContent: section.label }));
       (section.buttons || []).forEach(function (btn) { group.appendChild(buildButton(doc, btn, ctx)); });
       if (section.dropdown) group.appendChild(buildDropdown(doc, section.dropdown, ctx));
+      if (section.columnsMenu && columnsMenuCfg && columns) group.appendChild(buildColumnsMenu(doc, columns, columnsMenuCfg, ctx));
       rightWrap.appendChild(group);
     });
 
@@ -679,6 +739,7 @@
     installPortalTooltips(doc);
 
     var columns = options.columns || [];
+    if (options.columnsMenu) applyColPrefs(columns, options.columnsMenu);
     var gridTemplate = gridTemplateFromColumns(columns);
 
     ensureId(options.mountTarget);
@@ -696,7 +757,7 @@
     var opsBar = options.opsBar ? buildOpsBar(doc, options.opsBar, ctx) : null;
 
     var cardEl = el(doc, 'div', { className: 'panel-pro' });
-    var toolbar = options.toolbar ? buildToolbar(doc, options.toolbar, ctx) : null;
+    var toolbar = options.toolbar ? buildToolbar(doc, options.toolbar, ctx, columns, options.columnsMenu) : null;
     var headerWrapper = el(doc, 'div', { className: 'panel-pro__header-wrapper' });
     var header = buildHeader(doc, columns);
     var selectionBar = options.selectionBar ? buildSelectionBar(doc, options.selectionBar, ctx, columns) : null;
@@ -809,6 +870,21 @@
         updateSelectionBarFloat();
       },
       findToolbarBtn: function (id) { return cardEl.querySelector('.panel-pro__btn[data-pp-id="' + id + '"]') || cardEl.querySelector('.panel-pro__opsbar-btn[data-pp-id="' + id + '"]'); },
+      // v4.5.71: pokaż/ukryj kolumnę w locie (grid + CSS + nagłówek)
+      setColumnVisible: function (colId, visible) {
+        var col = columns.filter(function (c) { return c.id === colId; })[0];
+        if (!col) return;
+        col.hidden = !visible;
+        var gt = gridTemplateFromColumns(columns);
+        gridTemplate = gt;
+        rowStyle.textContent =
+          '#' + options.mountTarget.id + ' .panel-pro__thead,' +
+          '#' + options.mountTarget.id + ' li.panel-pro__row {' +
+          '  grid-template-columns: ' + gt + ';' +
+          '}\n' + buildHiddenColsCss(options.mountTarget.id, columns);
+        var cell = header.querySelector('.panel-pro__col--' + colId);
+        if (cell) cell.classList.toggle('panel-pro__col--hidden', !visible);
+      },
       destroy: function () {
         cardEl.remove();
         if (opsBar) opsBar.remove();
@@ -7278,17 +7354,23 @@ li.tp-row--selected > div {
           onChange: function (q) { _sectionsSearch = (q || '').toLowerCase(); filterSectionsList(doc); }
         },
         sections: [
-          { label: 'Zaznaczanie', buttons: [
-            { icon: 'select_all', label: 'Zaznacz', tooltip: 'Zaznacz wszystkie widoczne', variant: 'text', onClick: function () { toggleAllSections(doc, true); } },
-            { icon: 'deselect',   label: 'Odznacz', tooltip: 'Odznacz wszystko',           variant: 'text', onClick: function () { toggleAllSections(doc, false); } },
-            { icon: 'swap_horiz', label: 'Odwr\u00f3\u0107', tooltip: 'Odwr\u00f3\u0107 zaznaczenie', variant: 'text', onClick: function () { invertSectionsSelection(doc); } }
+          { buttons: [
+            { icon: 'select_all', tooltip: 'Zaznacz wszystkie widoczne', variant: 'icon', onClick: function () { toggleAllSections(doc, true); } },
+            { icon: 'deselect',   tooltip: 'Odznacz wszystko',           variant: 'icon', onClick: function () { toggleAllSections(doc, false); } },
+            { icon: 'swap_horiz', tooltip: 'Odwr\u00f3\u0107 zaznaczenie', variant: 'icon', onClick: function () { invertSectionsSelection(doc); } }
           ] },
-          { label: 'Transfer', buttons: [
+          { buttons: [
             { icon: 'download',    label: 'Eksport JSON', tooltip: 'Eksport JSON', variant: 'text', onClick: function () { exportSections(doc, 'json'); } },
             { icon: 'table_chart', label: 'Eksport CSV',  tooltip: 'Eksport CSV',  variant: 'text', onClick: function () { exportSections(doc, 'csv'); } },
             { icon: 'upload',      label: 'Import',       tooltip: 'Import JSON/CSV', variant: 'text', onClick: function () { openSectionsImportPicker(doc); } }
-          ] }
+          ] },
+          { columnsMenu: true }
         ]
+      },
+      columnsMenu: {
+        key: 'tp.cols.sekcje',
+        toggleable: ['id', 'products'],
+        tooltip: 'Poka\u017c / ukryj kolumny'
       },
       columns: [
         { id: 'drag',     label: '',             width: '24px' },
@@ -7772,21 +7854,22 @@ li.tp-row--selected > div {
           onChange: function (q) { filterTree(doc, q); }
         },
         sections: [
-          { label: 'Zaznaczanie', buttons: [
-            { icon: 'select_all', label: 'Zaznacz', tooltip: 'Zaznacz wszystkie widoczne', variant: 'text', onClick: function () { selectAll(doc); } },
-            { icon: 'deselect',   label: 'Odznacz', tooltip: 'Odznacz wszystko',           variant: 'text', onClick: function () { deselectAll(doc); } },
-            { icon: 'swap_horiz', label: 'Odwr\u00f3\u0107', tooltip: 'Odwr\u00f3\u0107 zaznaczenie', variant: 'text', onClick: function () { invertSelection(doc); } }
+          { buttons: [
+            { icon: 'select_all', tooltip: 'Zaznacz wszystkie widoczne', variant: 'icon', onClick: function () { selectAll(doc); } },
+            { icon: 'deselect',   tooltip: 'Odznacz wszystko',           variant: 'icon', onClick: function () { deselectAll(doc); } },
+            { icon: 'swap_horiz', tooltip: 'Odwr\u00f3\u0107 zaznaczenie', variant: 'icon', onClick: function () { invertSelection(doc); } }
           ] },
-          { label: 'Transfer', buttons: [
+          { buttons: [
             { icon: 'download', label: 'Eksport', tooltip: 'Eksport parametr\u00f3w \u2014 wyb\u00f3r zakresu, formatu i j\u0119zyk\u00f3w', variant: 'text', onClick: function () { showExportModal(doc, 'all'); } },
             { icon: 'upload',   label: 'Import',  tooltip: 'Import parametr\u00f3w z pliku JSON lub CSV',   variant: 'text', onClick: function () { openImportFilePicker(doc); } }
           ] },
-          { label: 'Widok', dropdown: {
+          { dropdown: {
             icon: 'visibility',
             options: [ { value: 'all', label: 'Wszystko', active: true } ],
             onChange: function (v) { /* handled by rebuildViewsDropdown */ }
           } },
-          { label: 'Drzewo', buttons: [
+          { columnsMenu: true },
+          { buttons: [
             { id: 'expand-all',   icon: 'keyboard_double_arrow_up',   tooltip: 'Zwi\u0144 wszystko',   variant: 'icon', onClick: function () { collapseAll(doc); } },
             { id: 'collapse-all', icon: 'keyboard_double_arrow_down', tooltip: 'Rozwi\u0144 wszystko', variant: 'icon', onClick: function (e, api) {
                 var stop = api.findToolbarBtn('stop-expand'); if (stop) stop.style.display = '';
@@ -7795,6 +7878,11 @@ li.tp-row--selected > div {
             { id: 'stop-expand',  icon: 'stop',                       tooltip: 'Przerwij',             variant: 'icon', onClick: function (e, api) { stopExpand(); var b = api.findToolbarBtn('stop-expand'); if (b) b.style.display = 'none'; } }
           ] }
         ]
+      },
+      columnsMenu: {
+        key: 'tp.cols.parametry',
+        toggleable: ['id', 'children', 'products', 'context'],
+        tooltip: 'Poka\u017c / ukryj kolumny'
       },
       selectionBar: {
         selectedLabel: 'Wybrano {n} obiekt\u00f3w',
@@ -7821,7 +7909,7 @@ li.tp-row--selected > div {
       ],
       pagination: { perPage: 50 },
       footer: {
-        version: 'v4.5.70',
+        version: 'v4.5.71',
         links: [
           { label: 'Propozycja', icon: 'star', tooltip: 'Zaproponuj funkcjonalność', variant: 'feature', href: 'https://github.com/design4artPl/tampermonkey/issues/new?labels=enhancement', target: '_blank' },
           { label: 'Zgłoś błąd', icon: 'bug_report', tooltip: 'Zgłoś błąd', variant: 'bug', href: 'https://github.com/design4artPl/tampermonkey/issues/new?labels=bug', target: '_blank' }
