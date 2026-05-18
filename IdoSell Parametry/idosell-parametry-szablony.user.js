@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         IdoSell - Parametry Toolbar
 // @namespace    https://idosell.com/
-// @version      4.5.83
+// @version      4.5.84
 // @description  Toolbar do grupowej edycji parametrow: panel-pro v1.2.4 inline + new-panel support, checkboxy, zaznaczanie, rozwijanie/zwijanie, grupowe usuwanie/edycja, import CSV
 // @author       SyncOffer
 // @match        https://*.iai-shop.com/panel/app/parameters.php*
@@ -274,6 +274,19 @@
     /* Footer + counter + links + version + pagination */
     '.panel-pro__footer { padding: 10px 16px; background: #fff; border-top: 1px solid #dadce0; display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 12px; font-size: 13px; color: #5f6368; }',
     '.panel-pro__footer:empty { display: none; }',
+    /* v4.5.84: global footer bar (na samym dole strony) */
+    '.tp-global-footer { display: flex; align-items: center; justify-content: space-between; gap: 16px; flex-wrap: wrap; padding: 16px 20px; margin: 28px 0 12px 0; border-top: 1px solid #e2e8f0; background: #fff; border-radius: 8px; box-shadow: 0 1px 2px rgba(0,0,0,0.04); font-family: "Google Sans", Roboto, Arial, sans-serif; }',
+    '.tp-global-footer__links { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }',
+    '.tp-global-footer__link { display: inline-flex; align-items: center; gap: 6px; padding: 7px 14px; border: 1px solid #dadce0; border-radius: 6px; background: #fff; color: #334155; font-size: 13px; font-weight: 600; cursor: pointer; text-decoration: none; transition: background .15s, border-color .15s, box-shadow .15s; }',
+    '.tp-global-footer__link:hover { background: #f8fafc; border-color: #cbd5e1; box-shadow: 0 1px 2px rgba(0,0,0,.05); }',
+    '.tp-global-footer__link .material-symbols-outlined { font-size: 18px; }',
+    '.tp-global-footer__link--feature { color: #b45309; border-color: #fcd34d; }',
+    '.tp-global-footer__link--feature:hover { background: #fffbeb; border-color: #f59e0b; }',
+    '.tp-global-footer__link--bug { color: #b91c1c; border-color: #fca5a5; }',
+    '.tp-global-footer__link--bug:hover { background: #fef2f2; border-color: #ef4444; }',
+    '.tp-global-footer__brand { display: flex; align-items: center; opacity: .9; }',
+    '.tp-global-footer__brand svg { height: 34px; width: auto; display: block; }',
+    '.tp-global-footer__ver { font-size: 11px; color: #9aa0a6; margin-right: 12px; font-variant-numeric: tabular-nums; }',
     '.panel-pro__footer__left { display: flex; align-items: center; gap: 16px; flex-wrap: wrap; }',
     '.panel-pro__footer__right { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; }',
     '.panel-pro__counter { color: #5f6368; font-size: 13px; font-weight: 400; }',
@@ -8430,6 +8443,58 @@ li.tp-row--selected > div {
     mountSectionsPanel(doc);
   }
 
+  // v4.5.84: globalny pasek footer na samym dole strony
+  function mountGlobalFooter(doc) {
+    var ex = doc.getElementById('tp-global-footer');
+    if (ex) ex.remove();
+    var f = doc.createElement('div');
+    f.id = 'tp-global-footer';
+    f.className = 'tp-global-footer';
+
+    var links = doc.createElement('div');
+    links.className = 'tp-global-footer__links';
+    function mk(label, icon, variant, href) {
+      var a = doc.createElement('a');
+      a.className = 'tp-global-footer__link tp-global-footer__link--' + variant;
+      a.href = href;
+      a.target = '_blank';
+      a.rel = 'noopener';
+      a.title = label;
+      a.innerHTML = '<span class="material-symbols-outlined">' + icon + '</span><span>' + label + '</span>';
+      return a;
+    }
+    links.appendChild(mk('Propozycja', 'star', 'feature', 'https://github.com/design4artPl/tampermonkey/issues/new?labels=enhancement'));
+    links.appendChild(mk('Zgłoś błąd', 'bug_report', 'bug', 'https://github.com/design4artPl/tampermonkey/issues/new?labels=bug'));
+
+    var right = doc.createElement('div');
+    right.style.cssText = 'display:flex;align-items:center;';
+    var ver = doc.createElement('span');
+    ver.className = 'tp-global-footer__ver';
+    var _v = '4.5.84';
+    try { if (typeof GM_info !== 'undefined' && GM_info.script && GM_info.script.version) _v = GM_info.script.version; } catch (e) {}
+    ver.textContent = 'v' + _v;
+    var brand = doc.createElement('div');
+    brand.className = 'tp-global-footer__brand';
+    brand.innerHTML =
+      '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 291 44" width="291" height="44" role="img" aria-label="Made by Maciej Dobroń">' +
+        '<defs><style>' +
+          '@import url(\'https://fonts.googleapis.com/css2?family=Syne:wght@400;700\');' +
+          '.tpfb-lbl{font-family:\'Syne\',sans-serif;font-size:9px;font-weight:400;fill:#aaaaaa;letter-spacing:2.34px;}' +
+          '.tpfb-nm{font-family:\'Syne\',sans-serif;font-size:14px;font-weight:700;fill:#111111;letter-spacing:1.4px;}' +
+        '</style></defs>' +
+        '<text class="tpfb-lbl" x="16" y="22" dominant-baseline="middle">MADE BY</text>' +
+        '<rect x="82.02" y="19" width="22" height="1.5" fill="#c0392b"/>' +
+        '<rect x="82.02" y="23.5" width="13" height="1.5" fill="#dddddd"/>' +
+        '<text class="tpfb-nm" x="116.02" y="22" dominant-baseline="middle">MACIEJ DOBROŃ</text>' +
+      '</svg>';
+    right.appendChild(ver);
+    right.appendChild(brand);
+
+    f.appendChild(links);
+    f.appendChild(right);
+    doc.body.appendChild(f);
+  }
+
   // v4.5.39: background loader for section product counts (numberOfOccurrence works on real panels)
   async function loadSectionsProductCountsInBackground(doc, sections) {
     if (!_sectionsMount || !_sectionsMount.listEl) return;
@@ -8665,11 +8730,8 @@ li.tp-row--selected > div {
       ],
       pagination: { perPage: 50 },
       footer: {
-        version: 'v4.5.83',
-        links: [
-          { label: 'Propozycja', icon: 'star', tooltip: 'Zaproponuj funkcjonalność', variant: 'feature', href: 'https://github.com/design4artPl/tampermonkey/issues/new?labels=enhancement', target: '_blank' },
-          { label: 'Zgłoś błąd', icon: 'bug_report', tooltip: 'Zgłoś błąd', variant: 'bug', href: 'https://github.com/design4artPl/tampermonkey/issues/new?labels=bug', target: '_blank' }
-        ]
+        version: 'v4.5.84',
+        links: []
       }
     });
     var stopBtn = panel.findToolbarBtn('stop-expand');
@@ -8988,6 +9050,8 @@ li.tp-row--selected > div {
     }, 50);
     // v4.5.31: sections panel below parameters list — mount immediately
     mountSectionsPanel(doc);
+    // v4.5.84: globalny footer na samym dole strony
+    mountGlobalFooter(doc);
     // v4.5.14: auto-sort after import
     try {
       if (sessionStorage.getItem('tp.autoSortAfterReload') === '1') {
