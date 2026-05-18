@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         IdoSell - Parametry Toolbar
 // @namespace    https://idosell.com/
-// @version      4.5.66
+// @version      4.5.67
 // @description  Toolbar do grupowej edycji parametrow: panel-pro v1.2.4 inline + new-panel support, checkboxy, zaznaczanie, rozwijanie/zwijanie, grupowe usuwanie/edycja, import CSV
 // @author       SyncOffer
 // @match        https://*.iai-shop.com/panel/app/parameters.php*
@@ -6136,35 +6136,63 @@ li.tp-row--selected > div {
       }
     }
 
-    // v4.5.65: opcjonalnie dociągnij listę produktów per wartość gdy extras.products
+    // v4.5.67: lista produktów per wartość.
+    // numberOfOccurrence czasem zwraca puste mimo że IdoSell natywnie pokazuje "towary: N"
+    // (rozjazd po stronie IdoSella). Fallback: probe removeParam (errno 235 zwraca ID;
+    // usunięcie jest zablokowane bo wartość MA produkty — więc to bezpieczne, gdy nativeCnt > 0).
     if (extras.products) {
+      // Mapy native productCount per wartość (z treeCode)
+      var nativeCnts = {};
+      var paramList = data.parameters;
+      for (var npi = 0; npi < paramList.length; npi += 8) {
+        var npBatch = paramList.slice(npi, npi + 8);
+        await Promise.all(npBatch.map(async function (p) {
+          try {
+            var kids = await loadChildValues(p.id);
+            (kids || []).forEach(function (c) { nativeCnts[String(c.id)] = Number(c.productCount) || 0; });
+          } catch (e) {}
+        }));
+      }
+
+      async function resolveProductIds(nodeId, parentId) {
+        var r = await fetchValueProductCount(nodeId);
+        if (r && r.productIds && r.productIds.length) return r.productIds.slice();
+        // Probe removeParam tylko gdy native count > 0 (deletion zablokowane => bezpieczne)
+        var nc = nativeCnts[String(nodeId)] || 0;
+        if (nc > 0 && parentId && parentId !== '0') {
+          try {
+            var rm = await fetchAjax('action=removeParam&node=' + nodeId + '&tree=0&shop=2&parent=' + parentId);
+            if (String(rm.errno) === '235' && rm.error) {
+              var seg = rm.error.split(/towar[óo]w:\s*/i)[1] || '';
+              return seg.match(/\d+/g) || [];
+            }
+          } catch (e) {}
+        }
+        return [];
+      }
+
       var prodTargets = [];
       data.parameters.forEach(function (p) {
-        // ID parametru — zbieramy direct (czasem API zwraca dla parametru)
-        prodTargets.push({ ref: p, id: p.id, isValue: false });
-        p.values.forEach(function (v) { prodTargets.push({ ref: v, id: v.id, isValue: true }); });
+        p.values.forEach(function (v) { prodTargets.push({ ref: v, id: v.id, parentId: p.id }); });
       });
-      var BATCH2 = 15;
+      var BATCH2 = 10;
       for (var pi = 0; pi < prodTargets.length; pi += BATCH2) {
         var batch2 = prodTargets.slice(pi, pi + BATCH2);
         await Promise.all(batch2.map(async function (t) {
-          try {
-            var r = await fetchValueProductCount(t.id);
-            t.ref.products = (r && r.productIds) ? r.productIds.slice() : [];
-          } catch (e) { t.ref.products = []; }
+          try { t.ref.products = await resolveProductIds(t.id, t.parentId); }
+          catch (e) { t.ref.products = []; }
         }));
         if (_panel) _panel.showStatus('Eksport: produkty (' + Math.min(pi + BATCH2, prodTargets.length) + '/' + prodTargets.length + ')');
       }
-      // Dla parametru: jeśli direct nie zwrócił nic, weź union ID z wartości
-      data.parameters.forEach(function (p) {
-        if (!p.products || !p.products.length) {
-          var seen = {};
-          p.values.forEach(function (v) {
-            (v.products || []).forEach(function (pid) { seen[pid] = true; });
-          });
-          p.products = Object.keys(seen);
-        }
-      });
+      // Parametr: union ID z wartości (+ direct gdy API zwraca dla parametru)
+      for (var dpi = 0; dpi < data.parameters.length; dpi++) {
+        var pp = data.parameters[dpi];
+        var directP = await fetchValueProductCount(pp.id);
+        var seenP = {};
+        if (directP && directP.productIds) directP.productIds.forEach(function (pid) { seenP[pid] = true; });
+        pp.values.forEach(function (v) { (v.products || []).forEach(function (pid) { seenP[pid] = true; }); });
+        pp.products = Object.keys(seenP);
+      }
     }
 
     var ts = new Date().toISOString().replace(/[:.]/g, '-');
@@ -7552,7 +7580,7 @@ li.tp-row--selected > div {
       ],
       pagination: { perPage: 50 },
       footer: {
-        version: 'v4.5.66',
+        version: 'v4.5.67',
         links: [
           { label: 'Propozycja', icon: 'star', tooltip: 'Zaproponuj funkcjonalność', variant: 'feature', href: 'https://github.com/design4artPl/tampermonkey/issues/new?labels=enhancement', target: '_blank' },
           { label: 'Zgłoś błąd', icon: 'bug_report', tooltip: 'Zgłoś błąd', variant: 'bug', href: 'https://github.com/design4artPl/tampermonkey/issues/new?labels=bug', target: '_blank' }
