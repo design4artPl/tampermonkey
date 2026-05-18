@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         IdoSell - Parametry Toolbar
 // @namespace    https://idosell.com/
-// @version      4.5.87
+// @version      4.5.88
 // @description  Toolbar do grupowej edycji parametrow: panel-pro v1.2.4 inline + new-panel support, checkboxy, zaznaczanie, rozwijanie/zwijanie, grupowe usuwanie/edycja, import CSV
 // @author       SyncOffer
 // @match        https://*.iai-shop.com/panel/app/parameters.php*
@@ -8133,7 +8133,7 @@ li.tp-row--selected > div {
         onClear: function () { toggleAllSections(doc, false); }
       },
       footer: {
-        version: 'v4.5.87',
+        version: 'v4.5.88',
         links: []
       }
     });
@@ -8467,7 +8467,7 @@ li.tp-row--selected > div {
     var brand = doc.createElement('div');
     brand.className = 'tp-global-footer__brand';
     brand.innerHTML =
-      '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 291 44" width="291" height="44" role="img" aria-label="Made by Maciej Dobroń">' +
+      '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 238 44" width="238" height="44" role="img" aria-label="Made by Panel Pro">' +
         '<defs><style>' +
           '@import url(\'https://fonts.googleapis.com/css2?family=Syne:wght@400;700\');' +
           '.tpfb-lbl{font-family:\'Syne\',sans-serif;font-size:9px;font-weight:400;fill:#aaaaaa;letter-spacing:2.34px;}' +
@@ -8476,7 +8476,7 @@ li.tp-row--selected > div {
         '<text class="tpfb-lbl" x="16" y="22" dominant-baseline="middle">MADE BY</text>' +
         '<rect x="82.02" y="19" width="22" height="1.5" fill="#c0392b"/>' +
         '<rect x="82.02" y="23.5" width="13" height="1.5" fill="#dddddd"/>' +
-        '<text class="tpfb-nm" x="116.02" y="22" dominant-baseline="middle">MACIEJ DOBROŃ</text>' +
+        '<text class="tpfb-nm" x="116.02" y="22" dominant-baseline="middle">PANEL PRO</text>' +
       '</svg>';
     f.appendChild(links);
     f.appendChild(brand);
@@ -8718,7 +8718,7 @@ li.tp-row--selected > div {
       ],
       pagination: { perPage: 50 },
       footer: {
-        version: 'v4.5.87',
+        version: 'v4.5.88',
         links: []
       }
     });
