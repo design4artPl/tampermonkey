@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         IdoSell - Parametry Toolbar
 // @namespace    https://idosell.com/
-// @version      4.6.6
+// @version      4.6.7
 // @description  Toolbar do grupowej edycji parametrow: panel-pro v1.2.4 inline + new-panel support, checkboxy, zaznaczanie, rozwijanie/zwijanie, grupowe usuwanie/edycja, import CSV
 // @author       SyncOffer
 // @match        https://*.iai-shop.com/panel/app/parameters.php*
@@ -2404,6 +2404,49 @@ li.ui-draggable-disabled.tp-row-enhanced {
 .tp-ed-src { width:100% !important; box-sizing:border-box !important; border:none !important; padding:10px 12px !important; margin:0 !important; font:13px/1.5 ui-monospace,Consolas,monospace !important; color:#1a1a2e !important; background:#fff !important; resize:vertical !important; outline:none !important; border-radius:0 0 8px 8px !important; }
 .tp-ed-wys { padding:10px 12px; min-height:140px; outline:none; font-size:14px; color:#1a1a2e; background:#fff; border-radius:0 0 8px 8px; overflow:auto; line-height:1.5; }
 .tp-ed-wys:focus { box-shadow: inset 0 0 0 2px rgba(26,115,232,.18); }
+
+/* v4.6.7: modal edycji w stylu Menu (settings-v2) */
+.tp-se { background:#f4f5f7 !important; padding:14px 16px 6px !important; }
+.tp-se .tp-se-card { background:#fff; border:1px solid #eef0f4; border-radius:14px; margin-bottom:14px; overflow:hidden; }
+.tp-se .tp-se-card:last-child { margin-bottom:0; }
+.tp-se .tp-se-head { padding:13px 20px; border-bottom:1px solid #eef0f4; background:#fafbfc; font-size:12px; font-weight:700; color:#344054; text-transform:uppercase; letter-spacing:.06em; display:flex; align-items:center; gap:10px; }
+.tp-se .tp-se-head .material-symbols-outlined { font-size:17px; color:#667085; opacity:.75; }
+.tp-se .tp-se-body { padding:4px 20px 10px; }
+.tp-se .tp-se-tabs { display:flex; flex-wrap:wrap; gap:4px; padding:10px 0 0; }
+.tp-se .tp-se-tab { display:inline-flex; align-items:center; gap:6px; padding:6px 12px; border:1px solid #e0e3ea; background:#f8f9fb; border-radius:8px; cursor:pointer; font-size:12.5px; color:#667085; font-family:inherit; }
+.tp-se .tp-se-tab.tp-on { border-color:#4f8cff; background:#eef3ff; color:#1a1a2e; font-weight:600; }
+.tp-se .tp-se-row { display:flex; align-items:center; justify-content:space-between; padding:11px 0; border-bottom:1px solid #f0f2f5; gap:16px; }
+.tp-se .tp-se-row:last-child { border-bottom:none; }
+.tp-se .tp-se-row--col { display:block; padding:12px 0 6px; }
+.tp-se .tp-se-lbl { flex:1 1 auto; font-size:13.5px; color:#344054; }
+.tp-se .tp-se-row--col > .tp-se-lbl { display:block; margin-bottom:8px; font-weight:500; }
+.tp-se .tp-se-ctl { flex:0 0 420px; max-width:420px; }
+.tp-se .tp-se-ctl input[type=text], .tp-se .tp-se-ctl select {
+  width:100% !important; box-sizing:border-box !important; padding:9px 11px !important; margin:0 !important;
+  background:#f8f9fb !important; border:1px solid #e0e3ea !important; border-radius:8px !important;
+  font:13px 'DM Sans',inherit !important; color:#1a1a2e !important; height:auto !important; outline:none !important;
+  -webkit-appearance:none !important; appearance:none !important;
+}
+.tp-se .tp-se-ctl select { background-image:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='10' height='10' viewBox='0 0 12 12'%3E%3Cpath d='M3 4.5L6 7.5L9 4.5' fill='none' stroke='%2398a2b3' stroke-width='1.5' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E") !important; background-repeat:no-repeat !important; background-position:right 10px center !important; padding-right:30px !important; }
+.tp-se .tp-se-ctl input[type=text]:focus, .tp-se .tp-se-ctl select:focus { border-color:#4f8cff !important; box-shadow:0 0 0 3px rgba(79,140,255,.15) !important; }
+.tp-se .tp-se-hint { margin:10px 0 4px; padding:11px 14px; border-radius:9px; font-size:12px; display:flex; gap:10px; align-items:flex-start; line-height:1.5; background:#eef3ff; border:1px solid #d6e2ff; color:#3b5998; }
+/* edytor opisu: header (label + pill toggle po prawej) */
+.tp-se .tp-ed-v2head { display:flex; align-items:center; justify-content:space-between; margin-bottom:8px; gap:12px; }
+.tp-se .tp-ed-v2head .tp-ed-v2lbl { font-size:13px; color:#344054; font-weight:500; }
+.tp-se .tp-ed-wrap { border:none; background:transparent; }
+.tp-se .tp-ed-wrap .tp-ed-bar { display:inline-flex; border:none; background:#f0f2f5; border-radius:8px; padding:3px; overflow:visible; }
+.tp-se .tp-ed-wrap .tp-ed-btn { flex:none; padding:5px 14px; border-radius:6px; color:#98a2b3; }
+.tp-se .tp-ed-wrap .tp-ed-btn:hover { background:rgba(255,255,255,.5); color:#344054; }
+.tp-se .tp-ed-wrap .tp-ed-btn.tp-ed-on { background:#fff; color:#1a1a2e; box-shadow:0 1px 3px rgba(0,0,0,.1); }
+.tp-se .tp-ed-src { border:1px solid #e0e3ea !important; border-radius:10px !important; background:#f8f9fb !important; }
+.tp-se .tp-ed-wys { border:1px solid #e0e3ea; border-radius:10px; background:#f8f9fb; }
+/* integracja natywnego edytora grafik */
+.tp-se .tp-gfx-native .yui3-tabview-list { display:none !important; }
+.tp-se .tp-gfx-native table { width:100% !important; border:none !important; background:none !important; }
+.tp-se .tp-gfx-native td.description { width:42% !important; font-size:13px; color:#344054; padding:8px 6px !important; }
+.tp-se .tp-gfx-native td.text, .tp-se .tp-gfx-native td.text2 { padding:8px 6px !important; font-size:13px; }
+.tp-se .tp-gfx-native .tableRowDescription { font-size:11px; font-weight:700; color:#667085; text-transform:uppercase; letter-spacing:.05em; padding:10px 6px 4px !important; }
+.tp-se .tp-gfx-native .nohref { color:#2f6ad6; cursor:pointer; }
 
 /* Hide native elements inside enhanced rows */
 li.tp-row-enhanced > .showChildren,
@@ -8267,7 +8310,7 @@ li.tp-row--selected > div {
       },
       pagination: { perPage: loadPerPagePref('Sec') },
       footer: {
-        version: 'v4.6.6',
+        version: 'v4.6.7',
         links: []
       }
     });
@@ -8959,66 +9002,95 @@ li.tp-row--selected > div {
         '<button type="button" class="tp-modal-header-close" aria-label="Zamknij" style="color:#b0b8c9;">\u2715</button>';
 
       var body = d.createElement('div');
-      body.className = 'tp-modal-body';
-      body.style.background = '#fff';
+      body.className = 'tp-modal-body tp-se';
 
-      // pasek zak\u0142adek j\u0119zyk\u00f3w
-      var tabs = d.createElement('div');
-      tabs.style.cssText = 'display:flex;flex-wrap:wrap;gap:4px;border-bottom:1px solid #eef0f4;margin-bottom:14px;padding-bottom:0;';
+      var cardC = d.createElement('div'); cardC.className = 'tp-se-card';
+      cardC.innerHTML = '<div class="tp-se-head"><span class="material-symbols-outlined">edit_note</span>Treść</div>';
+      var bodyC = d.createElement('div'); bodyC.className = 'tp-se-body';
+      cardC.appendChild(bodyC);
+
+      var tabs = d.createElement('div'); tabs.className = 'tp-se-tabs';
       langs.forEach(function (lg) {
         var t = d.createElement('button');
-        t.type = 'button';
-        t.dataset.lang = lg;
-        t.innerHTML = getLangFlag(lg, 20) + '<span style="margin-left:6px">' + escapeHtml(getLangName(lg)) + '</span>';
-        t.style.cssText = 'display:inline-flex;align-items:center;padding:7px 12px;border:none;border-bottom:2px solid transparent;background:transparent;cursor:pointer;font-size:13px;color:#5f6368;font-family:inherit;';
+        t.type = 'button'; t.className = 'tp-se-tab'; t.dataset.lang = lg;
+        t.innerHTML = getLangFlag(lg, 18) + '<span>' + escapeHtml(getLangName(lg)) + '</span>';
         tabs.appendChild(t);
       });
-      body.appendChild(tabs);
+      bodyC.appendChild(tabs);
 
-      var lblN = d.createElement('div');
-      lblN.textContent = 'Nazwa';
-      lblN.style.cssText = 'font-size:12.5px;color:#667085;font-weight:600;margin-bottom:6px;';
-      var inN = d.createElement('input');
-      inN.type = 'text';
-      inN.style.cssText = ['width:100% !important','box-sizing:border-box !important','padding:10px 12px !important','margin:0 0 14px 0 !important','border:1px solid #d0d5dd !important','border-radius:8px !important','background:#fff !important','font-size:14px !important','color:#1a1a2e !important','font-family:inherit !important','height:auto !important','outline:none !important','-webkit-appearance:none !important','appearance:none !important'].join(';') + ';';
-      inN.addEventListener('focus', function () { inN.style.setProperty('border-color', '#1a73e8', 'important'); inN.style.setProperty('box-shadow', '0 0 0 3px rgba(26,115,232,.15)', 'important'); });
-      inN.addEventListener('blur', function () { inN.style.setProperty('border-color', '#d0d5dd', 'important'); inN.style.setProperty('box-shadow', 'none', 'important'); });
+      var rowN = d.createElement('div'); rowN.className = 'tp-se-row';
+      var lblN = d.createElement('span'); lblN.className = 'tp-se-lbl'; lblN.textContent = 'Nazwa';
+      var ctlN = d.createElement('div'); ctlN.className = 'tp-se-ctl';
+      var inN = d.createElement('input'); inN.type = 'text';
+      ctlN.appendChild(inN);
+      rowN.appendChild(lblN); rowN.appendChild(ctlN);
+      bodyC.appendChild(rowN);
 
-      var lblD = d.createElement('div');
-      lblD.textContent = 'Opis';
-      lblD.style.cssText = 'font-size:12.5px;color:#667085;font-weight:600;margin-bottom:6px;';
+      var rowD = d.createElement('div'); rowD.className = 'tp-se-row tp-se-row--col';
       var edD = createEditorWidget(d, st[curLang].description, 8);
+      var edHead = d.createElement('div'); edHead.className = 'tp-ed-v2head';
+      var edLbl = d.createElement('span'); edLbl.className = 'tp-ed-v2lbl'; edLbl.textContent = 'Opis (HTML)';
+      edHead.appendChild(edLbl);
+      var edBar = edD.container.querySelector('.tp-ed-bar');
+      if (edBar) edHead.appendChild(edBar);
+      edD.container.insertBefore(edHead, edD.container.firstChild);
+      rowD.appendChild(edD.container);
+      bodyC.appendChild(rowD);
+      body.appendChild(cardC);
 
-      body.appendChild(lblN); body.appendChild(inN);
-      body.appendChild(lblD); body.appendChild(edD.container);
+      var cardG = d.createElement('div'); cardG.className = 'tp-se-card';
+      cardG.innerHTML = '<div class="tp-se-head"><span class="material-symbols-outlined">image</span>Grafiki</div>';
+      var bodyG = d.createElement('div'); bodyG.className = 'tp-se-body';
+      cardG.appendChild(bodyG);
+      var gHint = d.createElement('div'); gHint.className = 'tp-se-hint';
+      gHint.innerHTML = '<span>ℹ</span><span>Zalecany format: trzy wielkości (RWD) dla komputerów, tabletów i smartfonów. Grafiki ustawiasz dla wybranego języka w konkretnym sklepie (tylko sklepy, w których ten język jest dostępny).</span>';
+      bodyG.appendChild(gHint);
+      var rowShop = d.createElement('div'); rowShop.className = 'tp-se-row';
+      var lblShop = d.createElement('span'); lblShop.className = 'tp-se-lbl'; lblShop.textContent = 'Sklep';
+      var ctlShop = d.createElement('div'); ctlShop.className = 'tp-se-ctl';
+      var gfxShopSel = d.createElement('select');
+      gfxShopSel.innerHTML = '<option>Wczytywanie…</option>'; gfxShopSel.disabled = true;
+      ctlShop.appendChild(gfxShopSel);
+      rowShop.appendChild(lblShop); rowShop.appendChild(ctlShop);
+      bodyG.appendChild(rowShop);
+      var gfxHost = d.createElement('div'); gfxHost.style.cssText = 'margin-top:8px;';
+      bodyG.appendChild(gfxHost);
+      body.appendChild(cardG);
 
-      // v4.6.6: Grafiki per sklep — reużycie natywnego edytora (#fg_id_shopsTr_<lang>)
-      var gfxByLang = {};   // lang -> kontener z natywnym tabview sklepów
+      var gfxByLang = {};
+      var gfxShops = {};
       var gfxLoaded = false;
-      var lblG = d.createElement('div');
-      lblG.textContent = 'Grafiki (per sklep)';
-      lblG.style.cssText = 'font-size:12.5px;color:#667085;font-weight:600;margin:16px 0 6px 0;';
-      var gfxArea = d.createElement('div');
-      gfxArea.style.cssText = 'border:1px solid #e2e8f0;border-radius:8px;background:#fafbfd;';
-      var gfxBtn = d.createElement('button');
-      gfxBtn.type = 'button';
-      gfxBtn.className = 'tp-btn-modal-secondary';
-      gfxBtn.style.cssText = 'margin:12px;';
-      gfxBtn.textContent = 'Pokaż edytor grafik (per sklep)';
-      var gfxHint = d.createElement('span');
-      gfxHint.style.cssText = 'font-size:12px;color:#98a2b3;margin-left:8px;';
-      gfxHint.textContent = 'Wczytuje natywny edytor grafik (RWD/jednolita + upload).';
-      gfxArea.appendChild(gfxBtn); gfxArea.appendChild(gfxHint);
-      body.appendChild(lblG); body.appendChild(gfxArea);
+
+      function renderShopSelect() {
+        var list = gfxShops[curLang] || [];
+        if (!gfxLoaded) { gfxShopSel.innerHTML = '<option>Wczytywanie…</option>'; gfxShopSel.disabled = true; return; }
+        if (!list.length) {
+          gfxShopSel.innerHTML = '<option>Brak sklepów z językiem ' + escapeHtml(getLangName(curLang)) + '</option>';
+          gfxShopSel.disabled = true; return;
+        }
+        gfxShopSel.disabled = false;
+        gfxShopSel.innerHTML = list.map(function (s, i) {
+          return '<option value="' + i + '">' + escapeHtml(s.domain) + '</option>';
+        }).join('');
+        selectShop(0);
+      }
+      function selectShop(i) {
+        var list = gfxShops[curLang] || [];
+        if (!list[i]) return;
+        gfxShopSel.value = String(i);
+        try { if (list[i].anchor) list[i].anchor.click(); } catch (e) {}
+      }
+      gfxShopSel.addEventListener('change', function () { selectShop(parseInt(gfxShopSel.value, 10) || 0); });
 
       function showGfxForLang(lg) {
         Object.keys(gfxByLang).forEach(function (k) {
           if (gfxByLang[k]) gfxByLang[k].style.display = (k === lg) ? '' : 'none';
         });
+        renderShopSelect();
       }
-      gfxBtn.addEventListener('click', function () {
+
+      function loadGfx() {
         if (gfxLoaded) return;
-        gfxBtn.disabled = true; gfxBtn.textContent = 'Wczytywanie…';
         var idoc = (typeof getIframeDoc === 'function') ? getIframeDoc() : doc;
         var sty = idoc.getElementById('tp-gfx-hide');
         if (!sty) {
@@ -9035,12 +9107,11 @@ li.tp-row--selected > div {
           var tries = 0;
           var iv = setInterval(function () {
             tries++;
-            var first = idoc.getElementById('fg_id_shopsTr_' + langs[0]) ||
-                        langs.map(function (l) { return idoc.getElementById('fg_id_shopsTr_' + l); }).filter(Boolean)[0];
+            var first = langs.map(function (l) { return idoc.getElementById('fg_id_shopsTr_' + l); }).filter(Boolean)[0];
             if (first || tries > 40) {
               clearInterval(iv);
               if (!first) {
-                gfxBtn.disabled = false; gfxBtn.textContent = 'Pokaż edytor grafik (per sklep)';
+                gfxShopSel.innerHTML = '<option>Nie udało się wczytać grafik</option>';
                 if (_panel) _panel.showStatus('Nie udało się wczytać natywnego edytora grafik', true);
                 return;
               }
@@ -9048,34 +9119,38 @@ li.tp-row--selected > div {
               langs.forEach(function (lg) {
                 var g = idoc.getElementById('fg_id_shopsTr_' + lg);
                 var cont = d.createElement('div');
-                cont.style.cssText = 'padding:10px;display:' + (lg === curLang ? '' : 'none') + ';';
-                if (g) { cont.appendChild(g); }
-                else { cont.innerHTML = '<div style="color:#98a2b3;font-size:12px;padding:8px">Brak danych grafik dla języka ' + escapeHtml(getLangName(lg)) + '</div>'; }
+                cont.className = 'tp-gfx-native';
+                cont.style.display = (lg === curLang) ? '' : 'none';
+                if (g) {
+                  cont.appendChild(g);
+                  var anchors = g.querySelectorAll('ul.yui3-tabview-list li a, .yui3-tabview-list > li > a');
+                  gfxShops[lg] = [].map.call(anchors, function (a) {
+                    return { domain: (a.textContent || '').trim(), anchor: a };
+                  });
+                } else {
+                  cont.innerHTML = '<div style="color:#98a2b3;font-size:12px;padding:8px">Brak grafik dla języka ' + escapeHtml(getLangName(lg)) + '</div>';
+                  gfxShops[lg] = [];
+                }
                 gfxByLang[lg] = cont;
-                gfxArea.appendChild(cont);
+                gfxHost.appendChild(cont);
               });
-              // usuń natywny dialog (węzły grafik już przeniesione)
               try {
                 var dlg = nativeForm && (nativeForm.closest('.ui-dialog') || nativeForm.parentNode);
                 if (dlg && dlg.parentNode) dlg.parentNode.removeChild(dlg);
               } catch (e) {}
               try { idoc.querySelectorAll('[id^="longdesc_edit_window"]').forEach(function (n) { n.remove(); }); } catch (e) {}
               if (sty && sty.parentNode) sty.parentNode.removeChild(sty);
-              gfxBtn.remove(); gfxHint.remove();
               gfxLoaded = true;
               showGfxForLang(curLang);
             }
           }, 150);
         }, 600);
-      });
+      }
 
       function stash() { if (curLang) { st[curLang].name = inN.value; st[curLang].description = edD.getValue(); } }
       function paintTabs() {
         [].forEach.call(tabs.children, function (t) {
-          var on = t.dataset.lang === curLang;
-          t.style.borderBottomColor = on ? '#1a73e8' : 'transparent';
-          t.style.color = on ? '#1a1a2e' : '#5f6368';
-          t.style.fontWeight = on ? '600' : '400';
+          t.classList.toggle('tp-on', t.dataset.lang === curLang);
         });
       }
       function loadLang(lg) { curLang = lg; inN.value = st[lg].name; edD.setValue(st[lg].description); paintTabs(); if (gfxLoaded) showGfxForLang(lg); }
@@ -9083,7 +9158,7 @@ li.tp-row--selected > div {
         t.addEventListener('click', function () { stash(); loadLang(t.dataset.lang); inN.focus(); });
       });
       loadLang(curLang);
-
+      setTimeout(loadGfx, 200);
       var footer = d.createElement('div');
       footer.className = 'tp-modal-footer';
       var cancel = d.createElement('button');
@@ -9289,7 +9364,7 @@ li.tp-row--selected > div {
       ],
       pagination: { perPage: 50 },
       footer: {
-        version: 'v4.6.6',
+        version: 'v4.6.7',
         links: []
       }
     });
