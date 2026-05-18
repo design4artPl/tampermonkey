@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         IdoSell - Parametry Toolbar
 // @namespace    https://idosell.com/
-// @version      4.5.72
+// @version      4.5.73
 // @description  Toolbar do grupowej edycji parametrow: panel-pro v1.2.4 inline + new-panel support, checkboxy, zaznaczanie, rozwijanie/zwijanie, grupowe usuwanie/edycja, import CSV
 // @author       SyncOffer
 // @match        https://*.iai-shop.com/panel/app/parameters.php*
@@ -3240,7 +3240,7 @@ li.tp-row--selected > div {
   }
 
   var _inlineEditActive = false;
-  function startInlineRename(doc, li, nameEl, label, nodeId) {
+  function startInlineRename(doc, li, nameEl, label, nodeId, saveFn) {
     if (_inlineEditActive) return;
     _inlineEditActive = true;
     var orig = label.textContent;
@@ -3281,7 +3281,7 @@ li.tp-row--selected > div {
       if (!newName || newName === orig) { cancel(); return; }
       input.disabled = true;
       input.style.opacity = '0.6';
-      _saveRenameDirect(doc, nodeId, newName).then(function () {
+      (saveFn ? saveFn(nodeId, newName) : _saveRenameDirect(doc, nodeId, newName)).then(function () {
         label.textContent = newName;
         // Also update the native span in case other parts of the page rely on it
         if (nameEl) nameEl.textContent = newName;
@@ -7243,6 +7243,130 @@ li.tp-row--selected > div {
 
   function applyViewMode(doc) { /* superseded by applyViewFilter (v4.5.18) */ }
 
+  // v4.5.73: zapisane widoki dla SEKCJI (parytet z drzewem parametrów)
+  var SECTION_VIEWS_KEY = 'tp.views.sections.v1';
+  var _activeSectionViewId = null;
+
+  function loadSavedSectionViews() {
+    try { return JSON.parse(localStorage.getItem(SECTION_VIEWS_KEY) || '[]') || []; } catch (e) { return []; }
+  }
+  function storeSavedSectionViews(arr) {
+    try { localStorage.setItem(SECTION_VIEWS_KEY, JSON.stringify(arr)); } catch (e) {}
+  }
+
+  function applySectionViewFilter(doc, view) {
+    if (!_sectionsMount || !_sectionsMount.listEl) return;
+    var items = _sectionsMount.listEl.querySelectorAll(':scope > li');
+    if (!view) {
+      items.forEach(function (li) { li.classList.remove('panel-pro--view-hidden'); });
+      return;
+    }
+    var want = {};
+    view.nodes.forEach(function (id) { want[String(id)] = true; });
+    items.forEach(function (li) {
+      if (want[String(li.dataset.sectionId)]) li.classList.remove('panel-pro--view-hidden');
+      else li.classList.add('panel-pro--view-hidden');
+    });
+  }
+
+  function reapplyActiveSectionView(doc) {
+    if (!_activeSectionViewId) return;
+    var v = loadSavedSectionViews().find(function (x) { return x.id === _activeSectionViewId; });
+    if (v) applySectionViewFilter(doc, v);
+    else { _activeSectionViewId = null; }
+  }
+
+  function rebuildSectionsViewsDropdown(doc) {
+    if (!_sectionsMount || !_sectionsMount.panel || !_sectionsMount.panel.toolbar) return;
+    var triggers = _sectionsMount.panel.toolbar.querySelectorAll('.panel-pro__dropdown__toggle');
+    var dd = null;
+    triggers.forEach(function (t) {
+      var ico = t.querySelector('.material-symbols-outlined');
+      if (ico && ico.textContent === 'visibility') dd = t.closest('.panel-pro__dropdown');
+    });
+    if (!dd) return;
+    var menu = dd.querySelector('.panel-pro__dropdown__menu');
+    var label = dd.querySelector('.panel-pro__dropdown__label');
+    if (!menu) return;
+
+    var views = loadSavedSectionViews();
+    var activeView = _activeSectionViewId ? views.find(function (v) { return v.id === _activeSectionViewId; }) : null;
+
+    menu.innerHTML = '';
+
+    var allItem = doc.createElement('div');
+    allItem.className = 'panel-pro__dropdown__item' + (!activeView ? ' panel-pro--active' : '');
+    allItem.innerHTML = '<span class="material-symbols-outlined">check</span>Wszystko';
+    allItem.addEventListener('click', function (e) {
+      e.stopPropagation();
+      _activeSectionViewId = null;
+      applySectionViewFilter(doc, null);
+      menu.classList.remove('panel-pro--open');
+      rebuildSectionsViewsDropdown(doc);
+    });
+    menu.appendChild(allItem);
+
+    if (views.length > 0) {
+      var sep = doc.createElement('div');
+      sep.style.cssText = 'height:1px;background:#e2e8f0;margin:4px 0;';
+      menu.appendChild(sep);
+      views.forEach(function (v) {
+        var item = doc.createElement('div');
+        var isActive = v.id === _activeSectionViewId;
+        item.className = 'panel-pro__dropdown__item' + (isActive ? ' panel-pro--active' : '');
+        item.style.cssText = 'display:flex; align-items:center; gap:8px;';
+        item.innerHTML =
+          '<span class="material-symbols-outlined">' + (isActive ? 'check' : 'bookmark') + '</span>' +
+          '<span style="flex:1">' + escapeHtml(v.name) + '</span>' +
+          '<span style="background:#f1f5f9;color:#64748b;font-size:11px;padding:1px 6px;border-radius:10px;">' + v.nodes.length + '</span>' +
+          '<button class="tp-view-delete" data-view-id="' + v.id + '" title="Usuń widok" style="width:20px;height:20px;padding:0;border:none;background:transparent;cursor:pointer;color:#94a3b8;display:inline-flex;align-items:center;justify-content:center;border-radius:50%;"><span class="material-symbols-outlined" style="font-size:14px">close</span></button>';
+        item.addEventListener('click', function (e) {
+          if (e.target.closest('.tp-view-delete')) return;
+          e.stopPropagation();
+          _activeSectionViewId = v.id;
+          applySectionViewFilter(doc, v);
+          menu.classList.remove('panel-pro--open');
+          rebuildSectionsViewsDropdown(doc);
+        });
+        var delBtn = item.querySelector('.tp-view-delete');
+        if (delBtn) delBtn.addEventListener('click', function (e) {
+          e.stopPropagation();
+          if (!confirm('Usunąć widok "' + v.name + '"?')) return;
+          var list = loadSavedSectionViews().filter(function (x) { return x.id !== v.id; });
+          storeSavedSectionViews(list);
+          if (_activeSectionViewId === v.id) { _activeSectionViewId = null; applySectionViewFilter(doc, null); }
+          rebuildSectionsViewsDropdown(doc);
+        });
+        menu.appendChild(item);
+      });
+    }
+
+    var sep2 = doc.createElement('div');
+    sep2.style.cssText = 'height:1px;background:#e2e8f0;margin:4px 0;';
+    menu.appendChild(sep2);
+
+    var saveItem = doc.createElement('div');
+    saveItem.className = 'panel-pro__dropdown__item';
+    saveItem.innerHTML = '<span class="material-symbols-outlined" style="opacity:1">bookmark_add</span>Zapisz zaznaczone jako widok…';
+    saveItem.addEventListener('click', function (e) {
+      e.stopPropagation();
+      var selIds = getSelectedSectionIds(doc);
+      if (!selIds.length) { alert('Najpierw zaznacz sekcje do zapisania w widoku'); return; }
+      var name = prompt('Nazwa widoku (' + selIds.length + ' zaznaczonych sekcji):');
+      if (!name) return;
+      var list = loadSavedSectionViews();
+      var id = 'secview_' + Date.now();
+      list.push({ id: id, name: name, nodes: selIds.slice(), created: Date.now() });
+      storeSavedSectionViews(list);
+      if (_panel) _panel.showStatus('Zapisano widok sekcji "' + name + '"');
+      menu.classList.remove('panel-pro--open');
+      rebuildSectionsViewsDropdown(doc);
+    });
+    menu.appendChild(saveItem);
+
+    if (label) label.textContent = activeView ? activeView.name : 'Wszystko';
+  }
+
   function buildToolbar(doc) {
     const existing = doc.querySelector('.tp-toolbar');
     if (existing) existing.remove();
@@ -7562,6 +7686,11 @@ li.tp-row--selected > div {
             { icon: 'download', label: 'Eksport', tooltip: 'Eksport sekcji — wybór zakresu, formatu i języków', variant: 'text', onClick: function () { showExportModal(doc, 'all', 'sections'); } },
             { icon: 'upload',   label: 'Import',  tooltip: 'Import sekcji z pliku JSON lub CSV', variant: 'text', onClick: function () { openSectionsImportPicker(doc); } }
           ] },
+          { dropdown: {
+            icon: 'visibility',
+            options: [ { value: 'all', label: 'Wszystko', active: true } ],
+            onChange: function () { /* obsługa w rebuildSectionsViewsDropdown */ }
+          } },
           { columnsMenu: true }
         ]
       },
@@ -7617,14 +7746,30 @@ li.tp-row--selected > div {
     sectionsPanel.body.appendChild(ul);
     sectionsPanel.setCounter('Sekcje: <span class="panel-pro__counter--total">\u2026</span>');
     _sectionsMount = { mount: mount, panel: sectionsPanel, listEl: ul };
+    rebuildSectionsViewsDropdown(doc);
 
     getAllSections(doc).then(function (sections) {
       renderSectionRows(doc, sectionsPanel, ul, sections);
       sectionsPanel.setCounter('Sekcje: <span class="panel-pro__counter--total">' + sections.length + '</span>');
+      reapplyActiveSectionView(doc);
       loadSectionsProductCountsInBackground(doc, sections);
     }).catch(function (e) {
       sectionsPanel.setCounter('Sekcje: <span class="panel-pro__counter--total">b\u0142\u0105d</span>');
       console.error('[parametry] sections load failed:', e);
+    });
+  }
+
+  // v4.5.73: inline edycja nazwy sekcji z poziomu listy (jak w drzewie parametrów — bez prompt())
+  function startSectionInlineRename(doc, li, sec) {
+    var span = li.querySelector('.tp-sec-name');
+    if (!span) return;
+    startInlineRename(doc, li, null, span, sec.id, function (id, newName) {
+      return fetchAjax('action=setSettings&id=' + encodeURIComponent(id) + '&menuSection=true&names[' + LANG + ']=' + encodeURIComponent(newName))
+        .then(function (resp) {
+          if (resp && resp.errno && resp.errno !== 0) throw new Error(resp.message || ('errno ' + resp.errno));
+          sec.name = newName;
+          li.dataset.sectionName = newName.toLowerCase();
+        });
     });
   }
 
@@ -7667,15 +7812,7 @@ li.tp-row--selected > div {
           if (act === 'products') {
             showSectionProductsModal(doc, sec);
           } else if (act === 'rename') {
-            var newName = prompt('Nowa nazwa sekcji:', sec.name);
-            if (!newName || newName === sec.name) return;
-            fetchAjax('action=setSettings&id=' + encodeURIComponent(sec.id) + '&menuSection=true&names[' + LANG + ']=' + encodeURIComponent(newName))
-              .then(function (resp) {
-                if (resp && resp.errno && resp.errno !== 0) { alert('B\u0142\u0105d: ' + (resp.message || resp.errno)); return; }
-                if (_panel) _panel.showStatus('Zmieniono nazw\u0119 sekcji');
-                refreshSectionsPanel(doc);
-              })
-              .catch(function (e) { alert('B\u0142\u0105d: ' + (e.message || e)); });
+            startSectionInlineRename(doc, li, sec);
           } else if (act === 'delete') {
             if (!confirm('Usun\u0105\u0107 sekcj\u0119 "' + sec.name + '"? Je\u015bli jest przypisana do produkt\u00f3w, skrypt odepnie j\u0105 najpierw.')) return;
             forceDeleteNode(doc, sec.id, '0', sec.name, false, function (msg) { if (_panel) _panel.showStatus(msg); })
@@ -7688,10 +7825,8 @@ li.tp-row--selected > div {
       var nameSpan = li.querySelector('.tp-sec-name');
       if (nameSpan) nameSpan.addEventListener('dblclick', function (e) {
         e.stopPropagation();
-        var newName = prompt('Nowa nazwa sekcji:', sec.name);
-        if (!newName || newName === sec.name) return;
-        fetchAjax('action=setSettings&id=' + encodeURIComponent(sec.id) + '&menuSection=true&names[' + LANG + ']=' + encodeURIComponent(newName))
-          .then(function () { refreshSectionsPanel(doc); });
+        e.preventDefault();
+        startSectionInlineRename(doc, li, sec);
       });
 
       ul.appendChild(li);
@@ -8106,7 +8241,7 @@ li.tp-row--selected > div {
       ],
       pagination: { perPage: 50 },
       footer: {
-        version: 'v4.5.72',
+        version: 'v4.5.73',
         links: [
           { label: 'Propozycja', icon: 'star', tooltip: 'Zaproponuj funkcjonalność', variant: 'feature', href: 'https://github.com/design4artPl/tampermonkey/issues/new?labels=enhancement', target: '_blank' },
           { label: 'Zgłoś błąd', icon: 'bug_report', tooltip: 'Zgłoś błąd', variant: 'bug', href: 'https://github.com/design4artPl/tampermonkey/issues/new?labels=bug', target: '_blank' }
