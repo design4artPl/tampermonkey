@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         IdoSell - Parametry Toolbar
 // @namespace    https://idosell.com/
-// @version      4.5.95
+// @version      4.5.96
 // @description  Toolbar do grupowej edycji parametrow: panel-pro v1.2.4 inline + new-panel support, checkboxy, zaznaczanie, rozwijanie/zwijanie, grupowe usuwanie/edycja, import CSV
 // @author       SyncOffer
 // @match        https://*.iai-shop.com/panel/app/parameters.php*
@@ -317,6 +317,8 @@
     '.panel-pro__pagination__btn:hover:not(:disabled), .panel-pro__pagination__page:hover:not(.panel-pro--active) { background: #f8fafc; border-color: #cbd5e1; }',
     '.panel-pro__pagination__page--active { background: #2563eb !important; color: #fff !important; border-color: #2563eb !important; }',
     '.panel-pro__pagination__btn:disabled { opacity: 0.4; cursor: not-allowed; }',
+    '.panel-pro__pagination__per-page { display: inline-flex; align-items: center; gap: 6px; }',
+    '.panel-pro__pagination__per-page-label { color: #5f6368; font-size: 12px; }',
     '.panel-pro__pagination__per-page select { padding: 4px 8px; border: 1px solid #e2e8f0; border-radius: 4px; background: #fff; font-size: 13px; font-family: inherit; }',
     ''
   ].join('\n');
@@ -751,7 +753,9 @@
     if (page >= totalPages) next.disabled = true;
     next.addEventListener('click', function () { opts.onPageChange(Math.min(totalPages, page + 1)); });
     container.appendChild(next);
+    container.appendChild(el(doc, 'span', { className: 'panel-pro__sep', textContent: '|' }));
     var perWrap = el(doc, 'span', { className: 'panel-pro__pagination__per-page' });
+    perWrap.appendChild(el(doc, 'span', { className: 'panel-pro__pagination__per-page-label', textContent: 'Poka\u017c na stronie ' }));
     var sel = el(doc, 'select');
     (opts.perPageOptions || [10, 25, 50, 100, 0]).forEach(function (n) {
       var o = el(doc, 'option', { value: String(n), textContent: n === 0 ? 'Wszystkie' : String(n) });
@@ -760,7 +764,6 @@
     });
     sel.addEventListener('change', function () { opts.onPerPageChange(parseInt(sel.value, 10)); });
     perWrap.appendChild(sel);
-    perWrap.appendChild(doc.createTextNode(' na stron\u0119'));
     container.appendChild(perWrap);
   }
 
@@ -8170,7 +8173,7 @@ li.tp-row--selected > div {
       },
       pagination: { perPage: loadPerPagePref('Sec') },
       footer: {
-        version: 'v4.5.95',
+        version: 'v4.5.96',
         links: []
       }
     });
@@ -8817,7 +8820,7 @@ li.tp-row--selected > div {
       ],
       pagination: { perPage: 50 },
       footer: {
-        version: 'v4.5.95',
+        version: 'v4.5.96',
         links: []
       }
     });
