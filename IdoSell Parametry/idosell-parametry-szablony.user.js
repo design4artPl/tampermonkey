@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         IdoSell - Parametry Toolbar
 // @namespace    https://idosell.com/
-// @version      4.5.97
+// @version      4.5.98
 // @description  Toolbar do grupowej edycji parametrow: panel-pro v1.2.4 inline + new-panel support, checkboxy, zaznaczanie, rozwijanie/zwijanie, grupowe usuwanie/edycja, import CSV
 // @author       SyncOffer
 // @match        https://*.iai-shop.com/panel/app/parameters.php*
@@ -317,9 +317,9 @@
     '.panel-pro__pagination__btn:hover:not(:disabled), .panel-pro__pagination__page:hover:not(.panel-pro--active) { background: #f8fafc; border-color: #cbd5e1; }',
     '.panel-pro__pagination__page--active { background: #2563eb !important; color: #fff !important; border-color: #2563eb !important; }',
     '.panel-pro__pagination__btn:disabled { opacity: 0.4; cursor: not-allowed; }',
-    '.panel-pro__pagination__per-page { display: inline-flex; align-items: center; gap: 6px; }',
-    '.panel-pro__pagination__per-page-label { color: #5f6368; font-size: 12px; }',
-    '.panel-pro__pagination__per-page select { padding: 4px 8px; border: 1px solid #e2e8f0; border-radius: 4px; background: #fff; font-size: 13px; font-family: inherit; }',
+    '.panel-pro__pagination__per-page { display: inline-flex !important; align-items: center; gap: 8px !important; }',
+    '.panel-pro__pagination__per-page-label { color: #5f6368; font-size: 12px; margin-right: 8px !important; }',
+    '.panel-pro__pagination__per-page select { margin-left: 4px !important; padding: 4px 8px; border: 1px solid #e2e8f0; border-radius: 4px; background: #fff; font-size: 13px; font-family: inherit; }',
     ''
   ].join('\n');
 
@@ -8173,7 +8173,7 @@ li.tp-row--selected > div {
       },
       pagination: { perPage: loadPerPagePref('Sec') },
       footer: {
-        version: 'v4.5.97',
+        version: 'v4.5.98',
         links: []
       }
     });
@@ -8820,7 +8820,7 @@ li.tp-row--selected > div {
       ],
       pagination: { perPage: 50 },
       footer: {
-        version: 'v4.5.97',
+        version: 'v4.5.98',
         links: []
       }
     });
