@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         IdoSell - Parametry Toolbar
 // @namespace    https://idosell.com/
-// @version      4.5.84
+// @version      4.5.85
 // @description  Toolbar do grupowej edycji parametrow: panel-pro v1.2.4 inline + new-panel support, checkboxy, zaznaczanie, rozwijanie/zwijanie, grupowe usuwanie/edycja, import CSV
 // @author       SyncOffer
 // @match        https://*.iai-shop.com/panel/app/parameters.php*
@@ -277,13 +277,11 @@
     /* v4.5.84: global footer bar (na samym dole strony) */
     '.tp-global-footer { display: flex; align-items: center; justify-content: space-between; gap: 16px; flex-wrap: wrap; padding: 16px 20px; margin: 28px 0 12px 0; border-top: 1px solid #e2e8f0; background: #fff; border-radius: 8px; box-shadow: 0 1px 2px rgba(0,0,0,0.04); font-family: "Google Sans", Roboto, Arial, sans-serif; }',
     '.tp-global-footer__links { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }',
-    '.tp-global-footer__link { display: inline-flex; align-items: center; gap: 6px; padding: 7px 14px; border: 1px solid #dadce0; border-radius: 6px; background: #fff; color: #334155; font-size: 13px; font-weight: 600; cursor: pointer; text-decoration: none; transition: background .15s, border-color .15s, box-shadow .15s; }',
-    '.tp-global-footer__link:hover { background: #f8fafc; border-color: #cbd5e1; box-shadow: 0 1px 2px rgba(0,0,0,.05); }',
-    '.tp-global-footer__link .material-symbols-outlined { font-size: 18px; }',
-    '.tp-global-footer__link--feature { color: #b45309; border-color: #fcd34d; }',
-    '.tp-global-footer__link--feature:hover { background: #fffbeb; border-color: #f59e0b; }',
-    '.tp-global-footer__link--bug { color: #b91c1c; border-color: #fca5a5; }',
-    '.tp-global-footer__link--bug:hover { background: #fef2f2; border-color: #ef4444; }',
+    '.tp-global-footer__link { display: inline-flex; align-items: center; gap: 5px; padding: 4px 10px; border: 1px solid #dadce0; border-radius: 6px; background: transparent; color: #5f6368; font-size: 11px; font-weight: 500; font-family: inherit; cursor: pointer; transition: all 0.15s; text-decoration: none; }',
+    '.tp-global-footer__link .material-symbols-outlined { font-size: 14px; }',
+    '.tp-global-footer__link:hover { background: #f1f3f4; }',
+    '.tp-global-footer__link--feature:hover { background: #eff4ff; color: #2563eb; border-color: #2563eb; }',
+    '.tp-global-footer__link--bug:hover { background: #f1f3f4; color: #d93025; border-color: #d93025; }',
     '.tp-global-footer__brand { display: flex; align-items: center; opacity: .9; }',
     '.tp-global-footer__brand svg { height: 34px; width: auto; display: block; }',
     '.tp-global-footer__ver { font-size: 11px; color: #9aa0a6; margin-right: 12px; font-variant-numeric: tabular-nums; }',
@@ -8730,7 +8728,7 @@ li.tp-row--selected > div {
       ],
       pagination: { perPage: 50 },
       footer: {
-        version: 'v4.5.84',
+        version: 'v4.5.85',
         links: []
       }
     });
