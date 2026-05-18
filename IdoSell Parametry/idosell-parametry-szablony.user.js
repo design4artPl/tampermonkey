@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         IdoSell - Parametry Toolbar
 // @namespace    https://idosell.com/
-// @version      4.6.2
+// @version      4.6.3
 // @description  Toolbar do grupowej edycji parametrow: panel-pro v1.2.4 inline + new-panel support, checkboxy, zaznaczanie, rozwijanie/zwijanie, grupowe usuwanie/edycja, import CSV
 // @author       SyncOffer
 // @match        https://*.iai-shop.com/panel/app/parameters.php*
@@ -3639,7 +3639,7 @@ li.tp-row--selected > div {
     editAction.dataset.tooltip = 'Edytuj';
     editAction.addEventListener('click', function(e) {
       e.stopPropagation();
-      ensureOptionsAndClick('editEl_' + nodeId);
+      showEditElementModal(doc, nodeId);
     });
     actionsCell.appendChild(editAction);
 
@@ -8258,7 +8258,7 @@ li.tp-row--selected > div {
       },
       pagination: { perPage: loadPerPagePref('Sec') },
       footer: {
-        version: 'v4.6.2',
+        version: 'v4.6.3',
         links: []
       }
     });
@@ -8812,6 +8812,156 @@ li.tp-row--selected > div {
     });
   }
 
+  // v4.6.3: ujednolicony modal edycji parametru/warto\u015bci (zak\u0142adki j\u0119zyk\u00f3w, Nazwa + Opis od razu widoczne)
+  // API: load getParameterLangData; zapis nazw setSettings&names[lang]; opis setDescription per j\u0119zyk.
+  function showEditElementModal(doc, nodeId) {
+    if (_panel && _panel.showStatus) _panel.showStatus('Wczytywanie danych elementu\u2026');
+    fetchAjax('action=getParameterLangData&id=' + encodeURIComponent(nodeId)).then(function (resp) {
+      var dt = resp && resp.data ? resp.data : null;
+      if (!dt || !dt.langData) { alert('Nie uda\u0142o si\u0119 wczyta\u0107 danych elementu'); return; }
+      var isVal = String(dt.type) === 'value';
+      var ctx = dt.context_id || (dt.context_value_id || '');
+      var ctxLabel = (typeof CONTEXT_LABELS !== 'undefined' && CONTEXT_LABELS[ctx]) ? CONTEXT_LABELS[ctx] : ctx;
+
+      // kolejno\u015b\u0107 j\u0119zyk\u00f3w: pol, eng, ger, lit, rus, reszta
+      var order = ['pol', 'eng', 'ger', 'fra', 'ces', 'ukr', 'ita', 'esp', 'rus', 'lit', 'lav', 'est', 'nld', 'hun', 'swe', 'slk', 'slv', 'bul', 'hrv', 'rum', 'por', 'dan', 'fin', 'nor'];
+      var langs = Object.keys(dt.langData);
+      langs.sort(function (a, b) {
+        var ia = order.indexOf(a); var ib = order.indexOf(b);
+        if (ia < 0) ia = 999; if (ib < 0) ib = 999;
+        return ia - b === ia - b ? (ia - ib) || a.localeCompare(b) : 0;
+      });
+
+      var st = {};
+      langs.forEach(function (lg) {
+        var L = dt.langData[lg] || {};
+        st[lg] = { name: L.name || '', description: L.description || '', oName: L.name || '', oDesc: L.description || '' };
+      });
+      var curLang = langs.indexOf('pol') >= 0 ? 'pol' : langs[0];
+      var displayName = (st[LANG] && st[LANG].name) || (st[curLang] && st[curLang].name) || ('ID ' + nodeId);
+
+      var d = doc || document;
+      var overlay = d.createElement('div');
+      overlay.className = 'tp-overlay';
+      var modal = d.createElement('div');
+      modal.className = 'tp-modal';
+      modal.style.width = '640px';
+      modal.style.maxWidth = 'calc(100vw - 32px)';
+
+      var header = d.createElement('div');
+      header.className = 'tp-modal-header';
+      header.style.cssText = 'background:#fff;color:#202124;border-bottom:1px solid #eef0f4;';
+      header.innerHTML =
+        '<span style="width:40px;height:40px;border-radius:10px;flex-shrink:0;display:flex;align-items:center;justify-content:center;background:#e8eeff;color:#1a73e8;">' +
+          '<span class="material-symbols-outlined" style="font-size:22px">settings</span>' +
+        '</span>' +
+        '<span style="display:flex;flex-direction:column;gap:2px;min-width:0;">' +
+          '<span style="font-size:16px;font-weight:600;color:#1a1a2e;">Edycja ' + (isVal ? 'warto\u015bci' : 'parametru') + '</span>' +
+          '<span style="font-size:12.5px;font-weight:400;color:#98a2b3;">\u201e' + escapeHtml(displayName) + '\u201d \u00b7 ID ' + escapeHtml(String(nodeId)) + (ctx ? ' \u00b7 kontekst: ' + escapeHtml(ctxLabel) : '') + '</span>' +
+        '</span>' +
+        '<button type="button" class="tp-modal-header-close" aria-label="Zamknij" style="color:#b0b8c9;">\u2715</button>';
+
+      var body = d.createElement('div');
+      body.className = 'tp-modal-body';
+      body.style.background = '#fff';
+
+      // pasek zak\u0142adek j\u0119zyk\u00f3w
+      var tabs = d.createElement('div');
+      tabs.style.cssText = 'display:flex;flex-wrap:wrap;gap:4px;border-bottom:1px solid #eef0f4;margin-bottom:14px;padding-bottom:0;';
+      langs.forEach(function (lg) {
+        var t = d.createElement('button');
+        t.type = 'button';
+        t.dataset.lang = lg;
+        t.innerHTML = getLangFlag(lg, 20) + '<span style="margin-left:6px">' + escapeHtml(getLangName(lg)) + '</span>';
+        t.style.cssText = 'display:inline-flex;align-items:center;padding:7px 12px;border:none;border-bottom:2px solid transparent;background:transparent;cursor:pointer;font-size:13px;color:#5f6368;font-family:inherit;';
+        tabs.appendChild(t);
+      });
+      body.appendChild(tabs);
+
+      var lblN = d.createElement('div');
+      lblN.textContent = 'Nazwa';
+      lblN.style.cssText = 'font-size:12.5px;color:#667085;font-weight:600;margin-bottom:6px;';
+      var inN = d.createElement('input');
+      inN.type = 'text';
+      inN.style.cssText = ['width:100% !important','box-sizing:border-box !important','padding:10px 12px !important','margin:0 0 14px 0 !important','border:1px solid #d0d5dd !important','border-radius:8px !important','background:#fff !important','font-size:14px !important','color:#1a1a2e !important','font-family:inherit !important','height:auto !important','outline:none !important','-webkit-appearance:none !important','appearance:none !important'].join(';') + ';';
+      inN.addEventListener('focus', function () { inN.style.setProperty('border-color', '#1a73e8', 'important'); inN.style.setProperty('box-shadow', '0 0 0 3px rgba(26,115,232,.15)', 'important'); });
+      inN.addEventListener('blur', function () { inN.style.setProperty('border-color', '#d0d5dd', 'important'); inN.style.setProperty('box-shadow', 'none', 'important'); });
+
+      var lblD = d.createElement('div');
+      lblD.textContent = 'Opis (HTML)';
+      lblD.style.cssText = 'font-size:12.5px;color:#667085;font-weight:600;margin-bottom:6px;';
+      var inD = d.createElement('textarea');
+      inD.rows = 7;
+      inD.style.cssText = ['width:100% !important','box-sizing:border-box !important','padding:10px 12px !important','margin:0 !important','border:1px solid #d0d5dd !important','border-radius:8px !important','background:#fff !important','font-size:13px !important','color:#1a1a2e !important','font-family:ui-monospace,Consolas,monospace !important','line-height:1.5 !important','resize:vertical !important','outline:none !important'].join(';') + ';';
+      inD.addEventListener('focus', function () { inD.style.setProperty('border-color', '#1a73e8', 'important'); inD.style.setProperty('box-shadow', '0 0 0 3px rgba(26,115,232,.15)', 'important'); });
+      inD.addEventListener('blur', function () { inD.style.setProperty('border-color', '#d0d5dd', 'important'); inD.style.setProperty('box-shadow', 'none', 'important'); });
+
+      body.appendChild(lblN); body.appendChild(inN);
+      body.appendChild(lblD); body.appendChild(inD);
+
+      function stash() { if (curLang) { st[curLang].name = inN.value; st[curLang].description = inD.value; } }
+      function paintTabs() {
+        [].forEach.call(tabs.children, function (t) {
+          var on = t.dataset.lang === curLang;
+          t.style.borderBottomColor = on ? '#1a73e8' : 'transparent';
+          t.style.color = on ? '#1a1a2e' : '#5f6368';
+          t.style.fontWeight = on ? '600' : '400';
+        });
+      }
+      function loadLang(lg) { curLang = lg; inN.value = st[lg].name; inD.value = st[lg].description; paintTabs(); }
+      [].forEach.call(tabs.children, function (t) {
+        t.addEventListener('click', function () { stash(); loadLang(t.dataset.lang); inN.focus(); });
+      });
+      loadLang(curLang);
+
+      var footer = d.createElement('div');
+      footer.className = 'tp-modal-footer';
+      var cancel = d.createElement('button');
+      cancel.className = 'tp-btn-modal-secondary'; cancel.type = 'button'; cancel.textContent = 'Anuluj';
+      var ok = d.createElement('button');
+      ok.className = 'tp-btn-modal-primary'; ok.type = 'button'; ok.textContent = 'Zapisz';
+      footer.appendChild(cancel); footer.appendChild(ok);
+
+      modal.appendChild(header); modal.appendChild(body); modal.appendChild(footer);
+      overlay.appendChild(modal); d.body.appendChild(overlay);
+
+      function close() { overlay.classList.add('tp-closing'); setTimeout(function () { if (overlay.parentNode) overlay.remove(); }, 180); }
+      header.querySelector('.tp-modal-header-close').addEventListener('click', close);
+      cancel.addEventListener('click', close);
+      overlay.addEventListener('mousedown', function (e) { if (e.target === overlay) close(); });
+      setTimeout(function () { inN.focus(); inN.select(); }, 30);
+
+      ok.addEventListener('click', function () {
+        stash();
+        ok.disabled = true; ok.textContent = 'Zapisywanie\u2026';
+        var nameBody = 'action=setSettings&id=' + encodeURIComponent(nodeId) + '&menuSection=true';
+        langs.forEach(function (lg) { nameBody += '&names[' + lg + ']=' + encodeURIComponent(st[lg].name); });
+        var descLangs = langs.filter(function (lg) { return st[lg].description !== st[lg].oDesc; });
+        fetchAjax(nameBody).then(function (r1) {
+          if (r1 && r1.errno && r1.errno !== 0) throw new Error(r1.message || ('errno ' + r1.errno));
+          return descLangs.reduce(function (p, lg) {
+            return p.then(function () {
+              return fetchAjax('action=setDescription&id=' + encodeURIComponent(nodeId) + '&lang=' + lg + '&description=' + encodeURIComponent(st[lg].description));
+            });
+          }, Promise.resolve());
+        }).then(function () {
+          // aktualizacja widocznej nazwy (bez prze\u0142adowania)
+          var newName = (st[LANG] && st[LANG].name) || st[curLang].name;
+          var sm = doc.getElementById('showMenuSub_' + nodeId);
+          if (sm) sm.textContent = newName;
+          var li = doc.getElementById('m_' + nodeId);
+          if (li) { var lbl = li.querySelector(':scope > .tp-col-name .tp-row-label'); if (lbl) lbl.textContent = newName; }
+          try { tpCacheClearAll(); } catch (e) {}
+          if (_panel) _panel.showStatus('Zapisano zmiany elementu \u201e' + newName + '\u201d');
+          close();
+        }).catch(function (e) {
+          ok.disabled = false; ok.textContent = 'Zapisz';
+          alert('B\u0142\u0105d zapisu: ' + (e.message || e));
+        });
+      });
+    }).catch(function (e) { alert('B\u0142\u0105d wczytywania: ' + (e.message || e)); });
+  }
+
   // v4.5.47: bardziej cierpliwe + reaktywne wykrywanie #block_group0. Bez sztywnego limitu
   // attempts: polling co 250 ms + MutationObserver na document + iframe.load — żeby skrypt
   // odpalił się gdy IdoSell w końcu wstrzyknie drzewo, bez konieczności drugiego refresha.
@@ -8957,7 +9107,7 @@ li.tp-row--selected > div {
       ],
       pagination: { perPage: 50 },
       footer: {
-        version: 'v4.6.2',
+        version: 'v4.6.3',
         links: []
       }
     });
