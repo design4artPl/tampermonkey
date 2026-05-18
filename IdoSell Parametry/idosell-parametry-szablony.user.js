@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         IdoSell - Parametry Toolbar
 // @namespace    https://idosell.com/
-// @version      4.5.77
+// @version      4.5.78
 // @description  Toolbar do grupowej edycji parametrow: panel-pro v1.2.4 inline + new-panel support, checkboxy, zaznaczanie, rozwijanie/zwijanie, grupowe usuwanie/edycja, import CSV
 // @author       SyncOffer
 // @match        https://*.iai-shop.com/panel/app/parameters.php*
@@ -3787,7 +3787,8 @@ li.tp-row--selected > div {
     var items = getRootItems(doc);
     // Collect items that are either visible or only hidden by pagination
     var filteredItems = items.filter(function(li) {
-      return !li.classList.contains('tp-row--filter-hidden');
+      return !li.classList.contains('tp-row--filter-hidden') &&
+             !li.classList.contains('tp-row--view-hidden');
     });
 
     var perPage = _paginationState.perPage;
@@ -7246,10 +7247,94 @@ li.tp-row--selected > div {
     try { localStorage.setItem(VIEWS_KEY, JSON.stringify(arr)); } catch (e) {}
   }
 
+  // v4.5.78: ładny modal do wpisania nazwy (zamiast natywnego prompt())
+  function showInputModal(doc, opts) {
+    opts = opts || {};
+    var d = doc || document;
+    var overlay = d.createElement('div');
+    overlay.className = 'tp-overlay';
+    var modal = d.createElement('div');
+    modal.className = 'tp-modal';
+    modal.style.width = '460px';
+    modal.style.maxWidth = 'calc(100vw - 32px)';
+
+    var header = d.createElement('div');
+    header.className = 'tp-modal-header';
+    header.style.cssText = 'background:#fff;color:#202124;border-bottom:1px solid #eef0f4;';
+    header.innerHTML =
+      '<span style="width:40px;height:40px;border-radius:10px;flex-shrink:0;display:flex;align-items:center;justify-content:center;background:#e8eeff;color:#1a73e8;">' +
+        '<span class="material-symbols-outlined" style="font-size:22px">' + (opts.icon || 'bookmark_add') + '</span>' +
+      '</span>' +
+      '<span style="display:flex;flex-direction:column;gap:2px;min-width:0;">' +
+        '<span style="font-size:16px;font-weight:600;color:#1a1a2e;">' + escapeHtml(opts.title || 'Nazwa') + '</span>' +
+        (opts.subtitle ? '<span style="font-size:12.5px;font-weight:400;color:#98a2b3;">' + escapeHtml(opts.subtitle) + '</span>' : '') +
+      '</span>' +
+      '<button type="button" class="tp-modal-header-close" aria-label="Zamknij" style="color:#b0b8c9;">✕</button>';
+
+    var body = d.createElement('div');
+    body.className = 'tp-modal-body';
+    body.style.background = '#fff';
+    if (opts.label) {
+      var lbl = d.createElement('div');
+      lbl.textContent = opts.label;
+      lbl.style.cssText = 'font-size:12.5px;color:#667085;font-weight:600;margin-bottom:8px;';
+      body.appendChild(lbl);
+    }
+    var input = d.createElement('input');
+    input.type = 'text';
+    input.value = opts.value || '';
+    input.placeholder = opts.placeholder || '';
+    input.style.cssText = 'width:100%;padding:10px 12px;border:1px solid #d0d5dd;border-radius:8px;font-size:14px;color:#1a1a2e;font-family:inherit;box-sizing:border-box;outline:none;transition:border-color .15s,box-shadow .15s;';
+    input.addEventListener('focus', function () { input.style.borderColor = '#1a73e8'; input.style.boxShadow = '0 0 0 3px rgba(26,115,232,.15)'; });
+    input.addEventListener('blur', function () { input.style.borderColor = '#d0d5dd'; input.style.boxShadow = 'none'; });
+    body.appendChild(input);
+
+    var footer = d.createElement('div');
+    footer.className = 'tp-modal-footer';
+    var cancel = d.createElement('button');
+    cancel.className = 'tp-btn-modal-secondary';
+    cancel.type = 'button';
+    cancel.textContent = opts.cancelLabel || 'Anuluj';
+    var ok = d.createElement('button');
+    ok.className = 'tp-btn-modal-primary';
+    ok.type = 'button';
+    ok.textContent = opts.okLabel || 'Utwórz';
+    footer.appendChild(cancel);
+    footer.appendChild(ok);
+
+    modal.appendChild(header);
+    modal.appendChild(body);
+    modal.appendChild(footer);
+    overlay.appendChild(modal);
+    d.body.appendChild(overlay);
+
+    function close() {
+      overlay.classList.add('tp-closing');
+      setTimeout(function () { if (overlay.parentNode) overlay.remove(); }, 180);
+    }
+    function submit() {
+      var val = input.value.trim();
+      if (!val) { input.focus(); input.style.borderColor = '#d93025'; return; }
+      close();
+      if (opts.onOk) opts.onOk(val);
+    }
+    header.querySelector('.tp-modal-header-close').addEventListener('click', close);
+    cancel.addEventListener('click', close);
+    ok.addEventListener('click', submit);
+    overlay.addEventListener('mousedown', function (e) { if (e.target === overlay) close(); });
+    input.addEventListener('keydown', function (e) {
+      if (e.key === 'Enter') { e.preventDefault(); submit(); }
+      else if (e.key === 'Escape') { e.preventDefault(); close(); }
+    });
+    setTimeout(function () { input.focus(); input.select(); }, 30);
+  }
+
   function applyViewFilter(doc, view) {
     var items = doc.querySelectorAll('li[id^="m_"]');
     if (!view) {
       for (var i = 0; i < items.length; i++) items[i].classList.remove('tp-row--view-hidden');
+      _paginationState.currentPage = 1;
+      applyPagination(doc);
       return;
     }
     var want = {};
@@ -7271,6 +7356,9 @@ li.tp-row--selected > div {
       if (want[String(id)]) li2.classList.remove('tp-row--view-hidden');
       else li2.classList.add('tp-row--view-hidden');
     }
+    // v4.5.78: widok zmienia zbiór widocznych — przelicz paginację od strony 1
+    _paginationState.currentPage = 1;
+    applyPagination(doc);
   }
 
   function rebuildViewsDropdown(doc) {
@@ -7350,15 +7438,24 @@ li.tp-row--selected > div {
     saveItem.addEventListener('click', function (e) {
       e.stopPropagation();
       if (disabled) { alert('Najpierw zaznacz elementy do zapisania w widoku'); return; }
-      var name = prompt('Nazwa widoku (' + selectedNodes.size + ' zaznaczonych):');
-      if (!name) return;
-      var list = loadSavedViews();
-      var id = 'view_' + Date.now();
-      list.push({ id: id, name: name, nodes: Array.from(selectedNodes), created: Date.now() });
-      storeSavedViews(list);
-      if (_panel) _panel.showStatus('Zapisano widok "' + name + '"');
       menu.classList.remove('panel-pro--open');
-      rebuildViewsDropdown(doc);
+      var snapshot = Array.from(selectedNodes);
+      showInputModal(doc, {
+        icon: 'bookmark_add',
+        title: 'Zapisz widok',
+        subtitle: snapshot.length + ' zaznaczonych elementów',
+        label: 'Nazwa widoku',
+        placeholder: 'np. Parametry sezonowe',
+        okLabel: 'Zapisz',
+        onOk: function (name) {
+          var list = loadSavedViews();
+          var id = 'view_' + Date.now();
+          list.push({ id: id, name: name, nodes: snapshot, created: Date.now() });
+          storeSavedViews(list);
+          if (_panel) _panel.showStatus('Zapisano widok "' + name + '"');
+          rebuildViewsDropdown(doc);
+        }
+      });
     });
     menu.appendChild(saveItem);
 
@@ -7476,15 +7573,24 @@ li.tp-row--selected > div {
       e.stopPropagation();
       var selIds = getSelectedSectionIds(doc);
       if (!selIds.length) { alert('Najpierw zaznacz sekcje do zapisania w widoku'); return; }
-      var name = prompt('Nazwa widoku (' + selIds.length + ' zaznaczonych sekcji):');
-      if (!name) return;
-      var list = loadSavedSectionViews();
-      var id = 'secview_' + Date.now();
-      list.push({ id: id, name: name, nodes: selIds.slice(), created: Date.now() });
-      storeSavedSectionViews(list);
-      if (_panel) _panel.showStatus('Zapisano widok sekcji "' + name + '"');
       menu.classList.remove('panel-pro--open');
-      rebuildSectionsViewsDropdown(doc);
+      var snapshot = selIds.slice();
+      showInputModal(doc, {
+        icon: 'bookmark_add',
+        title: 'Zapisz widok sekcji',
+        subtitle: snapshot.length + ' zaznaczonych sekcji',
+        label: 'Nazwa widoku',
+        placeholder: 'np. Sekcje sezonowe',
+        okLabel: 'Zapisz',
+        onOk: function (name) {
+          var list = loadSavedSectionViews();
+          var id = 'secview_' + Date.now();
+          list.push({ id: id, name: name, nodes: snapshot, created: Date.now() });
+          storeSavedSectionViews(list);
+          if (_panel) _panel.showStatus('Zapisano widok sekcji "' + name + '"');
+          rebuildSectionsViewsDropdown(doc);
+        }
+      });
     });
     menu.appendChild(saveItem);
 
@@ -8386,7 +8492,7 @@ li.tp-row--selected > div {
       ],
       pagination: { perPage: 50 },
       footer: {
-        version: 'v4.5.77',
+        version: 'v4.5.78',
         links: [
           { label: 'Propozycja', icon: 'star', tooltip: 'Zaproponuj funkcjonalność', variant: 'feature', href: 'https://github.com/design4artPl/tampermonkey/issues/new?labels=enhancement', target: '_blank' },
           { label: 'Zgłoś błąd', icon: 'bug_report', tooltip: 'Zgłoś błąd', variant: 'bug', href: 'https://github.com/design4artPl/tampermonkey/issues/new?labels=bug', target: '_blank' }
