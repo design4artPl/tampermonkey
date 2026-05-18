@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         IdoSell - Parametry Toolbar
 // @namespace    https://idosell.com/
-// @version      4.6.3
+// @version      4.6.4
 // @description  Toolbar do grupowej edycji parametrow: panel-pro v1.2.4 inline + new-panel support, checkboxy, zaznaczanie, rozwijanie/zwijanie, grupowe usuwanie/edycja, import CSV
 // @author       SyncOffer
 // @match        https://*.iai-shop.com/panel/app/parameters.php*
@@ -8258,7 +8258,7 @@ li.tp-row--selected > div {
       },
       pagination: { perPage: loadPerPagePref('Sec') },
       footer: {
-        version: 'v4.6.3',
+        version: 'v4.6.4',
         links: []
       }
     });
@@ -8828,8 +8828,9 @@ li.tp-row--selected > div {
       var langs = Object.keys(dt.langData);
       langs.sort(function (a, b) {
         var ia = order.indexOf(a); var ib = order.indexOf(b);
-        if (ia < 0) ia = 999; if (ib < 0) ib = 999;
-        return ia - b === ia - b ? (ia - ib) || a.localeCompare(b) : 0;
+        if (ia < 0) ia = 999;
+        if (ib < 0) ib = 999;
+        return (ia - ib) || a.localeCompare(b);
       });
 
       var st = {};
@@ -9107,7 +9108,7 @@ li.tp-row--selected > div {
       ],
       pagination: { perPage: 50 },
       footer: {
-        version: 'v4.6.3',
+        version: 'v4.6.4',
         links: []
       }
     });
