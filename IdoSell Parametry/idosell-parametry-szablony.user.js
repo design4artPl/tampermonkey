@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         IdoSell - Parametry Toolbar
 // @namespace    https://idosell.com/
-// @version      4.6.4
+// @version      4.6.5
 // @description  Toolbar do grupowej edycji parametrow: panel-pro v1.2.4 inline + new-panel support, checkboxy, zaznaczanie, rozwijanie/zwijanie, grupowe usuwanie/edycja, import CSV
 // @author       SyncOffer
 // @match        https://*.iai-shop.com/panel/app/parameters.php*
@@ -2395,6 +2395,15 @@ li.ui-draggable-disabled.tp-row-enhanced {
 .tp-copyable:hover {
   background: #e8eaed;
 }
+/* v4.6.5: edytor opisu (HTML / WYSIWYG) */
+.tp-ed-wrap { border:1px solid #d0d5dd; border-radius:8px; overflow:visible; background:#fff; }
+.tp-ed-bar { display:flex; border-bottom:1px solid #e2e8f0; background:#f8f9fa; border-radius:8px 8px 0 0; overflow:hidden; }
+.tp-ed-btn { flex:1; padding:8px 12px; border:none; background:transparent; cursor:pointer; font-size:12px; font-weight:600; color:#5f6368; font-family:inherit; transition:background .15s,color .15s; }
+.tp-ed-btn:hover { background:#e8eaed; }
+.tp-ed-btn.tp-ed-on { background:#fff; color:#1a73e8; box-shadow:inset 0 -2px 0 #1a73e8; }
+.tp-ed-src { width:100% !important; box-sizing:border-box !important; border:none !important; padding:10px 12px !important; margin:0 !important; font:13px/1.5 ui-monospace,Consolas,monospace !important; color:#1a1a2e !important; background:#fff !important; resize:vertical !important; outline:none !important; border-radius:0 0 8px 8px !important; }
+.tp-ed-wys { padding:10px 12px; min-height:140px; outline:none; font-size:14px; color:#1a1a2e; background:#fff; border-radius:0 0 8px 8px; overflow:auto; line-height:1.5; }
+.tp-ed-wys:focus { box-shadow: inset 0 0 0 2px rgba(26,115,232,.18); }
 
 /* Hide native elements inside enhanced rows */
 li.tp-row-enhanced > .showChildren,
@@ -8258,7 +8267,7 @@ li.tp-row--selected > div {
       },
       pagination: { perPage: loadPerPagePref('Sec') },
       footer: {
-        version: 'v4.6.4',
+        version: 'v4.6.5',
         links: []
       }
     });
@@ -8812,6 +8821,93 @@ li.tp-row--selected > div {
     });
   }
 
+  // v4.6.5: widget edytora opisu \u2014 \u0179r\u00f3d\u0142o HTML <-> Edytor wizualny.
+  // U\u017cywa TinyMCE z iframe panelu je\u015bli dost\u0119pny, w przeciwnym razie contentEditable.
+  function createEditorWidget(doc, initialHtml, rows) {
+    var wrap = doc.createElement('div');
+    wrap.className = 'tp-ed-wrap';
+    var bar = doc.createElement('div');
+    bar.className = 'tp-ed-bar';
+    var srcBtn = doc.createElement('button');
+    srcBtn.type = 'button'; srcBtn.className = 'tp-ed-btn tp-ed-on'; srcBtn.textContent = '\u0179r\u00f3d\u0142o HTML';
+    var wysBtn = doc.createElement('button');
+    wysBtn.type = 'button'; wysBtn.className = 'tp-ed-btn'; wysBtn.textContent = 'Edytor wizualny';
+    bar.appendChild(srcBtn); bar.appendChild(wysBtn); wrap.appendChild(bar);
+
+    var elId = 'tp_ed_' + Date.now() + '_' + Math.floor(Math.random() * 1e5);
+    var src = doc.createElement('textarea');
+    src.className = 'tp-ed-src'; src.id = elId; src.rows = rows || 7; src.value = initialHtml || '';
+    wrap.appendChild(src);
+
+    var wysEl = doc.createElement('div');
+    wysEl.className = 'tp-ed-wys'; wysEl.contentEditable = 'true'; wysEl.style.display = 'none';
+    wysEl.style.minHeight = ((rows || 7) * 22) + 'px';
+    wrap.appendChild(wysEl);
+
+    var iwin = (typeof getIframeWin === 'function') ? getIframeWin() : null;
+    var tmce = null;
+    try { tmce = iwin && iwin.tinymce; } catch (e) { tmce = null; }
+    var tiny = null, tinyInited = false;
+
+    function actSrc() {
+      if (tiny) { try { src.value = tiny.getContent(); } catch (e) {} try { tiny.hide(); } catch (e) {} }
+      else if (wysEl.style.display !== 'none') { src.value = wysEl.innerHTML; wysEl.style.display = 'none'; }
+      src.style.display = '';
+      srcBtn.classList.add('tp-ed-on'); wysBtn.classList.remove('tp-ed-on');
+    }
+    function initTiny() {
+      if (!tmce) return;
+      try {
+        tmce.init({
+          target: src,
+          menubar: false,
+          plugins: 'lists link table code paste autolink',
+          toolbar: 'bold italic underline | bullist numlist | link table | removeformat | code',
+          height: Math.max(220, (rows || 7) * 32),
+          convert_urls: false,
+          entity_encoding: 'raw',
+          branding: false,
+          setup: function (ed) {
+            tiny = ed;
+            ed.on('init', function () {
+              try { ed.setContent(src.value || ''); } catch (e) {}
+              src.style.display = 'none';
+              srcBtn.classList.remove('tp-ed-on'); wysBtn.classList.add('tp-ed-on');
+            });
+          }
+        });
+      } catch (e) { tmce = null; }
+    }
+    function actWys() {
+      if (tmce) {
+        if (!tinyInited) { tinyInited = true; initTiny(); return; }
+        if (tiny) { try { tiny.setContent(src.value); } catch (e) {} src.style.display = 'none'; try { tiny.show(); } catch (e) {} }
+      } else {
+        wysEl.innerHTML = src.value;
+        src.style.display = 'none';
+        wysEl.style.display = '';
+      }
+      srcBtn.classList.remove('tp-ed-on'); wysBtn.classList.add('tp-ed-on');
+    }
+    srcBtn.addEventListener('click', actSrc);
+    wysBtn.addEventListener('click', actWys);
+
+    return {
+      container: wrap,
+      getValue: function () {
+        if (tiny) { try { tiny.save(); return tiny.getContent(); } catch (e) {} }
+        if (wysEl.style.display !== 'none') return wysEl.innerHTML;
+        return src.value;
+      },
+      setValue: function (h) {
+        src.value = h || '';
+        if (tiny) { try { tiny.setContent(h || ''); } catch (e) {} }
+        wysEl.innerHTML = h || '';
+      },
+      destroy: function () { if (tiny) { try { tiny.remove(); } catch (e) {} } }
+    };
+  }
+
   // v4.6.3: ujednolicony modal edycji parametru/warto\u015bci (zak\u0142adki j\u0119zyk\u00f3w, Nazwa + Opis od razu widoczne)
   // API: load getParameterLangData; zapis nazw setSettings&names[lang]; opis setDescription per j\u0119zyk.
   function showEditElementModal(doc, nodeId) {
@@ -8889,18 +8985,14 @@ li.tp-row--selected > div {
       inN.addEventListener('blur', function () { inN.style.setProperty('border-color', '#d0d5dd', 'important'); inN.style.setProperty('box-shadow', 'none', 'important'); });
 
       var lblD = d.createElement('div');
-      lblD.textContent = 'Opis (HTML)';
+      lblD.textContent = 'Opis';
       lblD.style.cssText = 'font-size:12.5px;color:#667085;font-weight:600;margin-bottom:6px;';
-      var inD = d.createElement('textarea');
-      inD.rows = 7;
-      inD.style.cssText = ['width:100% !important','box-sizing:border-box !important','padding:10px 12px !important','margin:0 !important','border:1px solid #d0d5dd !important','border-radius:8px !important','background:#fff !important','font-size:13px !important','color:#1a1a2e !important','font-family:ui-monospace,Consolas,monospace !important','line-height:1.5 !important','resize:vertical !important','outline:none !important'].join(';') + ';';
-      inD.addEventListener('focus', function () { inD.style.setProperty('border-color', '#1a73e8', 'important'); inD.style.setProperty('box-shadow', '0 0 0 3px rgba(26,115,232,.15)', 'important'); });
-      inD.addEventListener('blur', function () { inD.style.setProperty('border-color', '#d0d5dd', 'important'); inD.style.setProperty('box-shadow', 'none', 'important'); });
+      var edD = createEditorWidget(d, st[curLang].description, 8);
 
       body.appendChild(lblN); body.appendChild(inN);
-      body.appendChild(lblD); body.appendChild(inD);
+      body.appendChild(lblD); body.appendChild(edD.container);
 
-      function stash() { if (curLang) { st[curLang].name = inN.value; st[curLang].description = inD.value; } }
+      function stash() { if (curLang) { st[curLang].name = inN.value; st[curLang].description = edD.getValue(); } }
       function paintTabs() {
         [].forEach.call(tabs.children, function (t) {
           var on = t.dataset.lang === curLang;
@@ -8909,7 +9001,7 @@ li.tp-row--selected > div {
           t.style.fontWeight = on ? '600' : '400';
         });
       }
-      function loadLang(lg) { curLang = lg; inN.value = st[lg].name; inD.value = st[lg].description; paintTabs(); }
+      function loadLang(lg) { curLang = lg; inN.value = st[lg].name; edD.setValue(st[lg].description); paintTabs(); }
       [].forEach.call(tabs.children, function (t) {
         t.addEventListener('click', function () { stash(); loadLang(t.dataset.lang); inN.focus(); });
       });
@@ -8926,7 +9018,7 @@ li.tp-row--selected > div {
       modal.appendChild(header); modal.appendChild(body); modal.appendChild(footer);
       overlay.appendChild(modal); d.body.appendChild(overlay);
 
-      function close() { overlay.classList.add('tp-closing'); setTimeout(function () { if (overlay.parentNode) overlay.remove(); }, 180); }
+      function close() { try { edD.destroy(); } catch (e) {} overlay.classList.add('tp-closing'); setTimeout(function () { if (overlay.parentNode) overlay.remove(); }, 180); }
       header.querySelector('.tp-modal-header-close').addEventListener('click', close);
       cancel.addEventListener('click', close);
       overlay.addEventListener('mousedown', function (e) { if (e.target === overlay) close(); });
@@ -9108,7 +9200,7 @@ li.tp-row--selected > div {
       ],
       pagination: { perPage: 50 },
       footer: {
-        version: 'v4.6.4',
+        version: 'v4.6.5',
         links: []
       }
     });
