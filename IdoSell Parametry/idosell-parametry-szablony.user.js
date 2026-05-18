@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         IdoSell - Parametry Toolbar
 // @namespace    https://idosell.com/
-// @version      4.5.71
+// @version      4.5.72
 // @description  Toolbar do grupowej edycji parametrow: panel-pro v1.2.4 inline + new-panel support, checkboxy, zaznaczanie, rozwijanie/zwijanie, grupowe usuwanie/edycja, import CSV
 // @author       SyncOffer
 // @match        https://*.iai-shop.com/panel/app/parameters.php*
@@ -5856,10 +5856,22 @@ li.tp-row--selected > div {
     return Object.keys(set);
   }
 
+  // v4.5.72: ID zaznaczonych sekcji (analogicznie do getSelectedParamIds)
+  function getSelectedSectionIds(doc) {
+    if (!_sectionsMount || !_sectionsMount.listEl) return [];
+    return Array.from(_sectionsMount.listEl.querySelectorAll(':scope > li')).filter(function (li) {
+      if (li.classList.contains('panel-pro--filter-hidden')) return false;
+      var cb = li.querySelector('input.tp-checkbox');
+      return cb && cb.checked;
+    }).map(function (li) { return li.dataset.sectionId; });
+  }
+
   // v4.5.63: UI portowane ze skryptu IdoSell Menu (Shadow DOM, karta TYP / pills / chipy języków).
   // Dla parametrów mamy tylko typ "Pełny" — sekcja typu pokazana dla spójności wizualnej, ale
   // jedyna karta jest aktywna.
-  function showExportModal(targetDoc, defaultScope) {
+  function showExportModal(targetDoc, defaultScope, kind) {
+    kind = kind || 'params';
+    var isSec = (kind === 'sections');
     var existing = document.getElementById('tp-export-chooser-host');
     if (existing) existing.remove();
 
@@ -5869,11 +5881,26 @@ li.tp-row--selected > div {
     document.body.appendChild(host);
     var shadow = host.attachShadow({ mode: 'open' });
 
-    var selParamIds = getSelectedParamIds(targetDoc);
-    var hasSelection = selParamIds.length > 0;
-    var selCount = selParamIds.length;
+    var selIds = isSec ? getSelectedSectionIds(targetDoc) : getSelectedParamIds(targetDoc);
+    var hasSelection = selIds.length > 0;
+    var selCount = selIds.length;
     var currentScope = (defaultScope === 'selected' && hasSelection) ? 'selected' : 'all';
     var currentFormat = 'json';
+    var L = isSec ? {
+      title: 'Eksport sekcji',
+      sub: 'Wybierz format, zakres i języki eksportu sekcji',
+      typeName: 'Pełny',
+      typeDesc: 'Sekcje + nazwy per język' ,
+      scopeAll: 'Wszystkie sekcje',
+      info: 'Eksport zawiera <strong>nazwy sekcji</strong> per język. Listę przypisanych produktów (ID + kody) wybierasz powyżej.'
+    } : {
+      title: 'Eksport',
+      sub: 'Wybierz format, zakres i języki eksportu',
+      typeName: 'Pełny',
+      typeDesc: 'Parametry + wartości + priorytety + kontekst',
+      scopeAll: 'Całe drzewo',
+      info: 'Eksport zawiera <strong>nazwy</strong> per język. Dodatkowe pola (priorytety, konteksty, lista produktów) wybierasz powyżej.'
+    };
 
     var LANG_COUNTRY = { pol:'PL', eng:'GB', ger:'DE', deu:'DE', fra:'FR', ces:'CZ', cze:'CZ', ukr:'UA', ita:'IT', esp:'ES', rus:'RU', por:'PT', nld:'NL', hun:'HU', swe:'SE', nor:'NO', dan:'DK', fin:'FI', rum:'RO', rom:'RO', bul:'BG', hrv:'HR', slk:'SK', slv:'SI', lit:'LT', lav:'LV', est:'EE', ara:'SA' };
     function langFlag(code) {
@@ -5881,7 +5908,9 @@ li.tp-row--selected > div {
       return String.fromCodePoint.apply(String, cc.split('').map(function (c) { return 0x1F1E6 + c.charCodeAt(0) - 65; }));
     }
     var stateLangs = COMMON_LANGS.map(function (l) { return { code: l.code, label: l.label, on: l.code === LANG }; });
-    var stateExtras = [
+    var stateExtras = isSec ? [
+      { key: 'products', label: 'Lista produktów (ID + kody)', desc: 'ID przypisanych towarów per sekcja; kody przez Admin API (opcjonalnie)', on: false }
+    ] : [
       { key: 'priority', label: 'Priorytety', desc: 'Pozycja parametru/wartości w drzewie', on: true },
       { key: 'context', label: 'Konteksty specjalne', desc: 'context_id parametrów + context_value_id wartości', on: true },
       { key: 'products', label: 'Lista produktów (ID + kody)', desc: 'ID przypisanych towarów per wartość; kody przez Admin API (opcjonalnie)', on: false }
@@ -5991,7 +6020,7 @@ li.tp-row--selected > div {
       '<div class="mb">' +
         '<div class="hd">' +
           '<div class="hd-ic">' + ICON_DOWN + '</div>' +
-          '<div><div class="hd-t">Eksport</div><div class="hd-s">Wybierz format, zakres i języki eksportu</div></div>' +
+          '<div><div class="hd-t">' + L.title + '</div><div class="hd-s">' + L.sub + '</div></div>' +
           '<button type="button" class="hd-x" aria-label="Zamknij">' + ICON_CLOSE + '</button>' +
         '</div>' +
         '<div class="bd">' +
@@ -6000,7 +6029,7 @@ li.tp-row--selected > div {
             '<div class="types">' +
               '<div class="type-card">' +
                 '<div class="type-ic">' + ICON_FULL + '</div>' +
-                '<div class="type-text"><div class="type-t">Pełny</div><div class="type-d">Parametry + wartości + priorytety + kontekst</div></div>' +
+                '<div class="type-text"><div class="type-t">' + L.typeName + '</div><div class="type-d">' + L.typeDesc + '</div></div>' +
               '</div>' +
             '</div>' +
           '</div>' +
@@ -6015,7 +6044,7 @@ li.tp-row--selected > div {
           '<div class="sec">' +
             '<div class="lbl">Zakres</div>' +
             '<div class="pills">' +
-              '<button type="button" class="pill' + (currentScope === 'all' ? ' active' : '') + '" data-scope="all">Całe drzewo</button>' +
+              '<button type="button" class="pill' + (currentScope === 'all' ? ' active' : '') + '" data-scope="all">' + L.scopeAll + '</button>' +
               '<button type="button" class="pill' + (currentScope === 'selected' ? ' active' : '') + (hasSelection ? '' : ' disabled') + '" data-scope="selected">Tylko zaznaczone' + (hasSelection ? ' (' + selCount + ')' : '') + '</button>' +
             '</div>' +
           '</div>' +
@@ -6033,7 +6062,7 @@ li.tp-row--selected > div {
             '<button type="button" class="b-mini" data-role="api-create">Utwórz klucz</button></div>' +
             '<div class="api-hint">Gdy klucz podany — do każdego produktu dociągane są <code>kod zewnętrzny</code> i <code>kod producenta</code> przez <code>/api/admin/v5/products/products/search</code>. „Utwórz klucz" tworzy automatycznie klucz z prawem odczytu produktów (PIM). Klucz zapisywany lokalnie w przeglądarce.</div>' +
           '</div>' +
-          '<div class="info">Eksport zawiera <strong>nazwy</strong> per język. Dodatkowe pola (priorytety, konteksty, lista produktów) wybierasz powyżej.</div>' +
+          '<div class="info">' + L.info + '</div>' +
         '</div>' +
         '<div class="ft">' +
           '<button type="button" class="b b-c" data-role="cancel">Anuluj</button>' +
@@ -6137,7 +6166,8 @@ li.tp-row--selected > div {
       var apiKey = apiKeyInput ? apiKeyInput.value.trim() : '';
       if (apiKey) { try { localStorage.setItem('tp.adminApiKey', apiKey); } catch (e) {} }
       close();
-      runExport(targetDoc, { scope: currentScope, format: currentFormat, langs: langs, extras: extras, apiKey: apiKey }).catch(function (e) {
+      var runner = isSec ? runSectionsExport : runExport;
+      runner(targetDoc, { scope: currentScope, format: currentFormat, langs: langs, extras: extras, apiKey: apiKey }).catch(function (e) {
         alert('Błąd eksportu: ' + (e.message || e));
       });
     });
@@ -6612,6 +6642,175 @@ li.tp-row--selected > div {
 
     downloadBlob(doc, content, mime, fileBase + '.' + ext);
     if (_panel) _panel.showStatus('Eksport ' + opts.format.toUpperCase() + ': ' + data.parameters.length + ' parametrów');
+  }
+
+  // v4.5.72: eksport sekcji — ten sam modal/UI co parametry (format/zakres/języki/produkty)
+  async function runSectionsExport(doc, opts) {
+    var extras = opts.extras || { products: false };
+    var langs = opts.langs && opts.langs.length ? opts.langs : [LANG];
+
+    function statusEl(m) { if (_panel) _panel.showStatus(m); }
+    statusEl('Eksport sekcji: rozpoczynanie...');
+
+    // Nazwy sekcji per język
+    var byLang = {};       // lang -> { id: name }
+    var orderIds = [];     // kolejność wg języka głównego
+    for (var li = 0; li < langs.length; li++) {
+      var lang = langs[li];
+      statusEl('Eksport sekcji: pobieranie (' + lang + ')...');
+      try {
+        var resp = await fetchAjax('action=getList&type=section&parent=0&lang=' + encodeURIComponent(lang));
+        var arr = (resp && resp.data) ? resp.data : [];
+        byLang[lang] = {};
+        arr.forEach(function (s) {
+          var id = String(s.id);
+          byLang[lang][id] = String(s.name || '').trim();
+          if (li === 0) orderIds.push(id);
+        });
+      } catch (e) { byLang[lang] = {}; }
+    }
+
+    // Zakres: tylko zaznaczone
+    if (opts.scope === 'selected') {
+      var sel = {};
+      getSelectedSectionIds(doc).forEach(function (id) { sel[String(id)] = true; });
+      orderIds = orderIds.filter(function (id) { return sel[id]; });
+      if (!orderIds.length) { alert('Brak zaznaczonych sekcji'); return; }
+    }
+
+    var sections = orderIds.map(function (id) {
+      var names = {};
+      langs.forEach(function (l) { names[l] = (byLang[l] && byLang[l][id]) || ''; });
+      return { id: id, names: names, products: [], _productCodes: null };
+    });
+
+    // Lista produktów (ID + kody)
+    if (extras.products) {
+      var BATCH = 5;
+      for (var si = 0; si < sections.length; si += BATCH) {
+        var batch = sections.slice(si, si + BATCH);
+        await Promise.all(batch.map(async function (sec) {
+          try {
+            var r = await fetchAjax('action=numberOfOccurrence&id=' + encodeURIComponent(sec.id));
+            var raw = r && r.data && r.data.products ? r.data.products : null;
+            var ids = [];
+            if (Array.isArray(raw)) ids = raw.map(function (p) { return String(typeof p === 'object' ? (p.id || p.product_id) : p); });
+            else if (raw && typeof raw === 'object') ids = Object.values(raw).map(function (p) { return String(typeof p === 'object' ? (p.id || p.product_id) : p); });
+            sec.products = ids;
+          } catch (e) { sec.products = []; }
+        }));
+        statusEl('Eksport sekcji: produkty (' + Math.min(si + BATCH, sections.length) + '/' + sections.length + ')');
+      }
+
+      if (opts.apiKey) {
+        var allIdsMap = {};
+        sections.forEach(function (s) { (s.products || []).forEach(function (id) { allIdsMap[id] = true; }); });
+        var allIds = Object.keys(allIdsMap);
+        var codeMap = {};
+        var API_BATCH = 100;
+        for (var ai = 0; ai < allIds.length; ai += API_BATCH) {
+          var idChunk = allIds.slice(ai, ai + API_BATCH);
+          statusEl('Eksport sekcji: kody produktów (' + Math.min(ai + API_BATCH, allIds.length) + '/' + allIds.length + ')');
+          try {
+            var aresp = await fetch('/api/admin/v5/products/products/search', {
+              method: 'POST',
+              headers: { 'X-API-KEY': opts.apiKey, 'Content-Type': 'application/json', 'Accept': 'application/json' },
+              body: JSON.stringify({ params: {
+                returnElements: ['productId', 'code', 'sizes_attributes'],
+                identType: 'id',
+                products: idChunk.map(function (id) { return { productId: Number(id) }; })
+              }})
+            });
+            var jr = await aresp.json();
+            (jr.results || []).forEach(function (pr) {
+              var sa = (pr.productSizesAttributes || [])[0] || {};
+              codeMap[String(pr.productId)] = {
+                codeExternal: sa.productSizeCodeExternal || '',
+                codeProducer: sa.productSizeCodeProducer || '',
+                displayedCode: pr.productDisplayedCode || ''
+              };
+            });
+          } catch (e) {}
+        }
+        sections.forEach(function (s) {
+          s._productCodes = (s.products || []).map(function (id) {
+            var c = codeMap[String(id)] || {};
+            return { id: String(id), codeExternal: c.codeExternal || '', codeProducer: c.codeProducer || '', displayedCode: c.displayedCode || '' };
+          });
+        });
+      }
+    }
+
+    var ts = new Date().toISOString().replace(/[:.]/g, '-');
+    var fileBase = 'sekcje_' + langs.join('-') + '_' + ts;
+    var content, mime, ext;
+    var withCodes = !!opts.apiKey;
+
+    function secProducts(s) {
+      if (s._productCodes) return s._productCodes.map(function (c) {
+        return { id: c.id, codeExternal: c.codeExternal, codeProducer: c.codeProducer, displayedCode: c.displayedCode };
+      });
+      return (s.products || []).map(function (pid) { return { id: String(pid) }; });
+    }
+
+    if (opts.format === 'json') {
+      var jsonSecs = sections.map(function (s) {
+        var o = { id: s.id, names: s.names };
+        if (extras.products) o.products = secProducts(s);
+        return o;
+      });
+      content = JSON.stringify({ exportedAt: new Date().toISOString(), langs: langs, extras: extras, sections: jsonSecs }, null, 2);
+      mime = 'application/json;charset=utf-8'; ext = 'json';
+    } else if (opts.format === 'csv') {
+      var header = ['section_id'];
+      langs.forEach(function (l) { header.push('section_name_' + l); });
+      if (extras.products) { header.push('section_product_ids'); if (withCodes) header.push('section_product_codes_external', 'section_product_codes_producer'); }
+      var rows = [header.join(',')];
+      sections.forEach(function (s) {
+        var row = [s.id];
+        langs.forEach(function (l) { row.push(csvEsc(s.names[l])); });
+        if (extras.products) {
+          row.push(csvEsc((s._productCodes ? s._productCodes.map(function (c) { return c.id; }) : (s.products || [])).join(';')));
+          if (withCodes) {
+            row.push(csvEsc((s._productCodes || []).map(function (c) { return c.codeExternal; }).join(';')));
+            row.push(csvEsc((s._productCodes || []).map(function (c) { return c.codeProducer; }).join(';')));
+          }
+        }
+        rows.push(row.join(','));
+      });
+      content = '﻿' + rows.join('\r\n');
+      mime = 'text/csv;charset=utf-8'; ext = 'csv';
+    } else if (opts.format === 'xml') {
+      var x = ['<?xml version="1.0" encoding="UTF-8"?>'];
+      x.push('<sections exportedAt="' + xmlEsc(new Date().toISOString()) + '" langs="' + xmlEsc(langs.join(',')) + '">');
+      sections.forEach(function (s) {
+        x.push('  <section id="' + xmlEsc(s.id) + '">');
+        langs.forEach(function (l) { x.push('    <name lang="' + l + '">' + xmlEsc(s.names[l]) + '</name>'); });
+        if (extras.products) {
+          var pc = s._productCodes;
+          if (pc && pc.length) {
+            x.push('    <products>');
+            pc.forEach(function (c) {
+              x.push('      <product id="' + xmlEsc(c.id) + '" codeExternal="' + xmlEsc(c.codeExternal) + '" codeProducer="' + xmlEsc(c.codeProducer) + '" displayedCode="' + xmlEsc(c.displayedCode) + '"/>');
+            });
+            x.push('    </products>');
+          } else if ((s.products || []).length) {
+            x.push('    <products>');
+            s.products.forEach(function (pid) { x.push('      <product id="' + xmlEsc(pid) + '"/>'); });
+            x.push('    </products>');
+          }
+        }
+        x.push('  </section>');
+      });
+      x.push('</sections>');
+      content = x.join('\n');
+      mime = 'application/xml;charset=utf-8'; ext = 'xml';
+    } else {
+      throw new Error('Nieznany format: ' + opts.format);
+    }
+
+    downloadBlob(doc, content, mime, fileBase + '.' + ext);
+    statusEl('Eksport ' + opts.format.toUpperCase() + ': ' + sections.length + ' sekcji');
   }
 
   async function exportTreeFull(doc, format) {
@@ -7360,9 +7559,8 @@ li.tp-row--selected > div {
             { icon: 'swap_horiz', tooltip: 'Odwr\u00f3\u0107 zaznaczenie', variant: 'icon', onClick: function () { invertSectionsSelection(doc); } }
           ] },
           { buttons: [
-            { icon: 'download',    label: 'Eksport JSON', tooltip: 'Eksport JSON', variant: 'text', onClick: function () { exportSections(doc, 'json'); } },
-            { icon: 'table_chart', label: 'Eksport CSV',  tooltip: 'Eksport CSV',  variant: 'text', onClick: function () { exportSections(doc, 'csv'); } },
-            { icon: 'upload',      label: 'Import',       tooltip: 'Import JSON/CSV', variant: 'text', onClick: function () { openSectionsImportPicker(doc); } }
+            { icon: 'download', label: 'Eksport', tooltip: 'Eksport sekcji — wybór zakresu, formatu i języków', variant: 'text', onClick: function () { showExportModal(doc, 'all', 'sections'); } },
+            { icon: 'upload',   label: 'Import',  tooltip: 'Import sekcji z pliku JSON lub CSV', variant: 'text', onClick: function () { openSectionsImportPicker(doc); } }
           ] },
           { columnsMenu: true }
         ]
@@ -7387,8 +7585,7 @@ li.tp-row--selected > div {
           { icon: 'delete', label: 'Usu\u0144', tooltip: 'Usu\u0144 zaznaczone sekcje', variant: 'danger', onClick: function () { bulkDeleteSelectedSections(doc); } }
         ],
         extraActions: [
-          { icon: 'download',     label: 'Eksport JSON', tooltip: 'Eksport zaznaczonych do JSON', onClick: function () { exportSections(doc, 'json'); } },
-          { icon: 'table_chart',  label: 'Eksport CSV',  tooltip: 'Eksport zaznaczonych do CSV',  onClick: function () { exportSections(doc, 'csv'); } }
+          { icon: 'download', label: 'Eksport', tooltip: 'Eksport zaznaczonych sekcji (format / języki / produkty)', onClick: function () { showExportModal(doc, 'selected', 'sections'); } }
         ],
         onClear: function () { toggleAllSections(doc, false); }
       },
@@ -7442,8 +7639,8 @@ li.tp-row--selected > div {
       li.innerHTML =
         '<div></div>' +
         '<div style="display:flex;align-items:center;justify-content:center"><input type="checkbox" class="tp-checkbox" data-section-id="' + sec.id + '"></div>' +
-        '<div style="display:flex;align-items:center;justify-content:center"><span class="material-symbols-outlined" style="color:#1d4ed8;font-size:20px" title="Sekcja">folder_special</span></div>' +
-        '<div style="display:flex;align-items:center;gap:6px"><span class="tp-sec-name" style="font-weight:500;cursor:pointer" title="Dwuklik = zmiana nazwy">' + escapeHtml(sec.name) + '</span></div>' +
+        '<div style="display:flex;align-items:center;justify-content:center"><span class="material-symbols-outlined" style="color:#1d4ed8;font-size:22px" title="Sekcja">folder_special</span></div>' +
+        '<div style="display:flex;align-items:center;gap:6px"><span class="tp-sec-name" style="font-weight:500;font-size:15px;cursor:pointer" title="Dwuklik = zmiana nazwy">' + escapeHtml(sec.name) + '</span></div>' +
         '<div style="text-align:center;font-family:Roboto Mono,monospace;font-size:12px;color:#5f6368">' + sec.id + '</div>' +
         '<div class="tp-sec-products" data-section-id="' + sec.id + '" style="text-align:center;color:#5f6368">…</div>' +
         '<div style="display:flex;align-items:center;justify-content:center;gap:6px">' +
@@ -7909,7 +8106,7 @@ li.tp-row--selected > div {
       ],
       pagination: { perPage: 50 },
       footer: {
-        version: 'v4.5.71',
+        version: 'v4.5.72',
         links: [
           { label: 'Propozycja', icon: 'star', tooltip: 'Zaproponuj funkcjonalność', variant: 'feature', href: 'https://github.com/design4artPl/tampermonkey/issues/new?labels=enhancement', target: '_blank' },
           { label: 'Zgłoś błąd', icon: 'bug_report', tooltip: 'Zgłoś błąd', variant: 'bug', href: 'https://github.com/design4artPl/tampermonkey/issues/new?labels=bug', target: '_blank' }
