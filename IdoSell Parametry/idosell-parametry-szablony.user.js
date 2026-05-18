@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         IdoSell - Parametry Toolbar
 // @namespace    https://idosell.com/
-// @version      4.6.5
+// @version      4.6.6
 // @description  Toolbar do grupowej edycji parametrow: panel-pro v1.2.4 inline + new-panel support, checkboxy, zaznaczanie, rozwijanie/zwijanie, grupowe usuwanie/edycja, import CSV
 // @author       SyncOffer
 // @match        https://*.iai-shop.com/panel/app/parameters.php*
@@ -8267,7 +8267,7 @@ li.tp-row--selected > div {
       },
       pagination: { perPage: loadPerPagePref('Sec') },
       footer: {
-        version: 'v4.6.5',
+        version: 'v4.6.6',
         links: []
       }
     });
@@ -8992,6 +8992,83 @@ li.tp-row--selected > div {
       body.appendChild(lblN); body.appendChild(inN);
       body.appendChild(lblD); body.appendChild(edD.container);
 
+      // v4.6.6: Grafiki per sklep — reużycie natywnego edytora (#fg_id_shopsTr_<lang>)
+      var gfxByLang = {};   // lang -> kontener z natywnym tabview sklepów
+      var gfxLoaded = false;
+      var lblG = d.createElement('div');
+      lblG.textContent = 'Grafiki (per sklep)';
+      lblG.style.cssText = 'font-size:12.5px;color:#667085;font-weight:600;margin:16px 0 6px 0;';
+      var gfxArea = d.createElement('div');
+      gfxArea.style.cssText = 'border:1px solid #e2e8f0;border-radius:8px;background:#fafbfd;';
+      var gfxBtn = d.createElement('button');
+      gfxBtn.type = 'button';
+      gfxBtn.className = 'tp-btn-modal-secondary';
+      gfxBtn.style.cssText = 'margin:12px;';
+      gfxBtn.textContent = 'Pokaż edytor grafik (per sklep)';
+      var gfxHint = d.createElement('span');
+      gfxHint.style.cssText = 'font-size:12px;color:#98a2b3;margin-left:8px;';
+      gfxHint.textContent = 'Wczytuje natywny edytor grafik (RWD/jednolita + upload).';
+      gfxArea.appendChild(gfxBtn); gfxArea.appendChild(gfxHint);
+      body.appendChild(lblG); body.appendChild(gfxArea);
+
+      function showGfxForLang(lg) {
+        Object.keys(gfxByLang).forEach(function (k) {
+          if (gfxByLang[k]) gfxByLang[k].style.display = (k === lg) ? '' : 'none';
+        });
+      }
+      gfxBtn.addEventListener('click', function () {
+        if (gfxLoaded) return;
+        gfxBtn.disabled = true; gfxBtn.textContent = 'Wczytywanie…';
+        var idoc = (typeof getIframeDoc === 'function') ? getIframeDoc() : doc;
+        var sty = idoc.getElementById('tp-gfx-hide');
+        if (!sty) {
+          sty = idoc.createElement('style');
+          sty.id = 'tp-gfx-hide';
+          sty.textContent = '.ui-dialog{position:fixed !important;left:-99999px !important;top:-99999px !important;opacity:0 !important;pointer-events:none !important;}';
+          idoc.head.appendChild(sty);
+        }
+        var nm = idoc.getElementById('showMenuSub_' + nodeId);
+        if (nm) nm.click();
+        setTimeout(function () {
+          var edl = idoc.getElementById('editEl_' + nodeId) || idoc.querySelector('[id^="editEl_"]');
+          if (edl) edl.click();
+          var tries = 0;
+          var iv = setInterval(function () {
+            tries++;
+            var first = idoc.getElementById('fg_id_shopsTr_' + langs[0]) ||
+                        langs.map(function (l) { return idoc.getElementById('fg_id_shopsTr_' + l); }).filter(Boolean)[0];
+            if (first || tries > 40) {
+              clearInterval(iv);
+              if (!first) {
+                gfxBtn.disabled = false; gfxBtn.textContent = 'Pokaż edytor grafik (per sklep)';
+                if (_panel) _panel.showStatus('Nie udało się wczytać natywnego edytora grafik', true);
+                return;
+              }
+              var nativeForm = idoc.querySelector('form[id^="form_editEl_"]');
+              langs.forEach(function (lg) {
+                var g = idoc.getElementById('fg_id_shopsTr_' + lg);
+                var cont = d.createElement('div');
+                cont.style.cssText = 'padding:10px;display:' + (lg === curLang ? '' : 'none') + ';';
+                if (g) { cont.appendChild(g); }
+                else { cont.innerHTML = '<div style="color:#98a2b3;font-size:12px;padding:8px">Brak danych grafik dla języka ' + escapeHtml(getLangName(lg)) + '</div>'; }
+                gfxByLang[lg] = cont;
+                gfxArea.appendChild(cont);
+              });
+              // usuń natywny dialog (węzły grafik już przeniesione)
+              try {
+                var dlg = nativeForm && (nativeForm.closest('.ui-dialog') || nativeForm.parentNode);
+                if (dlg && dlg.parentNode) dlg.parentNode.removeChild(dlg);
+              } catch (e) {}
+              try { idoc.querySelectorAll('[id^="longdesc_edit_window"]').forEach(function (n) { n.remove(); }); } catch (e) {}
+              if (sty && sty.parentNode) sty.parentNode.removeChild(sty);
+              gfxBtn.remove(); gfxHint.remove();
+              gfxLoaded = true;
+              showGfxForLang(curLang);
+            }
+          }, 150);
+        }, 600);
+      });
+
       function stash() { if (curLang) { st[curLang].name = inN.value; st[curLang].description = edD.getValue(); } }
       function paintTabs() {
         [].forEach.call(tabs.children, function (t) {
@@ -9001,7 +9078,7 @@ li.tp-row--selected > div {
           t.style.fontWeight = on ? '600' : '400';
         });
       }
-      function loadLang(lg) { curLang = lg; inN.value = st[lg].name; edD.setValue(st[lg].description); paintTabs(); }
+      function loadLang(lg) { curLang = lg; inN.value = st[lg].name; edD.setValue(st[lg].description); paintTabs(); if (gfxLoaded) showGfxForLang(lg); }
       [].forEach.call(tabs.children, function (t) {
         t.addEventListener('click', function () { stash(); loadLang(t.dataset.lang); inN.focus(); });
       });
@@ -9029,6 +9106,18 @@ li.tp-row--selected > div {
         ok.disabled = true; ok.textContent = 'Zapisywanie\u2026';
         var nameBody = 'action=setSettings&id=' + encodeURIComponent(nodeId) + '&menuSection=true';
         langs.forEach(function (lg) { nameBody += '&names[' + lg + ']=' + encodeURIComponent(st[lg].name); });
+        // v4.6.6: typy grafik z natywnych radiów (icon_type_<lang>_<shop>_<ctx>)
+        if (gfxLoaded) {
+          Object.keys(gfxByLang).forEach(function (lg) {
+            var cont = gfxByLang[lg];
+            if (!cont) return;
+            cont.querySelectorAll('input[type="radio"]:checked').forEach(function (r) {
+              var m = /^icon_type_([a-z]{3})_(\d+)_(search|projector)$/.exec(r.name || '');
+              if (!m) return;
+              nameBody += '&icon_' + m[3] + '_type[' + m[1] + '][' + m[2] + ']=' + encodeURIComponent(r.value);
+            });
+          });
+        }
         var descLangs = langs.filter(function (lg) { return st[lg].description !== st[lg].oDesc; });
         fetchAjax(nameBody).then(function (r1) {
           if (r1 && r1.errno && r1.errno !== 0) throw new Error(r1.message || ('errno ' + r1.errno));
@@ -9200,7 +9289,7 @@ li.tp-row--selected > div {
       ],
       pagination: { perPage: 50 },
       footer: {
-        version: 'v4.6.5',
+        version: 'v4.6.6',
         links: []
       }
     });
