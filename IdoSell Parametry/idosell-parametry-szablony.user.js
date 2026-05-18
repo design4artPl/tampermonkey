@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         IdoSell - Parametry Toolbar
 // @namespace    https://idosell.com/
-// @version      4.5.68
+// @version      4.5.69
 // @description  Toolbar do grupowej edycji parametrow: panel-pro v1.2.4 inline + new-panel support, checkboxy, zaznaczanie, rozwijanie/zwijanie, grupowe usuwanie/edycja, import CSV
 // @author       SyncOffer
 // @match        https://*.iai-shop.com/panel/app/parameters.php*
@@ -5783,8 +5783,10 @@ li.tp-row--selected > div {
     var stateExtras = [
       { key: 'priority', label: 'Priorytety', desc: 'Pozycja parametru/wartości w drzewie', on: true },
       { key: 'context', label: 'Konteksty specjalne', desc: 'context_id parametrów + context_value_id wartości', on: true },
-      { key: 'products', label: 'Lista produktów (ID + kody)', desc: 'ID przypisanych towarów per wartość; kody jeśli zwracane przez API', on: false }
+      { key: 'products', label: 'Lista produktów (ID + kody)', desc: 'ID przypisanych towarów per wartość; kody przez Admin API (opcjonalnie)', on: false }
     ];
+    var savedApiKey = '';
+    try { savedApiKey = localStorage.getItem('tp.adminApiKey') || ''; } catch (e) {}
 
     var CSS = [
       ':host { all: initial; }',
@@ -5838,6 +5840,14 @@ li.tp-row--selected > div {
       '.toggle-label { font-size: 12.5px; font-weight: 500; color: #344054; line-height: 1.3; }',
       '.toggle-row.on .toggle-label { color: #1a1a2e; }',
       '.toggle-desc { font-size: 11px; color: #98a2b3; margin-top: 2px; line-height: 1.3; }',
+      '.api-row { display: flex; gap: 8px; align-items: stretch; }',
+      '.api-input { flex: 1; padding: 9px 11px; border: 1px solid #d0d5dd; border-radius: 8px; font-size: 13px; color: #1a1a2e; }',
+      '.api-input:focus { outline: none; border-color: #4f8cff; box-shadow: 0 0 0 3px rgba(79,140,255,.15); }',
+      '.b-mini { padding: 0 14px; border-radius: 8px; border: 1px solid #4f8cff; background: #eef3ff; color: #2f6ad6; font-size: 12.5px; font-weight: 600; cursor: pointer; white-space: nowrap; }',
+      '.b-mini:hover { background: #dbe6ff; }',
+      '.b-mini[disabled] { opacity: .6; cursor: progress; }',
+      '.api-hint { font-size: 11px; color: #98a2b3; margin-top: 6px; line-height: 1.4; }',
+      '.api-hint code { background: #f0f2f5; padding: 1px 5px; border-radius: 3px; font-size: 11px; }',
       '.info { padding: 10px 12px; border-radius: 8px; font-size: 12px; line-height: 1.5; background: #eef3ff; border: 1px solid #d6e2ff; color: #3b5998; }',
       '.info strong { font-weight: 700; }',
       '.ft { padding: 14px 22px; border-top: 1px solid #eef0f4; background: #fafbfc; display: flex; gap: 8px; justify-content: flex-end; align-items: center; }',
@@ -5916,7 +5926,13 @@ li.tp-row--selected > div {
             '<div class="lbl">Dodatkowe dane</div>' +
             '<div class="extras" data-role="extras-list">' + buildExtrasHtml() + '</div>' +
           '</div>' +
-          '<div class="info">Eksport zawiera <strong>nazwy</strong> per język. Dodatkowe pola (priorytety, konteksty, liczby produktów) wybierasz powyżej.</div>' +
+          '<div class="sec" data-role="api-sec" style="display:none">' +
+            '<div class="lbl">Kody produktów przez Admin API (opcjonalnie)</div>' +
+            '<div class="api-row"><input type="text" class="api-input" data-role="api-key" placeholder="X-API-KEY (klucz Admin API z prawami do produktów)" value="' + (savedApiKey || '') + '">' +
+            '<button type="button" class="b-mini" data-role="api-create">Utwórz klucz</button></div>' +
+            '<div class="api-hint">Gdy klucz podany — do każdego produktu dociągane są <code>kod zewnętrzny</code> i <code>kod producenta</code> przez <code>/api/admin/v5/products/products/search</code>. „Utwórz klucz" tworzy automatycznie klucz z prawem odczytu produktów (PIM). Klucz zapisywany lokalnie w przeglądarce.</div>' +
+          '</div>' +
+          '<div class="info">Eksport zawiera <strong>nazwy</strong> per język. Dodatkowe pola (priorytety, konteksty, lista produktów) wybierasz powyżej.</div>' +
         '</div>' +
         '<div class="ft">' +
           '<button type="button" class="b b-c" data-role="cancel">Anuluj</button>' +
@@ -5975,6 +5991,28 @@ li.tp-row--selected > div {
       if (btn) btn.textContent = stateLangs.every(function (l) { return l.on; }) ? 'Odznacz' : 'Zaznacz';
     })();
 
+    function syncApiSec() {
+      var prodOn = stateExtras.find(function (x) { return x.key === 'products'; });
+      var sec = shadow.querySelector('[data-role="api-sec"]');
+      if (sec) sec.style.display = (prodOn && prodOn.on) ? '' : 'none';
+    }
+    var createBtn = shadow.querySelector('[data-role="api-create"]');
+    if (createBtn) createBtn.addEventListener('click', async function () {
+      createBtn.disabled = true;
+      var orig = createBtn.textContent;
+      createBtn.textContent = 'Tworzę...';
+      try {
+        var k = await createAdminApiKey();
+        var inp = shadow.querySelector('[data-role="api-key"]');
+        if (inp) inp.value = k;
+        try { localStorage.setItem('tp.adminApiKey', k); } catch (e) {}
+        createBtn.textContent = 'Utworzono ✓';
+        setTimeout(function () { createBtn.textContent = orig; createBtn.disabled = false; }, 2000);
+      } catch (e) {
+        alert('Nie udało się utworzyć klucza API: ' + (e.message || e));
+        createBtn.textContent = orig; createBtn.disabled = false;
+      }
+    });
     shadow.querySelectorAll('[data-extra]').forEach(function (row) {
       row.addEventListener('click', function (e) {
         e.preventDefault();
@@ -5984,16 +6022,21 @@ li.tp-row--selected > div {
         s.on = !s.on;
         row.classList.toggle('on', s.on);
         var cb = row.querySelector('input'); if (cb) cb.checked = s.on;
+        if (key === 'products') syncApiSec();
       });
     });
+    syncApiSec();
 
     shadow.querySelector('[data-role="ok"]').addEventListener('click', function () {
       var langs = stateLangs.filter(function (l) { return l.on; }).map(function (l) { return l.code; });
       if (!langs.length) { alert('Wybierz przynajmniej jeden język'); return; }
       var extras = {};
       stateExtras.forEach(function (f) { extras[f.key] = !!f.on; });
+      var apiKeyInput = shadow.querySelector('[data-role="api-key"]');
+      var apiKey = apiKeyInput ? apiKeyInput.value.trim() : '';
+      if (apiKey) { try { localStorage.setItem('tp.adminApiKey', apiKey); } catch (e) {} }
       close();
-      runExport(targetDoc, { scope: currentScope, format: currentFormat, langs: langs, extras: extras }).catch(function (e) {
+      runExport(targetDoc, { scope: currentScope, format: currentFormat, langs: langs, extras: extras, apiKey: apiKey }).catch(function (e) {
         alert('Błąd eksportu: ' + (e.message || e));
       });
     });
@@ -6096,6 +6139,76 @@ li.tp-row--selected > div {
       xhr.onerror = function () { reject(new Error('Sieć')); };
       xhr.send('action=getTreeForSection&parameter=group' + paramId + '&lang=' + encodeURIComponent(lang));
     });
+  }
+
+  // v4.5.69: auto-tworzenie klucza Admin API (port z "IdoSell - Masowe stany magazynowe").
+  // Uprawnienia tylko PIM=r (odczyt) — eksport potrzebuje wyłącznie products/search.
+  async function createAdminApiKey() {
+    var html = await new Promise(function (resolve, reject) {
+      var xhr = new XMLHttpRequest();
+      xhr.open('GET', '/panel/users-api.php?operation=add', true);
+      xhr.onload = function () { xhr.status === 200 ? resolve(xhr.responseText) : reject(new Error('GET HTTP ' + xhr.status)); };
+      xhr.onerror = function () { reject(new Error('Błąd sieci (GET)')); };
+      xhr.send();
+    });
+    function parseHidden(h, f) {
+      var re1 = new RegExp('name=["\']' + f + '["\'][^>]*value=["\']([^"\']+)', 'i');
+      var re2 = new RegExp('value=["\']([^"\']+)["\'][^>]*name=["\']' + f + '["\']', 'i');
+      var m = h.match(re1); if (m) return m[1];
+      m = h.match(re2); if (m) return m[1];
+      return null;
+    }
+    var apiKeyGen = parseHidden(html, 'api_key_generated');
+    var passGen = parseHidden(html, 'password_generated');
+    if (!apiKeyGen || !passGen) throw new Error('Nie znaleziono pre-generated key w formularzu users-api.php');
+
+    var params = new URLSearchParams();
+    params.append('__iai_shop_panel[__encoding]', 'utf-8');
+    params.append('authorization_type', 'key');
+    params.append('app_name', 'PanelPro Parametry Export');
+    params.append('email', 'panelpro@local');
+    params.append('active', 'y');
+    params.append('host_active', 'n');
+    params.append('host', '');
+    params.append('limited', 'n');
+    params.append('time_zone', 'Europe/Warsaw');
+    params.append('panel_language_default', 'pol');
+    params.append('panel_language', 'pol');
+    params.append('locale', 'pl_PL');
+    params.append('perms_system', 'none');
+    params.append('perms_cms', 'none');
+    params.append('perms_crm', 'none');
+    params.append('perms_pim', 'r');
+    params.append('perms_oms', 'none');
+    params.append('perms_wms', 'none');
+    params.append('add_user', 'true');
+    params.append('password_generated', passGen);
+    params.append('api_key_generated', apiKeyGen);
+    params.append('change_api_key', '0');
+    params.append('editid', '');
+
+    var resp = await new Promise(function (resolve, reject) {
+      var xhr = new XMLHttpRequest();
+      xhr.open('POST', '/panel/users-api.php', true);
+      xhr.setRequestHeader('Content-Type', 'application/x-www-form-urlencoded');
+      xhr.onload = function () { xhr.status === 200 ? resolve({ text: xhr.responseText, url: xhr.responseURL }) : reject(new Error('POST HTTP ' + xhr.status)); };
+      xhr.onerror = function () { reject(new Error('Błąd sieci (POST)')); };
+      xhr.send(params.toString());
+    });
+    var url = resp.url || '', text = resp.text || '';
+    var login = (url.match(/[?&]id=(application\d+)/) || [])[1]
+      || (url.match(/[?&]editid=(application\d+)/) || [])[1]
+      || (text.match(/Username[\s\S]{0,80}?(application\d+)/i) || [])[1];
+    if (!login) {
+      var m2 = text.match(/X-API-KEY[\s:]*([A-Za-z0-9+/=]{20,})/i);
+      if (m2) { try { var lm = atob(m2[1]).match(/(application\d+):/); if (lm) login = lm[1]; } catch (e) {} }
+    }
+    if (!login) login = (text.match(/(application\d+)/) || [])[1];
+    if (!login) {
+      var limitHit = /maksymalnie dwa|too many keys|przekroczono.*limit|limit.*kluczy/i.test(text);
+      throw new Error(limitHit ? 'Limit aktywnych kluczy API osiągnięty — zdezaktywuj istniejący lub wpisz klucz ręcznie.' : 'Nie udało się sparsować loginu z odpowiedzi panelu.');
+    }
+    return btoa(login + ':' + apiKeyGen);
   }
 
   async function runExport(doc, opts) {
@@ -6214,6 +6327,56 @@ li.tp-row--selected > div {
         pp.values.forEach(function (v) { (v.products || []).forEach(function (pid) { seenP[pid] = true; }); });
         pp.products = Object.keys(seenP);
       }
+
+      // v4.5.69: opcjonalnie — kody przez Admin API (/api/admin/v5/products/products/search)
+      if (opts.apiKey) {
+        var allIdsMap = {};
+        data.parameters.forEach(function (p) {
+          (p.products || []).forEach(function (id) { allIdsMap[id] = true; });
+          p.values.forEach(function (v) { (v.products || []).forEach(function (id) { allIdsMap[id] = true; }); });
+        });
+        var allIds = Object.keys(allIdsMap);
+        var codeMap = {};
+        var API_BATCH = 100;
+        for (var ai = 0; ai < allIds.length; ai += API_BATCH) {
+          var idChunk = allIds.slice(ai, ai + API_BATCH);
+          if (_panel) _panel.showStatus('Eksport: kody produktów (' + Math.min(ai + API_BATCH, allIds.length) + '/' + allIds.length + ')');
+          try {
+            var resp = await fetch('/api/admin/v5/products/products/search', {
+              method: 'POST',
+              headers: { 'X-API-KEY': opts.apiKey, 'Content-Type': 'application/json', 'Accept': 'application/json' },
+              body: JSON.stringify({ params: {
+                returnElements: ['productId', 'code', 'sizes_attributes'],
+                identType: 'id',
+                products: idChunk.map(function (id) { return { productId: Number(id) }; })
+              }})
+            });
+            var jr = await resp.json();
+            (jr.results || []).forEach(function (pr) {
+              var sa = (pr.productSizesAttributes || [])[0] || {};
+              codeMap[String(pr.productId)] = {
+                codeExternal: sa.productSizeCodeExternal || '',
+                codeProducer: sa.productSizeCodeProducer || '',
+                displayedCode: pr.productDisplayedCode || ''
+              };
+            });
+          } catch (e) { /* brak kodów dla tej paczki */ }
+        }
+        // Wstrzyknij kody do struktur
+        function attachCodes(arr) {
+          (arr || []).forEach(function (node) {
+            if (!node.products) return;
+            node._productCodes = node.products.map(function (id) {
+              var c = codeMap[String(id)] || {};
+              return { id: String(id), codeExternal: c.codeExternal || '', codeProducer: c.codeProducer || '', displayedCode: c.displayedCode || '' };
+            });
+          });
+        }
+        data.parameters.forEach(function (p) {
+          attachCodes([p]);
+          attachCodes(p.values);
+        });
+      }
     }
 
     var ts = new Date().toISOString().replace(/[:.]/g, '-');
@@ -6225,7 +6388,15 @@ li.tp-row--selected > div {
       var obj = { id: n.id, names: n.names };
       if (extras.priority) obj.priority = n.priority;
       if (extras.context) obj.context_id = n.context_id || null;
-      if (extras.products) obj.products = (n.products || []).map(function (pid) { return { id: String(pid) }; });
+      if (extras.products) {
+        if (n._productCodes) {
+          obj.products = n._productCodes.map(function (c) {
+            return { id: c.id, codeExternal: c.codeExternal, codeProducer: c.codeProducer, displayedCode: c.displayedCode };
+          });
+        } else {
+          obj.products = (n.products || []).map(function (pid) { return { id: String(pid) }; });
+        }
+      }
       return obj;
     }
 
@@ -6238,16 +6409,21 @@ li.tp-row--selected > div {
       content = JSON.stringify({ exportedAt: new Date().toISOString(), langs: data.langs, extras: extras, parameters: jsonParams }, null, 2);
       mime = 'application/json;charset=utf-8'; ext = 'json';
     } else if (opts.format === 'csv') {
+      var withCodes = !!opts.apiKey;
+      function prodIds(n) { return csvEsc((n._productCodes ? n._productCodes.map(function (c) { return c.id; }) : (n.products || [])).join(';')); }
+      function prodExt(n) { return csvEsc((n._productCodes || []).map(function (c) { return c.codeExternal; }).join(';')); }
+      function prodProd(n) { return csvEsc((n._productCodes || []).map(function (c) { return c.codeProducer; }).join(';')); }
+
       var header = ['parameter_id'];
       if (extras.priority) header.push('parameter_priority');
       opts.langs.forEach(function (l) { header.push('parameter_name_' + l); });
       if (extras.context) header.push('parameter_context_id');
-      if (extras.products) header.push('parameter_product_ids');
+      if (extras.products) { header.push('parameter_product_ids'); if (withCodes) header.push('parameter_product_codes_external', 'parameter_product_codes_producer'); }
       header.push('value_id');
       if (extras.priority) header.push('value_priority');
       opts.langs.forEach(function (l) { header.push('value_name_' + l); });
       if (extras.context) header.push('value_context_id');
-      if (extras.products) header.push('value_product_ids');
+      if (extras.products) { header.push('value_product_ids'); if (withCodes) header.push('value_product_codes_external', 'value_product_codes_producer'); }
       var rows = [header.join(',')];
 
       function paramCols(p) {
@@ -6255,7 +6431,7 @@ li.tp-row--selected > div {
         if (extras.priority) r.push(p.priority);
         opts.langs.forEach(function (l) { r.push(csvEsc(p.names[l])); });
         if (extras.context) r.push(p.context_id || '');
-        if (extras.products) r.push(csvEsc((p.products || []).join(';')));
+        if (extras.products) { r.push(prodIds(p)); if (withCodes) { r.push(prodExt(p)); r.push(prodProd(p)); } }
         return r;
       }
 
@@ -6266,7 +6442,7 @@ li.tp-row--selected > div {
           if (extras.priority) row.push('');
           opts.langs.forEach(function () { row.push(''); });
           if (extras.context) row.push('');
-          if (extras.products) row.push('');
+          if (extras.products) { row.push(''); if (withCodes) { row.push(''); row.push(''); } }
           rows.push(row.join(','));
         } else {
           p.values.forEach(function (v) {
@@ -6275,7 +6451,7 @@ li.tp-row--selected > div {
             if (extras.priority) row.push(v.priority);
             opts.langs.forEach(function (l) { row.push(csvEsc(v.names[l])); });
             if (extras.context) row.push(v.context_id || '');
-            if (extras.products) row.push(csvEsc((v.products || []).join(';')));
+            if (extras.products) { row.push(prodIds(v)); if (withCodes) { row.push(prodExt(v)); row.push(prodProd(v)); } }
             rows.push(row.join(','));
           });
         }
@@ -6291,6 +6467,14 @@ li.tp-row--selected > div {
       }
       function productsXml(node, indent) {
         if (!extras.products) return '';
+        if (node._productCodes && node._productCodes.length) {
+          var ls = [indent + '<products>'];
+          node._productCodes.forEach(function (c) {
+            ls.push(indent + '  <product id="' + xmlEsc(c.id) + '" codeExternal="' + xmlEsc(c.codeExternal) + '" codeProducer="' + xmlEsc(c.codeProducer) + '" displayedCode="' + xmlEsc(c.displayedCode) + '"/>');
+          });
+          ls.push(indent + '</products>');
+          return '\n' + ls.join('\n');
+        }
         var arr = node.products || [];
         if (!arr.length) return '';
         var lines = [indent + '<products>'];
@@ -7601,7 +7785,7 @@ li.tp-row--selected > div {
       ],
       pagination: { perPage: 50 },
       footer: {
-        version: 'v4.5.68',
+        version: 'v4.5.69',
         links: [
           { label: 'Propozycja', icon: 'star', tooltip: 'Zaproponuj funkcjonalność', variant: 'feature', href: 'https://github.com/design4artPl/tampermonkey/issues/new?labels=enhancement', target: '_blank' },
           { label: 'Zgłoś błąd', icon: 'bug_report', tooltip: 'Zgłoś błąd', variant: 'bug', href: 'https://github.com/design4artPl/tampermonkey/issues/new?labels=bug', target: '_blank' }
