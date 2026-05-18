@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         IdoSell - Parametry Toolbar
 // @namespace    https://idosell.com/
-// @version      4.5.82
+// @version      4.5.83
 // @description  Toolbar do grupowej edycji parametrow: panel-pro v1.2.4 inline + new-panel support, checkboxy, zaznaczanie, rozwijanie/zwijanie, grupowe usuwanie/edycja, import CSV
 // @author       SyncOffer
 // @match        https://*.iai-shop.com/panel/app/parameters.php*
@@ -8641,7 +8641,7 @@ li.tp-row--selected > div {
         tooltip: 'Poka\u017c / ukryj kolumny'
       },
       selectionBar: {
-        selectedLabel: 'Liczba wybranych element\u00f3w ({n})',
+        selectedLabel: 'Liczba wybranych element\u00f3w {n}',
         actions: [
           { icon: 'edit',            label: 'Edytuj',   tooltip: 'Grupowa edycja zaznaczonych',     variant: 'primary', onClick: function () { showBulkEditModal(doc); } },
           { icon: 'drive_file_move', label: 'Przenie\u015b', tooltip: 'Przenie\u015b zaznaczone warto\u015bci', variant: 'accent',  onClick: function () { showBulkMoveModal(doc); } },
@@ -8665,7 +8665,7 @@ li.tp-row--selected > div {
       ],
       pagination: { perPage: 50 },
       footer: {
-        version: 'v4.5.82',
+        version: 'v4.5.83',
         links: [
           { label: 'Propozycja', icon: 'star', tooltip: 'Zaproponuj funkcjonalność', variant: 'feature', href: 'https://github.com/design4artPl/tampermonkey/issues/new?labels=enhancement', target: '_blank' },
           { label: 'Zgłoś błąd', icon: 'bug_report', tooltip: 'Zgłoś błąd', variant: 'bug', href: 'https://github.com/design4artPl/tampermonkey/issues/new?labels=bug', target: '_blank' }
