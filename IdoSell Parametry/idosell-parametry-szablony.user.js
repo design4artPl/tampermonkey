@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         IdoSell - Parametry Toolbar
 // @namespace    https://idosell.com/
-// @version      4.5.96
+// @version      4.5.97
 // @description  Toolbar do grupowej edycji parametrow: panel-pro v1.2.4 inline + new-panel support, checkboxy, zaznaczanie, rozwijanie/zwijanie, grupowe usuwanie/edycja, import CSV
 // @author       SyncOffer
 // @match        https://*.iai-shop.com/panel/app/parameters.php*
@@ -286,7 +286,7 @@
     '@keyframes panel-pro-fade-in { from { opacity: 0; transform: translateY(10px); } to { opacity: 1; transform: translateY(0); } }',
 
     /* Footer + counter + links + version + pagination */
-    '.panel-pro__footer { padding: 10px 16px; background: #fff; border-top: 1px solid #dadce0; display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 12px; font-size: 13px; color: #5f6368; }',
+    '.panel-pro__footer { padding: 10px 16px; background: #fff; display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 12px; font-size: 13px; color: #5f6368; }',
     '.panel-pro__footer:empty { display: none; }',
     /* v4.5.84: global footer bar (na samym dole strony) */
     '.tp-global-footer { display: flex; align-items: center; justify-content: space-between; gap: 16px; flex-wrap: wrap; padding: 5px 20px; margin: 10px 0 0px 0; border-top: 1px solid #e2e8f0; background: #fff; border-radius: 8px; box-shadow: 0 1px 2px rgba(0,0,0,0.04); font-family: "Google Sans", Roboto, Arial, sans-serif; }',
@@ -8173,7 +8173,7 @@ li.tp-row--selected > div {
       },
       pagination: { perPage: loadPerPagePref('Sec') },
       footer: {
-        version: 'v4.5.96',
+        version: 'v4.5.97',
         links: []
       }
     });
@@ -8820,7 +8820,7 @@ li.tp-row--selected > div {
       ],
       pagination: { perPage: 50 },
       footer: {
-        version: 'v4.5.96',
+        version: 'v4.5.97',
         links: []
       }
     });
