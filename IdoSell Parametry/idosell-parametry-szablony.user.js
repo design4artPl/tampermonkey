@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         IdoSell - Parametry Toolbar
 // @namespace    https://idosell.com/
-// @version      4.5.78
+// @version      4.5.79
 // @description  Toolbar do grupowej edycji parametrow: panel-pro v1.2.4 inline + new-panel support, checkboxy, zaznaczanie, rozwijanie/zwijanie, grupowe usuwanie/edycja, import CSV
 // @author       SyncOffer
 // @match        https://*.iai-shop.com/panel/app/parameters.php*
@@ -7284,9 +7284,25 @@ li.tp-row--selected > div {
     input.type = 'text';
     input.value = opts.value || '';
     input.placeholder = opts.placeholder || '';
-    input.style.cssText = 'width:100%;padding:10px 12px;border:1px solid #d0d5dd;border-radius:8px;font-size:14px;color:#1a1a2e;font-family:inherit;box-sizing:border-box;outline:none;transition:border-color .15s,box-shadow .15s;';
-    input.addEventListener('focus', function () { input.style.borderColor = '#1a73e8'; input.style.boxShadow = '0 0 0 3px rgba(26,115,232,.15)'; });
-    input.addEventListener('blur', function () { input.style.borderColor = '#d0d5dd'; input.style.boxShadow = 'none'; });
+    // !important — panel IdoSell agresywnie nadpisuje style inputów (m.in. border-radius:0)
+    input.style.cssText = [
+      'width:100% !important', 'box-sizing:border-box !important',
+      'padding:10px 12px !important', 'margin:0 !important',
+      'border:1px solid #d0d5dd !important', 'border-radius:8px !important',
+      'background:#fff !important', 'font-size:14px !important',
+      'color:#1a1a2e !important', 'font-family:inherit !important',
+      'height:auto !important', 'outline:none !important', 'box-shadow:none !important',
+      '-webkit-appearance:none !important', 'appearance:none !important',
+      'transition:border-color .15s, box-shadow .15s'
+    ].join(';') + ';';
+    input.addEventListener('focus', function () {
+      input.style.setProperty('border-color', '#1a73e8', 'important');
+      input.style.setProperty('box-shadow', '0 0 0 3px rgba(26,115,232,.15)', 'important');
+    });
+    input.addEventListener('blur', function () {
+      input.style.setProperty('border-color', '#d0d5dd', 'important');
+      input.style.setProperty('box-shadow', 'none', 'important');
+    });
     body.appendChild(input);
 
     var footer = d.createElement('div');
@@ -7314,7 +7330,7 @@ li.tp-row--selected > div {
     }
     function submit() {
       var val = input.value.trim();
-      if (!val) { input.focus(); input.style.borderColor = '#d93025'; return; }
+      if (!val) { input.focus(); input.style.setProperty('border-color', '#d93025', 'important'); return; }
       close();
       if (opts.onOk) opts.onOk(val);
     }
@@ -8492,7 +8508,7 @@ li.tp-row--selected > div {
       ],
       pagination: { perPage: 50 },
       footer: {
-        version: 'v4.5.78',
+        version: 'v4.5.79',
         links: [
           { label: 'Propozycja', icon: 'star', tooltip: 'Zaproponuj funkcjonalność', variant: 'feature', href: 'https://github.com/design4artPl/tampermonkey/issues/new?labels=enhancement', target: '_blank' },
           { label: 'Zgłoś błąd', icon: 'bug_report', tooltip: 'Zgłoś błąd', variant: 'bug', href: 'https://github.com/design4artPl/tampermonkey/issues/new?labels=bug', target: '_blank' }
