@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         IdoSell - Parametry Toolbar
 // @namespace    https://idosell.com/
-// @version      4.5.80
+// @version      4.5.81
 // @description  Toolbar do grupowej edycji parametrow: panel-pro v1.2.4 inline + new-panel support, checkboxy, zaznaczanie, rozwijanie/zwijanie, grupowe usuwanie/edycja, import CSV
 // @author       SyncOffer
 // @match        https://*.iai-shop.com/panel/app/parameters.php*
@@ -7440,13 +7440,27 @@ li.tp-row--selected > div {
           '<span class="material-symbols-outlined">' + (isActive ? 'check' : 'bookmark') + '</span>' +
           '<span style="flex:1">' + escapeHtml(v.name) + '</span>' +
           '<span style="background:#f1f5f9;color:#64748b;font-size:11px;padding:1px 6px;border-radius:10px;">' + v.nodes.length + '</span>' +
+          '<button class="tp-view-update" data-view-id="' + v.id + '" title="Zaktualizuj widok aktualnie zaznaczonymi" style="width:20px;height:20px;padding:0;border:none;background:transparent;cursor:pointer;color:#94a3b8;display:inline-flex;align-items:center;justify-content:center;border-radius:50%;"><span class="material-symbols-outlined" style="font-size:14px">sync</span></button>' +
           '<button class="tp-view-delete" data-view-id="' + v.id + '" title="Usu\u0144 widok" style="width:20px;height:20px;padding:0;border:none;background:transparent;cursor:pointer;color:#94a3b8;display:inline-flex;align-items:center;justify-content:center;border-radius:50%;"><span class="material-symbols-outlined" style="font-size:14px">close</span></button>';
         item.addEventListener('click', function (e) {
-          if (e.target.closest('.tp-view-delete')) return;
+          if (e.target.closest('.tp-view-delete') || e.target.closest('.tp-view-update')) return;
           e.stopPropagation();
           _activeViewId = v.id;
           applyViewFilter(doc, v);
           menu.classList.remove('panel-pro--open');
+          rebuildViewsDropdown(doc);
+        });
+        var updBtn = item.querySelector('.tp-view-update');
+        if (updBtn) updBtn.addEventListener('click', function (e) {
+          e.stopPropagation();
+          var sel = getCheckedTreeNodeIds(doc);
+          if (!sel.length) { alert('Najpierw zaznacz parametry/warto\u015bci, kt\u00f3rymi chcesz nadpisa\u0107 widok'); return; }
+          if (!confirm('Zaktualizowa\u0107 widok "' + v.name + '" \u2014 zapisa\u0107 aktualnie zaznaczone (' + sel.length + ')?')) return;
+          var list = loadSavedViews();
+          var t = list.find(function (x) { return x.id === v.id; });
+          if (t) { t.nodes = sel; t.updated = Date.now(); storeSavedViews(list); }
+          if (_activeViewId === v.id && t) applyViewFilter(doc, t);
+          if (_panel) _panel.showStatus('Zaktualizowano widok "' + v.name + '" (' + sel.length + ')');
           rebuildViewsDropdown(doc);
         });
         var delBtn = item.querySelector('.tp-view-delete');
@@ -7577,13 +7591,27 @@ li.tp-row--selected > div {
           '<span class="material-symbols-outlined">' + (isActive ? 'check' : 'bookmark') + '</span>' +
           '<span style="flex:1">' + escapeHtml(v.name) + '</span>' +
           '<span style="background:#f1f5f9;color:#64748b;font-size:11px;padding:1px 6px;border-radius:10px;">' + v.nodes.length + '</span>' +
+          '<button class="tp-view-update" data-view-id="' + v.id + '" title="Zaktualizuj widok aktualnie zaznaczonymi" style="width:20px;height:20px;padding:0;border:none;background:transparent;cursor:pointer;color:#94a3b8;display:inline-flex;align-items:center;justify-content:center;border-radius:50%;"><span class="material-symbols-outlined" style="font-size:14px">sync</span></button>' +
           '<button class="tp-view-delete" data-view-id="' + v.id + '" title="Usuń widok" style="width:20px;height:20px;padding:0;border:none;background:transparent;cursor:pointer;color:#94a3b8;display:inline-flex;align-items:center;justify-content:center;border-radius:50%;"><span class="material-symbols-outlined" style="font-size:14px">close</span></button>';
         item.addEventListener('click', function (e) {
-          if (e.target.closest('.tp-view-delete')) return;
+          if (e.target.closest('.tp-view-delete') || e.target.closest('.tp-view-update')) return;
           e.stopPropagation();
           _activeSectionViewId = v.id;
           applySectionViewFilter(doc, v);
           menu.classList.remove('panel-pro--open');
+          rebuildSectionsViewsDropdown(doc);
+        });
+        var updBtn = item.querySelector('.tp-view-update');
+        if (updBtn) updBtn.addEventListener('click', function (e) {
+          e.stopPropagation();
+          var sel = getSelectedSectionIds(doc);
+          if (!sel.length) { alert('Najpierw zaznacz sekcje, którymi chcesz nadpisać widok'); return; }
+          if (!confirm('Zaktualizować widok "' + v.name + '" — zapisać aktualnie zaznaczone (' + sel.length + ')?')) return;
+          var list = loadSavedSectionViews();
+          var t = list.find(function (x) { return x.id === v.id; });
+          if (t) { t.nodes = sel.slice(); t.updated = Date.now(); storeSavedSectionViews(list); }
+          if (_activeSectionViewId === v.id && t) applySectionViewFilter(doc, t);
+          if (_panel) _panel.showStatus('Zaktualizowano widok sekcji "' + v.name + '" (' + sel.length + ')');
           rebuildSectionsViewsDropdown(doc);
         });
         var delBtn = item.querySelector('.tp-view-delete');
@@ -8529,7 +8557,7 @@ li.tp-row--selected > div {
       ],
       pagination: { perPage: 50 },
       footer: {
-        version: 'v4.5.80',
+        version: 'v4.5.81',
         links: [
           { label: 'Propozycja', icon: 'star', tooltip: 'Zaproponuj funkcjonalność', variant: 'feature', href: 'https://github.com/design4artPl/tampermonkey/issues/new?labels=enhancement', target: '_blank' },
           { label: 'Zgłoś błąd', icon: 'bug_report', tooltip: 'Zgłoś błąd', variant: 'bug', href: 'https://github.com/design4artPl/tampermonkey/issues/new?labels=bug', target: '_blank' }
