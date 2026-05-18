@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         IdoSell - Parametry Toolbar
 // @namespace    https://idosell.com/
-// @version      4.5.75
+// @version      4.5.76
 // @description  Toolbar do grupowej edycji parametrow: panel-pro v1.2.4 inline + new-panel support, checkboxy, zaznaczanie, rozwijanie/zwijanie, grupowe usuwanie/edycja, import CSV
 // @author       SyncOffer
 // @match        https://*.iai-shop.com/panel/app/parameters.php*
@@ -158,16 +158,19 @@
 
     /* Toolbar */
     '.panel-pro__toolbar { display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 12px; padding: 10px 16px; background: #fff; border-bottom: 1px solid #dadce0; }',
-    '.panel-pro__toolbar__left { display: flex; align-items: center; gap: 8px; min-width: 0; flex: 0 1 auto; }',
-    '.panel-pro__toolbar__right { display: flex; align-items: center; flex-wrap: wrap; gap: 4px; min-width: 0; flex: 1 1 auto; justify-content: flex-end; row-gap: 6px; }',
+    '.panel-pro__toolbar__left { display: flex; align-items: center; gap: 8px; min-width: 0; flex: 1 1 auto; }',
+    '.panel-pro__toolbar__right { display: flex; align-items: center; flex-wrap: wrap; gap: 4px; min-width: 0; flex: 0 0 auto; justify-content: flex-end; row-gap: 6px; }',
     '.panel-pro__group { display: flex; align-items: center; gap: 4px; flex: 0 0 auto; min-width: 0; flex-wrap: nowrap; }',
     '.panel-pro__separator { width: 1px; height: 20px; background: #dadce0; margin: 0 8px; }',
     '.panel-pro__label { color: #80868b; font-size: 11px; font-weight: 500; text-transform: uppercase; letter-spacing: 0.5px; padding: 0; }',
 
     /* Search — bigger icon, rectangular */
-    '.panel-pro__search { display: flex; align-items: center; gap: 8px; background: #fff; border: 1px solid #e2e8f0; border-radius: 6px; padding: 7px 12px; width: 260px; max-width: 100%; min-width: 0; transition: border-color 0.2s, box-shadow 0.2s, width 0.25s; box-sizing: border-box; }',
-    '.panel-pro__search:focus-within { border-color: #2563eb; box-shadow: 0 0 0 2px rgba(37, 99, 235, 0.1); width: min(320px, 100%); }',
+    '.panel-pro__search { display: flex; align-items: center; gap: 8px; background: #fff; border: 1px solid #e2e8f0; border-radius: 6px; padding: 7px 12px; width: 100%; flex: 1 1 auto; max-width: 100%; min-width: 0; transition: border-color 0.2s, box-shadow 0.2s; box-sizing: border-box; }',
+    '.panel-pro__search:focus-within { border-color: #2563eb; box-shadow: 0 0 0 2px rgba(37, 99, 235, 0.1); }',
     '.panel-pro__search .material-symbols-outlined { font-size: 20px; color: #5f6368; flex-shrink: 0; }',
+    '.panel-pro__search-clear { display: none; align-items: center; justify-content: center; flex-shrink: 0; width: 22px; height: 22px; padding: 0; margin: 0; border: none; background: transparent; border-radius: 50%; cursor: pointer; color: #80868b; transition: background 0.15s, color 0.15s; }',
+    '.panel-pro__search-clear:hover { background: #e8eaed; color: #202124; }',
+    '.panel-pro__search-clear .material-symbols-outlined { font-size: 18px; color: inherit; }',
     '.panel-pro__search input { border: none !important; outline: none !important; flex: 1; background: transparent !important; font-size: 14px !important; padding: 0 !important; margin: 0 !important; box-shadow: none !important; color: #202124 !important; font-family: inherit; min-width: 0; }',
     '.panel-pro__search input::placeholder { color: #9aa0a6; }',
 
@@ -543,8 +546,25 @@
       var sb = el(doc, 'div', { className: 'panel-pro__search' });
       sb.appendChild(icon(doc, 'search'));
       var input = el(doc, 'input', { type: 'text', placeholder: cfg.search.placeholder || 'Szukaj...', autocomplete: 'off' });
-      if (cfg.search.onChange) input.addEventListener('input', function () { cfg.search.onChange(input.value, ctx.api); });
+      var clearBtn = el(doc, 'button', { className: 'panel-pro__search-clear', type: 'button', title: 'Wyczyść' });
+      clearBtn.setAttribute('tabindex', '-1');
+      clearBtn.appendChild(icon(doc, 'close'));
+      var syncClear = function () { clearBtn.style.display = input.value ? 'inline-flex' : 'none'; };
+      input.addEventListener('input', function () {
+        if (cfg.search.onChange) cfg.search.onChange(input.value, ctx.api);
+        syncClear();
+      });
+      clearBtn.addEventListener('click', function (e) {
+        e.preventDefault();
+        e.stopPropagation();
+        input.value = '';
+        if (cfg.search.onChange) cfg.search.onChange('', ctx.api);
+        syncClear();
+        input.focus();
+      });
+      syncClear();
       sb.appendChild(input);
+      sb.appendChild(clearBtn);
       leftWrap.appendChild(sb);
     }
 
@@ -8365,7 +8385,7 @@ li.tp-row--selected > div {
       ],
       pagination: { perPage: 50 },
       footer: {
-        version: 'v4.5.75',
+        version: 'v4.5.76',
         links: [
           { label: 'Propozycja', icon: 'star', tooltip: 'Zaproponuj funkcjonalność', variant: 'feature', href: 'https://github.com/design4artPl/tampermonkey/issues/new?labels=enhancement', target: '_blank' },
           { label: 'Zgłoś błąd', icon: 'bug_report', tooltip: 'Zgłoś błąd', variant: 'bug', href: 'https://github.com/design4artPl/tampermonkey/issues/new?labels=bug', target: '_blank' }
