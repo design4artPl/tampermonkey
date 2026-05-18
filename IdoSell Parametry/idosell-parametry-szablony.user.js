@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         IdoSell - Parametry Toolbar
 // @namespace    https://idosell.com/
-// @version      4.5.92
+// @version      4.5.93
 // @description  Toolbar do grupowej edycji parametrow: panel-pro v1.2.4 inline + new-panel support, checkboxy, zaznaczanie, rozwijanie/zwijanie, grupowe usuwanie/edycja, import CSV
 // @author       SyncOffer
 // @match        https://*.iai-shop.com/panel/app/parameters.php*
@@ -727,7 +727,7 @@
     var totalPages = perPage === 0 ? 1 : Math.max(1, Math.ceil(total / perPage));
     var start = perPage === 0 ? 1 : (page - 1) * perPage + 1;
     var end = perPage === 0 ? total : Math.min(page * perPage, total);
-    container.appendChild(el(doc, 'span', { className: 'panel-pro__pagination__info', textContent: start + '\u2013' + end + ' z ' + total }));
+    container.appendChild(el(doc, 'span', { className: 'panel-pro__pagination__info', textContent: 'Widoczne: ' + start + '-' + end }));
     var prev = el(doc, 'button', { className: 'panel-pro__pagination__btn', type: 'button' });
     prev.appendChild(icon(doc, 'chevron_left'));
     if (page <= 1) prev.disabled = true;
@@ -3988,10 +3988,23 @@ li.tp-row--selected > div {
       for (var _i = 0; _i < _allRows.length; _i++) {
         if (_allRows[_i].offsetParent !== null) _t++;
       }
-      var _r = getRootItems(doc).length;
+      // v4.5.93: footer = Wszystkich parametrów: X | Wszystkich wartości: Y [| Zaznaczone: Z]
+      var _roots = getRootItems(doc);
+      var _pCount = 0;
+      for (var _ri = 0; _ri < _roots.length; _ri++) {
+        var _rid = getNodeId(_roots[_ri]);
+        if (_rid && !isSection(doc, _rid)) _pCount++;
+      }
+      var _vCount = 0;
+      var _childCells = doc.querySelectorAll('#block_group0 > li[id^="m_"] > .tp-col-children');
+      for (var _ci = 0; _ci < _childCells.length; _ci++) {
+        var _ct = (_childCells[_ci].textContent || '').trim();
+        if (/^\d+$/.test(_ct)) _vCount += parseInt(_ct, 10);
+      }
       var _se = selectedNodes.size;
-      var _h = 'Łącznie: <span class="panel-pro__counter--total">' + _t + '</span> (' + _r + ' parametrów)';
-      if (_se > 0) _h += ' | Zaznaczono: <span class="panel-pro__counter--selected">' + _se + '</span>';
+      var _h = 'Wszystkich parametrów: <span class="panel-pro__counter--total">' + _pCount + '</span>' +
+               ' | Wszystkich wartości: <span class="panel-pro__counter--total">' + _vCount + '</span>';
+      if (_se > 0) _h += ' | Zaznaczone: <span class="panel-pro__counter--selected">' + _se + '</span>';
       _panel.setCounter(_h);
     }
     if (_counterTimer) return;
@@ -8147,7 +8160,7 @@ li.tp-row--selected > div {
         onClear: function () { toggleAllSections(doc, false); }
       },
       footer: {
-        version: 'v4.5.92',
+        version: 'v4.5.93',
         links: []
       }
     });
@@ -8172,17 +8185,18 @@ li.tp-row--selected > div {
     var ul = doc.createElement('ul');
     ul.style.cssText = 'list-style:none; margin:0; padding:0;';
     sectionsPanel.body.appendChild(ul);
-    sectionsPanel.setCounter('Sekcje: <span class="panel-pro__counter--total">\u2026</span>');
-    _sectionsMount = { mount: mount, panel: sectionsPanel, listEl: ul };
+    sectionsPanel.setCounter('Wszystkich sekcji: <span class="panel-pro__counter--total">\u2026</span>');
+    _sectionsMount = { mount: mount, panel: sectionsPanel, listEl: ul, totalCount: 0 };
     rebuildSectionsViewsDropdown(doc);
 
     getAllSections(doc).then(function (sections) {
       renderSectionRows(doc, sectionsPanel, ul, sections);
-      sectionsPanel.setCounter('Sekcje: <span class="panel-pro__counter--total">' + sections.length + '</span>');
+      _sectionsMount.totalCount = sections.length;
+      updateSectionsCounter();
       reapplyActiveSectionView(doc);
       loadSectionsProductCountsInBackground(doc, sections);
     }).catch(function (e) {
-      sectionsPanel.setCounter('Sekcje: <span class="panel-pro__counter--total">b\u0142\u0105d</span>');
+      sectionsPanel.setCounter('Wszystkich sekcji: <span class="panel-pro__counter--total">b\u0142\u0105d</span>');
       console.error('[parametry] sections load failed:', e);
     });
   }
@@ -8325,6 +8339,18 @@ li.tp-row--selected > div {
     if (!_sectionsMount || !_sectionsMount.listEl || !_sectionsMount.panel) return;
     var n = _sectionsMount.listEl.querySelectorAll(':scope > li input.tp-checkbox:checked').length;
     _sectionsMount.panel.setSelection(n);
+    updateSectionsCounter();
+  }
+
+  // v4.5.93: footer sekcji = Wszystkich sekcji: X [| Zaznaczone: Y]
+  function updateSectionsCounter() {
+    if (!_sectionsMount || !_sectionsMount.panel) return;
+    var total = _sectionsMount.totalCount || 0;
+    var sel = _sectionsMount.listEl
+      ? _sectionsMount.listEl.querySelectorAll(':scope > li input.tp-checkbox:checked').length : 0;
+    var h = 'Wszystkich sekcji: <span class="panel-pro__counter--total">' + total + '</span>';
+    if (sel > 0) h += ' | Zaznaczone: <span class="panel-pro__counter--selected">' + sel + '</span>';
+    _sectionsMount.panel.setCounter(h);
   }
 
   async function bulkDeleteSelectedSections(doc) {
@@ -8732,7 +8758,7 @@ li.tp-row--selected > div {
       ],
       pagination: { perPage: 50 },
       footer: {
-        version: 'v4.5.92',
+        version: 'v4.5.93',
         links: []
       }
     });
@@ -8797,6 +8823,8 @@ li.tp-row--selected > div {
           }
         } catch (e) {}
       }));
+      // v4.5.93: po każdej paczce odśwież licznik "Wszystkich wartości"
+      try { updateCounter(doc); } catch (e) {}
     }
   }
 
