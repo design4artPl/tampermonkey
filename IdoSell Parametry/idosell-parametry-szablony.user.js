@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         IdoSell - Parametry Toolbar
 // @namespace    https://idosell.com/
-// @version      4.6.1
+// @version      4.6.2
 // @description  Toolbar do grupowej edycji parametrow: panel-pro v1.2.4 inline + new-panel support, checkboxy, zaznaczanie, rozwijanie/zwijanie, grupowe usuwanie/edycja, import CSV
 // @author       SyncOffer
 // @match        https://*.iai-shop.com/panel/app/parameters.php*
@@ -3626,7 +3626,7 @@ li.tp-row--selected > div {
       addAction.dataset.tooltip = 'Dodaj warto\u015b\u0107';
       addAction.addEventListener('click', function(e) {
         e.stopPropagation();
-        ensureOptionsAndClick('value_' + nodeId);
+        createNewValue(doc, nodeId, nodeName);
       });
       actionsCell.appendChild(addAction);
     }
@@ -8258,7 +8258,7 @@ li.tp-row--selected > div {
       },
       pagination: { perPage: loadPerPagePref('Sec') },
       footer: {
-        version: 'v4.6.1',
+        version: 'v4.6.2',
         links: []
       }
     });
@@ -8790,6 +8790,28 @@ li.tp-row--selected > div {
     });
   }
 
+  // v4.6.2: dodawanie warto\u015bci przez ujednolicony modal (zamiast natywnego "Dodaj potomka")
+  function createNewValue(doc, paramId, paramName) {
+    showInputModal(doc, {
+      icon: 'add',
+      title: 'Dodaj warto\u015b\u0107',
+      subtitle: 'do parametru \u201e' + paramName + '\u201d',
+      label: 'Nazwa warto\u015bci',
+      placeholder: 'np. Czerwony',
+      okLabel: 'Utw\u00f3rz',
+      onOk: function (name) {
+        fetchAjax('action=checkElValues&type=value&lang=' + LANG + '&parameter_id=' + encodeURIComponent(paramId) + '&product=0&value[]=' + encodeURIComponent(name))
+          .then(function (resp) {
+            if (resp && resp.error) { alert('B\u0142\u0105d: ' + resp.error); return; }
+            if (_panel) _panel.showStatus('Dodano warto\u015b\u0107 "' + name + '" do \u201e' + paramName + '\u201d');
+            try { tpCacheDel('ch2', paramId + '_' + LANG); } catch (e) {}
+            setTimeout(function () { (doc.defaultView || window).location.reload(); }, 900);
+          })
+          .catch(function (e) { alert('B\u0142\u0105d dodawania warto\u015bci: ' + (e.message || e)); });
+      }
+    });
+  }
+
   // v4.5.47: bardziej cierpliwe + reaktywne wykrywanie #block_group0. Bez sztywnego limitu
   // attempts: polling co 250 ms + MutationObserver na document + iframe.load — żeby skrypt
   // odpalił się gdy IdoSell w końcu wstrzyknie drzewo, bez konieczności drugiego refresha.
@@ -8935,7 +8957,7 @@ li.tp-row--selected > div {
       ],
       pagination: { perPage: 50 },
       footer: {
-        version: 'v4.6.1',
+        version: 'v4.6.2',
         links: []
       }
     });
