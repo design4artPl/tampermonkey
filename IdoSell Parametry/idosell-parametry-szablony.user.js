@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         IdoSell - Parametry Toolbar
 // @namespace    https://idosell.com/
-// @version      4.5.73
+// @version      4.5.74
 // @description  Toolbar do grupowej edycji parametrow: panel-pro v1.2.4 inline + new-panel support, checkboxy, zaznaczanie, rozwijanie/zwijanie, grupowe usuwanie/edycja, import CSV
 // @author       SyncOffer
 // @match        https://*.iai-shop.com/panel/app/parameters.php*
@@ -3972,39 +3972,142 @@ li.tp-row--selected > div {
   // SEARCH / FILTER
   // =========================================================================
 
+  // v4.5.74: wyszukiwarka po nazwie i ID — parametrów ORAZ ich wartości.
+  // Wartość może być w zwiniętym parametrze lub jeszcze niezaładowana — używamy
+  // cache 'ch2' (rozgrzewany w tle) lub doczytujemy listę wartości, a parametr
+  // z trafioną wartością jest pokazywany i rozwijany.
+  var _filterTreeTimer = null;
+  var _filterTreeSeq = 0;
+
+  function _qHit(name, id, q) {
+    return String(name || '').toLowerCase().indexOf(q) !== -1 || String(id || '').indexOf(q) !== -1;
+  }
+
+  function _setRowFiltered(doc, li, hidden) {
+    if (hidden) { li.classList.add('tp-row--filter-hidden'); li.classList.add('tp-row--hidden'); }
+    else { li.classList.remove('tp-row--filter-hidden'); li.classList.remove('tp-row--hidden'); }
+    var sp = doc.getElementById('space_' + getNodeId(li));
+    if (sp) sp.style.display = hidden ? 'none' : '';
+  }
+
+  function _filterClearAll(doc) {
+    var allItems = doc.querySelectorAll('li[id^="m_"]');
+    for (var i = 0; i < allItems.length; i++) {
+      allItems[i].classList.remove('tp-row--filter-hidden');
+      allItems[i].classList.remove('tp-row--hidden');
+      var sp = doc.getElementById('space_' + getNodeId(allItems[i]));
+      if (sp) sp.style.display = '';
+    }
+    _paginationState.currentPage = 1;
+    applyPagination(doc);
+  }
+
+  function ensureNodeExpanded(doc, pid) {
+    return new Promise(function (resolve) {
+      var block = doc.getElementById('block_group' + pid);
+      if (block && block.querySelector(':scope > li[id^="m_"]')) return resolve();
+      var btn = doc.getElementById('showChildren_' + pid);
+      if (!btn) return resolve();
+      btn.click();
+      var checks = 0;
+      var iv = setInterval(function () {
+        checks++;
+        var b = doc.getElementById('block_group' + pid);
+        if ((b && b.querySelector(':scope > li[id^="m_"]')) || checks > 80) {
+          clearInterval(iv);
+          resolve();
+        }
+      }, 30);
+    });
+  }
+
   function filterTree(doc, query) {
-    const q = query.toLowerCase().trim();
-    const allItems = doc.querySelectorAll('li[id^="m_"]');
+    clearTimeout(_filterTreeTimer);
+    var q = (query || '').toLowerCase().trim();
+    _filterTreeSeq++;
+    if (!q) { _filterClearAll(doc); return; }
+    _filterTreeTimer = setTimeout(function () { _filterTreeRun(doc, q); }, 220);
+  }
 
-    if (!q) {
-      // Clear filter marks, show all
-      for (const li of allItems) {
-        li.classList.remove('tp-row--filter-hidden');
-        li.classList.remove('tp-row--hidden');
-        const space = doc.getElementById('space_' + getNodeId(li));
-        if (space) space.style.display = '';
+  async function _filterTreeRun(doc, q) {
+    var mySeq = ++_filterTreeSeq;
+    var roots = getRootItems(doc);
+
+    var info = roots.map(function (li) {
+      var pid = getNodeId(li);
+      var pname = getNodeName(doc, pid).toLowerCase();
+      var paramMatch = pname.indexOf(q) !== -1 || pid.indexOf(q) !== -1;
+      var isSec = isSection(doc, pid);
+      var childMatch = false;
+      if (!isSec) {
+        var block = doc.getElementById('block_group' + pid);
+        var loadedVlis = block ? block.querySelectorAll(':scope > li[id^="m_"]') : [];
+        for (var k = 0; k < loadedVlis.length; k++) {
+          var vid = getNodeId(loadedVlis[k]);
+          if (_qHit(getNodeName(doc, vid), vid, q)) { childMatch = true; break; }
+        }
+        if (!childMatch && !paramMatch) {
+          var cached = tpCacheGet('ch2', pid + '_' + LANG, TP_TTL_CHILDREN);
+          if (cached) childMatch = cached.some(function (c) { return _qHit(c.name, c.id, q); });
+        }
       }
-      // Re-paginate with all items
-      _paginationState.currentPage = 1;
-      applyPagination(doc);
-      return;
+      var hasLoaded = !isSec && !!(doc.getElementById('block_group' + pid) && doc.getElementById('block_group' + pid).querySelector(':scope > li[id^="m_"]'));
+      var needsLoad = !isSec && !paramMatch && !childMatch && !hasLoaded &&
+        tpCacheGet('ch2', pid + '_' + LANG, TP_TTL_CHILDREN) === null;
+      return { li: li, pid: pid, isSec: isSec, paramMatch: paramMatch, childMatch: childMatch, needsLoad: needsLoad };
+    });
+
+    // Doczytaj wartości tam, gdzie nie ma cache (tylko dla zapytań >= 2 znaki)
+    if (q.length >= 2) {
+      var toLoad = info.filter(function (p) { return p.needsLoad; });
+      var CONC = 8;
+      for (var i = 0; i < toLoad.length; i += CONC) {
+        if (mySeq !== _filterTreeSeq) return;
+        var batch = toLoad.slice(i, i + CONC);
+        await Promise.all(batch.map(async function (p) {
+          try {
+            var kids = await loadChildValues(p.pid);
+            p.childMatch = (kids || []).some(function (c) { return _qHit(c.name, c.id, q); });
+          } catch (e) {}
+        }));
+      }
+      if (mySeq !== _filterTreeSeq) return;
     }
 
-    for (const li of allItems) {
-      const nodeId = getNodeId(li);
-      const name = getNodeName(doc, nodeId).toLowerCase();
-      const match = name.includes(q) || nodeId.includes(q);
-      if (match) {
-        li.classList.remove('tp-row--filter-hidden');
-        li.classList.remove('tp-row--hidden');
-      } else {
-        li.classList.add('tp-row--filter-hidden');
-        li.classList.add('tp-row--hidden');
+    // Widoczność parametrów + lista do rozwinięcia (trafiona wartość w zwiniętym parametrze)
+    var expandPids = [];
+    info.forEach(function (p) {
+      var visible = p.paramMatch || p.childMatch;
+      _setRowFiltered(doc, p.li, !visible);
+      if (visible && p.childMatch && !p.paramMatch) {
+        var block = doc.getElementById('block_group' + p.pid);
+        if (!(block && block.querySelector(':scope > li[id^="m_"]'))) expandPids.push(p.pid);
       }
-      const space = doc.getElementById('space_' + nodeId);
-      if (space) space.style.display = match ? '' : 'none';
+    });
+
+    for (var e = 0; e < expandPids.length; e++) {
+      if (mySeq !== _filterTreeSeq) return;
+      await ensureNodeExpanded(doc, expandPids[e]);
     }
-    // Reset to page 1 and re-paginate filtered items
+    if (mySeq !== _filterTreeSeq) return;
+
+    // Widoczność wartości: pokaż gdy trafiona wartość lub gdy trafiony sam parametr
+    info.forEach(function (p) {
+      if (p.isSec) return;
+      var block = doc.getElementById('block_group' + p.pid);
+      if (!block) return;
+      var paramVisible = p.paramMatch || p.childMatch;
+      var vlis = block.querySelectorAll(':scope > li[id^="m_"]');
+      for (var k = 0; k < vlis.length; k++) {
+        var vli = vlis[k];
+        try { enhanceRow(vli, doc); } catch (err) {}
+        var vid = getNodeId(vli);
+        var vmatch = _qHit(getNodeName(doc, vid), vid, q);
+        var vVisible = paramVisible && (p.paramMatch || vmatch);
+        _setRowFiltered(doc, vli, !vVisible);
+      }
+    });
+
     _paginationState.currentPage = 1;
     applyPagination(doc);
   }
@@ -8241,7 +8344,7 @@ li.tp-row--selected > div {
       ],
       pagination: { perPage: 50 },
       footer: {
-        version: 'v4.5.73',
+        version: 'v4.5.74',
         links: [
           { label: 'Propozycja', icon: 'star', tooltip: 'Zaproponuj funkcjonalność', variant: 'feature', href: 'https://github.com/design4artPl/tampermonkey/issues/new?labels=enhancement', target: '_blank' },
           { label: 'Zgłoś błąd', icon: 'bug_report', tooltip: 'Zgłoś błąd', variant: 'bug', href: 'https://github.com/design4artPl/tampermonkey/issues/new?labels=bug', target: '_blank' }
