@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         IdoSell - Parametry Toolbar
 // @namespace    https://idosell.com/
-// @version      4.6.7
+// @version      4.6.8
 // @description  Toolbar do grupowej edycji parametrow: panel-pro v1.2.4 inline + new-panel support, checkboxy, zaznaczanie, rozwijanie/zwijanie, grupowe usuwanie/edycja, import CSV
 // @author       SyncOffer
 // @match        https://*.iai-shop.com/panel/app/parameters.php*
@@ -2412,9 +2412,11 @@ li.ui-draggable-disabled.tp-row-enhanced {
 .tp-se .tp-se-head { padding:13px 20px; border-bottom:1px solid #eef0f4; background:#fafbfc; font-size:12px; font-weight:700; color:#344054; text-transform:uppercase; letter-spacing:.06em; display:flex; align-items:center; gap:10px; }
 .tp-se .tp-se-head .material-symbols-outlined { font-size:17px; color:#667085; opacity:.75; }
 .tp-se .tp-se-body { padding:4px 20px 10px; }
-.tp-se .tp-se-tabs { display:flex; flex-wrap:wrap; gap:4px; padding:10px 0 0; }
-.tp-se .tp-se-tab { display:inline-flex; align-items:center; gap:6px; padding:6px 12px; border:1px solid #e0e3ea; background:#f8f9fb; border-radius:8px; cursor:pointer; font-size:12.5px; color:#667085; font-family:inherit; }
-.tp-se .tp-se-tab.tp-on { border-color:#4f8cff; background:#eef3ff; color:#1a1a2e; font-weight:600; }
+.tp-se .tp-se-langs { display:grid; grid-template-columns:repeat(auto-fill,minmax(150px,1fr)); gap:8px; padding:10px 0 6px; }
+.tp-se .tp-se-lang { display:flex; align-items:center; gap:8px; padding:9px 12px; border:1px solid #e0e3ea; background:#fff; border-radius:10px; cursor:pointer; font-size:13px; color:#344054; font-family:inherit; transition:border-color .15s,background .15s; text-align:left; }
+.tp-se .tp-se-lang:hover { background:#fafbff; }
+.tp-se .tp-se-lang img { border-radius:2px; }
+.tp-se .tp-se-lang.tp-on { border-color:#4f8cff; background:#eef3ff; color:#1a1a2e; font-weight:600; box-shadow:0 0 0 1px #4f8cff; }
 .tp-se .tp-se-row { display:flex; align-items:center; justify-content:space-between; padding:11px 0; border-bottom:1px solid #f0f2f5; gap:16px; }
 .tp-se .tp-se-row:last-child { border-bottom:none; }
 .tp-se .tp-se-row--col { display:block; padding:12px 0 6px; }
@@ -8310,7 +8312,7 @@ li.tp-row--selected > div {
       },
       pagination: { perPage: loadPerPagePref('Sec') },
       footer: {
-        version: 'v4.6.7',
+        version: 'v4.6.8',
         links: []
       }
     });
@@ -9004,19 +9006,25 @@ li.tp-row--selected > div {
       var body = d.createElement('div');
       body.className = 'tp-modal-body tp-se';
 
+      // ===== KARTA: Język edycji (osobny blok nad treścią — dotyczy całego modalu) =====
+      var cardL = d.createElement('div'); cardL.className = 'tp-se-card';
+      cardL.innerHTML = '<div class="tp-se-head"><span class="material-symbols-outlined">translate</span>Język edycji</div>';
+      var bodyL = d.createElement('div'); bodyL.className = 'tp-se-body';
+      var tabs = d.createElement('div'); tabs.className = 'tp-se-langs';
+      langs.forEach(function (lg) {
+        var t = d.createElement('button');
+        t.type = 'button'; t.className = 'tp-se-lang'; t.dataset.lang = lg;
+        t.innerHTML = getLangFlag(lg, 18) + '<span>' + escapeHtml(getLangName(lg)) + '</span>';
+        tabs.appendChild(t);
+      });
+      bodyL.appendChild(tabs);
+      cardL.appendChild(bodyL);
+      body.appendChild(cardL);
+
       var cardC = d.createElement('div'); cardC.className = 'tp-se-card';
       cardC.innerHTML = '<div class="tp-se-head"><span class="material-symbols-outlined">edit_note</span>Treść</div>';
       var bodyC = d.createElement('div'); bodyC.className = 'tp-se-body';
       cardC.appendChild(bodyC);
-
-      var tabs = d.createElement('div'); tabs.className = 'tp-se-tabs';
-      langs.forEach(function (lg) {
-        var t = d.createElement('button');
-        t.type = 'button'; t.className = 'tp-se-tab'; t.dataset.lang = lg;
-        t.innerHTML = getLangFlag(lg, 18) + '<span>' + escapeHtml(getLangName(lg)) + '</span>';
-        tabs.appendChild(t);
-      });
-      bodyC.appendChild(tabs);
 
       var rowN = d.createElement('div'); rowN.className = 'tp-se-row';
       var lblN = d.createElement('span'); lblN.className = 'tp-se-lbl'; lblN.textContent = 'Nazwa';
@@ -9092,29 +9100,75 @@ li.tp-row--selected > div {
       function loadGfx() {
         if (gfxLoaded) return;
         var idoc = (typeof getIframeDoc === 'function') ? getIframeDoc() : doc;
+        // CSS-owe ukrycie kontenerów dialogów (różne implementacje: jQuery UI / YUI)
         var sty = idoc.getElementById('tp-gfx-hide');
         if (!sty) {
           sty = idoc.createElement('style');
           sty.id = 'tp-gfx-hide';
-          sty.textContent = '.ui-dialog{position:fixed !important;left:-99999px !important;top:-99999px !important;opacity:0 !important;pointer-events:none !important;}';
+          sty.textContent = '.tp-gfx-killed{position:fixed !important;left:-99999px !important;top:-99999px !important;width:1px !important;height:1px !important;opacity:0 !important;visibility:hidden !important;pointer-events:none !important;z-index:-1 !important;}';
           idoc.head.appendChild(sty);
         }
-        var nm = idoc.getElementById('showMenuSub_' + nodeId);
-        if (nm) nm.click();
-        setTimeout(function () {
-          var edl = idoc.getElementById('editEl_' + nodeId) || idoc.querySelector('[id^="editEl_"]');
-          if (edl) edl.click();
+        // Aktywne, natychmiastowe chowanie natywnego dialogu edycji (zanim mignie)
+        function killNativeDialog() {
+          var f = idoc.querySelector('form[id^="form_editEl_"]');
+          if (f) {
+            var c = f;
+            while (c && c.parentElement && c.parentElement !== idoc.body && c.parentElement.tagName !== 'BODY') c = c.parentElement;
+            if (c && c !== idoc.body && !c.classList.contains('tp-gfx-killed')) c.classList.add('tp-gfx-killed');
+          }
+          // ukryj ewentualną maskę/zaciemnienie i popup opisu
+          var ld = idoc.querySelectorAll('[id^="longdesc_edit_window"], .yui3-widget-mask, .ui-widget-overlay, .mask');
+          ld.forEach(function (n) { if (!n.classList.contains('tp-gfx-killed')) n.classList.add('tp-gfx-killed'); });
+        }
+        var killIv = setInterval(killNativeDialog, 25);
+        function stopKill() { clearInterval(killIv); }
+        function fallbackNative() {
+          stopKill();
+          try {
+            if (sty && sty.parentNode) sty.parentNode.removeChild(sty);
+            idoc.querySelectorAll('.tp-gfx-killed').forEach(function (n) { n.classList.remove('tp-gfx-killed'); });
+          } catch (e) {}
+          gfxShopSel.innerHTML = '<option>edytor natywny</option>'; gfxShopSel.disabled = true;
+          gfxHost.innerHTML = '';
+          var b = d.createElement('button');
+          b.type = 'button'; b.className = 'tp-btn-modal-secondary'; b.style.cssText = 'margin:4px 0;';
+          b.textContent = 'Otwórz natywny edytor grafik';
+          b.addEventListener('click', function () {
+            var nm2 = idoc.getElementById('showMenuSub_' + nodeId); if (nm2) nm2.click();
+            setTimeout(function () { var e2 = idoc.getElementById('editEl_' + nodeId); if (e2) e2.click(); }, 250);
+          });
+          var hint = d.createElement('div');
+          hint.style.cssText = 'font-size:12px;color:#98a2b3;margin-top:6px;';
+          hint.textContent = 'Wbudowany edytor grafik chwilowo niedostępny — użyj natywnego (otworzy się osobne okno panelu).';
+          gfxHost.appendChild(b); gfxHost.appendChild(hint);
+        }
+        // Faza 1: otwórz natywną edycję (retry, czekaj na dokładny editEl_<id>)
+        var p1 = 0;
+        var ivOpen = setInterval(function () {
+          p1++;
+          var nm = idoc.getElementById('showMenuSub_' + nodeId);
+          if (nm) { try { nm.click(); } catch (e) {} }
+          var edl = idoc.getElementById('editEl_' + nodeId);
+          if (edl) {
+            clearInterval(ivOpen);
+            try { edl.click(); } catch (e) {}
+            killNativeDialog();
+            phase2();
+          } else if (p1 > 24) { // ~3s
+            clearInterval(ivOpen);
+            fallbackNative();
+          }
+        }, 120);
+
+        function phase2() {
           var tries = 0;
           var iv = setInterval(function () {
             tries++;
+            killNativeDialog();
             var first = langs.map(function (l) { return idoc.getElementById('fg_id_shopsTr_' + l); }).filter(Boolean)[0];
             if (first || tries > 40) {
               clearInterval(iv);
-              if (!first) {
-                gfxShopSel.innerHTML = '<option>Nie udało się wczytać grafik</option>';
-                if (_panel) _panel.showStatus('Nie udało się wczytać natywnego edytora grafik', true);
-                return;
-              }
+              if (!first) { fallbackNative(); return; }
               var nativeForm = idoc.querySelector('form[id^="form_editEl_"]');
               langs.forEach(function (lg) {
                 var g = idoc.getElementById('fg_id_shopsTr_' + lg);
@@ -9135,16 +9189,18 @@ li.tp-row--selected > div {
                 gfxHost.appendChild(cont);
               });
               try {
-                var dlg = nativeForm && (nativeForm.closest('.ui-dialog') || nativeForm.parentNode);
+                var dlg = nativeForm && (nativeForm.closest('.ui-dialog') || (nativeForm.parentElement && nativeForm.parentElement.classList.contains('tp-gfx-killed') ? nativeForm.parentElement : null));
                 if (dlg && dlg.parentNode) dlg.parentNode.removeChild(dlg);
+                else idoc.querySelectorAll('.tp-gfx-killed').forEach(function (n) { if (n.parentNode) n.parentNode.removeChild(n); });
               } catch (e) {}
               try { idoc.querySelectorAll('[id^="longdesc_edit_window"]').forEach(function (n) { n.remove(); }); } catch (e) {}
               if (sty && sty.parentNode) sty.parentNode.removeChild(sty);
+              stopKill();
               gfxLoaded = true;
               showGfxForLang(curLang);
             }
           }, 150);
-        }, 600);
+        }
       }
 
       function stash() { if (curLang) { st[curLang].name = inN.value; st[curLang].description = edD.getValue(); } }
@@ -9364,7 +9420,7 @@ li.tp-row--selected > div {
       ],
       pagination: { perPage: 50 },
       footer: {
-        version: 'v4.6.7',
+        version: 'v4.6.8',
         links: []
       }
     });
