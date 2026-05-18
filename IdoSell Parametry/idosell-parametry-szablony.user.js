@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         IdoSell - Parametry Toolbar
 // @namespace    https://idosell.com/
-// @version      4.5.99
+// @version      4.6.0
 // @description  Toolbar do grupowej edycji parametrow: panel-pro v1.2.4 inline + new-panel support, checkboxy, zaznaczanie, rozwijanie/zwijanie, grupowe usuwanie/edycja, import CSV
 // @author       SyncOffer
 // @match        https://*.iai-shop.com/panel/app/parameters.php*
@@ -5823,6 +5823,7 @@ li.tp-row--selected > div {
   // =========================================================================
 
   let sortAscending = true;
+  let idAscending = true; // v4.6.0: sortowanie po ID
 
   function sortAlphabetically(doc) {
     var ul = doc.querySelector('#block_group0') || doc.querySelector('ul[id^="block_group"]');
@@ -5871,6 +5872,71 @@ li.tp-row--selected > div {
 
     sortAscending = !sortAscending;
     showForceDeleteStatus(doc, 'Sortowanie alfabetyczne \u2014 zapisywanie...');
+  }
+
+  // v4.6.0: sortowanie parametr\u00f3w wg ID (rosn\u0105co; kolejne klikni\u0119cia odwracaj\u0105)
+  function sortById(doc) {
+    var ul = doc.querySelector('#block_group0') || doc.querySelector('ul[id^="block_group"]');
+    if (!ul) return;
+    var items = Array.prototype.slice.call(ul.querySelectorAll(':scope > li[id^="m_"]'));
+    if (items.length === 0) return;
+
+    items.sort(function (a, b) {
+      var ia = parseInt(getNodeId(a), 10) || 0;
+      var ib = parseInt(getNodeId(b), 10) || 0;
+      return idAscending ? (ia - ib) : (ib - ia);
+    });
+
+    for (var i = 0; i < items.length; i++) {
+      var li = items[i];
+      var nodeId = getNodeId(li);
+      var space = doc.getElementById('space_' + nodeId);
+      if (space) ul.appendChild(space);
+      ul.appendChild(li);
+    }
+
+    var sortOrder = [];
+    for (var k = 0; k < items.length; k++) {
+      var nid = getNodeId(items[k]);
+      if (nid) sortOrder.push({ id: Number(nid), sortOrder: k + 1 });
+    }
+    var win = getIframeWin() || (doc.defaultView || window);
+    var xhr = new win.XMLHttpRequest();
+    xhr.open('POST', '/panel/ajax/parameters.php', true);
+    xhr.setRequestHeader('Content-Type', 'application/x-www-form-urlencoded');
+    xhr.onload = function () {
+      if (_panel && _panel.showStatus) {
+        if (xhr.status >= 200 && xhr.status < 300) {
+          _panel.showStatus('Posortowano wg ID (' + (idAscending ? 'rosn\u0105co' : 'malej\u0105co') + ') \u2014 zapisano');
+        } else {
+          _panel.showStatus('Posortowano w widoku, ale b\u0142\u0105d zapisu (HTTP ' + xhr.status + ')', true);
+        }
+      }
+    };
+    xhr.onerror = function () { if (_panel) _panel.showStatus('Posortowano w widoku, ale b\u0142\u0105d sieci', true); };
+    xhr.send('action=saveManualSort&parameters=' + encodeURIComponent(JSON.stringify(sortOrder)));
+
+    idAscending = !idAscending;
+    showForceDeleteStatus(doc, 'Sortowanie wg ID \u2014 zapisywanie...');
+    if (typeof applyPagination === 'function') { _paginationState.currentPage = 1; applyPagination(doc); }
+  }
+
+  // v4.6.0: sortowanie listy sekcji wg ID (klient \u2014 reorder + repaginacja)
+  function sortSectionsById(doc) {
+    if (!_sectionsMount || !_sectionsMount.listEl) return;
+    var ul = _sectionsMount.listEl;
+    var items = Array.prototype.slice.call(ul.querySelectorAll(':scope > li'));
+    if (items.length === 0) return;
+    items.sort(function (a, b) {
+      var ia = parseInt(a.dataset.sectionId, 10) || 0;
+      var ib = parseInt(b.dataset.sectionId, 10) || 0;
+      return idAscending ? (ia - ib) : (ib - ia);
+    });
+    items.forEach(function (li) { ul.appendChild(li); });
+    idAscending = !idAscending;
+    _secPagination.currentPage = 1;
+    applySectionsPagination(doc);
+    if (_panel) _panel.showStatus('Sekcje posortowane wg ID');
   }
 
   // =========================================================================
@@ -8121,6 +8187,7 @@ li.tp-row--selected > div {
       opsBar: {
         right: { label: 'Operacje na sekcjach', buttons: [
           { icon: 'sort_by_alpha', label: 'Sortuj alfabetycznie', variant: 'text',    onClick: function () { refreshSectionsPanel(doc); } },
+          { icon: 'tag',           label: 'Sortuj po ID',        tooltip: 'Sortuj wg ID (rosn\u0105co / malej\u0105co)', variant: 'text', onClick: function () { sortSectionsById(doc); } },
           { icon: 'add',           label: 'Dodaj sekcj\u0119',    variant: 'primary', onClick: function () { createNewSection(doc); } }
         ] }
       },
@@ -8173,7 +8240,7 @@ li.tp-row--selected > div {
       },
       pagination: { perPage: loadPerPagePref('Sec') },
       footer: {
-        version: 'v4.5.99',
+        version: 'v4.6.0',
         links: []
       }
     });
@@ -8783,7 +8850,8 @@ li.tp-row--selected > div {
         right: {
           label: 'Operacje na drzewie',
           buttons: [
-            { icon: 'sort_by_alpha', label: 'Sortuj alfabetycznie', tooltip: 'Posortuj wg nazwy', variant: 'text',    onClick: function () { sortAlphabetically(doc); } },
+            { icon: 'sort_by_alpha', label: 'Sortuj alfabetycznie', tooltip: 'Posortuj wg nazwy (A→Z / Z→A)', variant: 'text',    onClick: function () { sortAlphabetically(doc); } },
+            { icon: 'tag',           label: 'Sortuj po ID',        tooltip: 'Posortuj wg ID (rosnąco / malejąco)', variant: 'text', onClick: function () { sortById(doc); } },
             { icon: 'add',           label: 'Dodaj parametr',       tooltip: 'Dodaj nowy parametr', variant: 'primary', onClick: function () { createNewParameter(doc); } }
           ]
         }
@@ -8849,7 +8917,7 @@ li.tp-row--selected > div {
       ],
       pagination: { perPage: 50 },
       footer: {
-        version: 'v4.5.99',
+        version: 'v4.6.0',
         links: []
       }
     });
