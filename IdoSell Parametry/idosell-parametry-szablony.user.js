@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         IdoSell - Parametry Toolbar
 // @namespace    https://idosell.com/
-// @version      4.5.69
+// @version      4.5.70
 // @description  Toolbar do grupowej edycji parametrow: panel-pro v1.2.4 inline + new-panel support, checkboxy, zaznaczanie, rozwijanie/zwijanie, grupowe usuwanie/edycja, import CSV
 // @author       SyncOffer
 // @match        https://*.iai-shop.com/panel/app/parameters.php*
@@ -926,18 +926,72 @@
   // PAGE HEADER
   // =========================================================================
 
+  // v4.5.70: wspólny budowniczy przełącznika języka (reużywany w Parametrach i Sekcjach)
+  function buildLangSwitcherHtml(doc, ddId) {
+    var languages = detectAvailableLanguages(doc);
+    var currentLang = LANG;
+    var otherLangs = languages.filter(function (l) { return l.code !== currentLang; });
+    var head = '<span class="tp-page-header__lang-label">Wersja językowa:</span>';
+    if (otherLangs.length > 0) {
+      var items = otherLangs.map(function (l) {
+        return '<div class="tp-lang-dropdown__item" data-lang="' + l.code + '">' + getLangFlag(l.code) + ' <span>' + escapeHtml(getLangName(l.code)) + '</span></div>';
+      }).join('');
+      return head +
+        '<div class="tp-lang-dropdown" id="' + ddId + '">' +
+          '<button type="button" class="tp-lang-selector tp-lang-dropdown__trigger">' +
+            getLangFlag(currentLang) + ' <strong>' + escapeHtml(getLangName(currentLang)) + '</strong>' +
+            '<span class="material-symbols-outlined tp-lang-chevron">expand_more</span>' +
+          '</button>' +
+          '<div class="tp-lang-dropdown__content">' + items + '</div>' +
+        '</div>';
+    }
+    return head + '<span class="tp-lang-selector">' + getLangFlag(currentLang) + ' <strong>' + escapeHtml(getLangName(currentLang)) + '</strong></span>';
+  }
+
+  function wireLangDropdown(doc, root, ddId) {
+    var langDd = root.querySelector('#' + ddId);
+    if (!langDd) return;
+    var trigger = langDd.querySelector('.tp-lang-selector');
+    if (trigger) trigger.addEventListener('click', function (e) {
+      e.stopPropagation();
+      langDd.classList.toggle('tp-open');
+    });
+    langDd.querySelectorAll('.tp-lang-dropdown__item').forEach(function (item) {
+      item.addEventListener('click', function (e) {
+        e.stopPropagation();
+        var code = item.dataset.lang;
+        if (!code) return;
+        var topWin = window.top || window;
+        try {
+          var topUrl = new URL(topWin.location.href);
+          topUrl.pathname = '/panel/app/parameters.php';
+          topUrl.searchParams.set('lang', code);
+          topWin.location.assign(topUrl.toString());
+        } catch (err) {
+          var url = new URL((doc.defaultView || window).location.href);
+          url.searchParams.set('lang', code);
+          (doc.defaultView || window).location.assign(url.toString());
+        }
+      });
+    });
+    doc.addEventListener('click', function (e) {
+      if (!e.target.closest('#' + ddId)) langDd.classList.remove('tp-open');
+    });
+  }
+
+  // v4.5.70: wstaw nagłówek (tytuł + język) w lewy slot opsbar tej samej linii
+  function relocateHeaderIntoOpsBar(panel, headerEl) {
+    if (!panel || !panel.opsBar || !headerEl) return;
+    var leftSlot = panel.opsBar.firstChild;
+    if (!leftSlot) return;
+    leftSlot.innerHTML = '';
+    leftSlot.appendChild(headerEl);
+    headerEl.classList.add('tp-page-header--inline');
+  }
+
   function buildPageHeader(doc) {
     const h1 = doc.querySelector('h1');
     if (!h1) return;
-
-    const languages = detectAvailableLanguages(doc);
-    const currentLang = LANG;
-    const otherLangs = languages.filter(function(l) { return l.code !== currentLang; });
-
-    // v4.5.15: chip + dropdown language selector (like idosell-menu)
-    var langDropdownItems = otherLangs.map(function (l) {
-      return '<div class="tp-lang-dropdown__item" data-lang="' + l.code + '">' + getLangFlag(l.code) + ' <span>' + escapeHtml(getLangName(l.code)) + '</span></div>';
-    }).join('');
 
     const header = doc.createElement('div');
     header.className = 'tp-page-header';
@@ -946,17 +1000,7 @@
         '<h1 class="tp-page-header__title">Parametry</h1>' +
       '</div>' +
       '<div class="tp-page-header__meta">' +
-        '<span class="tp-page-header__lang-label">Wersja j\u0119zykowa:</span>' +
-        (otherLangs.length > 0 ?
-          '<div class="tp-lang-dropdown" id="tp-lang-dropdown">' +
-            '<button type="button" class="tp-lang-selector tp-lang-dropdown__trigger">' +
-              getLangFlag(currentLang) + ' <strong>' + escapeHtml(getLangName(currentLang)) + '</strong>' +
-              '<span class="material-symbols-outlined tp-lang-chevron">expand_more</span>' +
-            '</button>' +
-            '<div class="tp-lang-dropdown__content">' + langDropdownItems + '</div>' +
-          '</div>'
-          : '<span class="tp-lang-selector">' + getLangFlag(currentLang) + ' <strong>' + escapeHtml(getLangName(currentLang)) + '</strong></span>'
-        ) +
+        buildLangSwitcherHtml(doc, 'tp-lang-dropdown') +
       '</div>';
 
     // Hide original h1 and language rows (NOT the whole table - it contains the tree!)
@@ -976,40 +1020,8 @@
 
     h1.parentNode.insertBefore(header, h1);
 
-    // v4.5.15: wire lang dropdown toggle + item click
-    var langDd = header.querySelector('#tp-lang-dropdown');
-    if (langDd) {
-      var trigger = langDd.querySelector('.tp-lang-selector');
-      if (trigger) trigger.addEventListener('click', function (e) {
-        e.stopPropagation();
-        langDd.classList.toggle('tp-open');
-      });
-      langDd.querySelectorAll('.tp-lang-dropdown__item').forEach(function (item) {
-        item.addEventListener('click', function (e) {
-          e.stopPropagation();
-          var code = item.dataset.lang;
-          if (!code) return;
-          // v4.5.16: force full navigation on TOP window so the script re-injects.
-          // The new IdoSell panel can intercept same-path navigations as SPA, leaving
-          // the old native UI visible. Going via top-level assign avoids that.
-          var topWin = window.top || window;
-          try {
-            var topUrl = new URL(topWin.location.href);
-            topUrl.pathname = '/panel/app/parameters.php';
-            topUrl.searchParams.set('lang', code);
-            topWin.location.assign(topUrl.toString());
-          } catch (err) {
-            // Fallback for cross-origin top access
-            var url = new URL((doc.defaultView || window).location.href);
-            url.searchParams.set('lang', code);
-            (doc.defaultView || window).location.assign(url.toString());
-          }
-        });
-      });
-      doc.addEventListener('click', function (e) {
-        if (!e.target.closest('#tp-lang-dropdown')) langDd.classList.remove('tp-open');
-      });
-    }
+    // v4.5.70: wire lang dropdown via shared helper
+    wireLangDropdown(doc, header, 'tp-lang-dropdown');
 
     // Hide native "Dodaj element" div
     var nativeAddDiv = doc.getElementById('product_parameters');
@@ -1029,6 +1041,7 @@
     if (tdText) {
       tdText.style.cssText = 'padding:0 !important; border:none !important;';
     }
+    return header;
   }
 
   // =========================================================================
@@ -1563,6 +1576,18 @@
 .tp-page-header {
   margin-bottom: 8px;
   font-family: 'Google Sans', Roboto, Arial, sans-serif;
+}
+.tp-page-header--inline {
+  margin: 0 !important;
+}
+.tp-page-header--inline .tp-page-header__top {
+  margin-bottom: 2px;
+}
+.tp-page-header--inline .tp-page-header__title {
+  font-size: 18px;
+}
+.tp-page-header--inline .tp-page-header__meta {
+  font-size: 12px;
 }
 .tp-page-header__top {
   display: flex;
@@ -7218,10 +7243,17 @@ li.tp-row--selected > div {
     mount.style.cssText = 'margin: 24px 0 0 0;';
 
     // Header "Sekcje" — matches the main "Parametry" header style
+    // v4.5.70: duplikujemy przełącznik języka pod nagłówkiem Sekcji
     var header = doc.createElement('div');
     header.className = 'tp-page-header';
     header.style.cssText = 'margin: 24px 0 12px 0;';
-    header.innerHTML = '<div class="tp-page-header__top"><h1 class="tp-page-header__title">Sekcje</h1></div>';
+    header.innerHTML =
+      '<div class="tp-page-header__top">' +
+        '<h1 class="tp-page-header__title">Sekcje</h1>' +
+      '</div>' +
+      '<div class="tp-page-header__meta">' +
+        buildLangSwitcherHtml(doc, 'tp-lang-dropdown-sec') +
+      '</div>';
     mount.appendChild(header);
 
     // Inner panel target (so mount contains header + panel card)
@@ -7283,6 +7315,10 @@ li.tp-row--selected > div {
         links: []
       }
     });
+
+    // v4.5.70: nagłówek "Sekcje" + przełącznik języka w jednej linii z belką operacji na sekcjach
+    relocateHeaderIntoOpsBar(sectionsPanel, header);
+    wireLangDropdown(doc, header, 'tp-lang-dropdown-sec');
 
     // Select-all checkbox in the header
     var hCheck = sectionsPanel.tableHeader.querySelector('.panel-pro__col--check');
@@ -7785,7 +7821,7 @@ li.tp-row--selected > div {
       ],
       pagination: { perPage: 50 },
       footer: {
-        version: 'v4.5.69',
+        version: 'v4.5.70',
         links: [
           { label: 'Propozycja', icon: 'star', tooltip: 'Zaproponuj funkcjonalność', variant: 'feature', href: 'https://github.com/design4artPl/tampermonkey/issues/new?labels=enhancement', target: '_blank' },
           { label: 'Zgłoś błąd', icon: 'bug_report', tooltip: 'Zgłoś błąd', variant: 'bug', href: 'https://github.com/design4artPl/tampermonkey/issues/new?labels=bug', target: '_blank' }
@@ -8088,8 +8124,10 @@ li.tp-row--selected > div {
   waitForIframe(function (doc) {
     loadMaterialFont(doc);
     injectStyles(doc);
-    buildPageHeader(doc);
+    var _pageHeaderEl = buildPageHeader(doc);
     _panel = mountPanelPro(doc);
+    // v4.5.70: nagłówek "Parametry" + przełącznik języka w jednej linii z belką operacji
+    if (_pageHeaderEl) relocateHeaderIntoOpsBar(_panel, _pageHeaderEl);
     enhanceAllRows(doc);
     observeNewNodes(doc);
     hookNativeDeleteButtons(doc);
