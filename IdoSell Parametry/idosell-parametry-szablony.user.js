@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         IdoSell - Parametry Toolbar
 // @namespace    https://idosell.com/
-// @version      4.5.74
+// @version      4.5.75
 // @description  Toolbar do grupowej edycji parametrow: panel-pro v1.2.4 inline + new-panel support, checkboxy, zaznaczanie, rozwijanie/zwijanie, grupowe usuwanie/edycja, import CSV
 // @author       SyncOffer
 // @match        https://*.iai-shop.com/panel/app/parameters.php*
@@ -7889,13 +7889,33 @@ li.tp-row--selected > div {
         '<div style="display:flex;align-items:center;justify-content:center"><input type="checkbox" class="tp-checkbox" data-section-id="' + sec.id + '"></div>' +
         '<div style="display:flex;align-items:center;justify-content:center"><span class="material-symbols-outlined" style="color:#1d4ed8;font-size:22px" title="Sekcja">folder_special</span></div>' +
         '<div style="display:flex;align-items:center;gap:6px"><span class="tp-sec-name" style="font-weight:500;font-size:15px;cursor:pointer" title="Dwuklik = zmiana nazwy">' + escapeHtml(sec.name) + '</span></div>' +
-        '<div style="text-align:center;font-family:Roboto Mono,monospace;font-size:12px;color:#5f6368">' + sec.id + '</div>' +
+        '<div class="tp-sec-id tp-copyable" title="Kliknij aby skopiować" style="text-align:center;font-family:Roboto Mono,monospace;font-size:12px;color:#5f6368">' + sec.id + '</div>' +
         '<div class="tp-sec-products" data-section-id="' + sec.id + '" style="text-align:center;color:#5f6368">…</div>' +
         '<div style="display:flex;align-items:center;justify-content:center;gap:6px">' +
           '<span class="material-symbols-outlined" data-act="products" title="Poka\u017c produkty u\u017cywaj\u0105ce sekcji" style="cursor:pointer;color:#5f6368;font-size:20px">inventory_2</span>' +
           '<span class="material-symbols-outlined" data-act="rename" title="Zmie\u0144 nazw\u0119" style="cursor:pointer;color:#5f6368;font-size:20px">edit</span>' +
           '<span class="material-symbols-outlined" data-act="delete" title="Usu\u0144 sekcj\u0119" style="cursor:pointer;color:#dc2626;font-size:20px">delete</span>' +
         '</div>';
+
+      // v4.5.75: kopiowanie ID sekcji (jak w kolumnie ID parametrów)
+      var idCell = li.querySelector('.tp-sec-id');
+      if (idCell) idCell.addEventListener('click', function (e) {
+        e.stopPropagation();
+        var val = String(sec.id);
+        if (navigator.clipboard) {
+          navigator.clipboard.writeText(val);
+        } else {
+          var ta = doc.createElement('textarea');
+          ta.value = val;
+          ta.style.cssText = 'position:fixed;left:-9999px;';
+          doc.body.appendChild(ta);
+          ta.select();
+          doc.execCommand('copy');
+          ta.remove();
+        }
+        idCell.style.background = '#c8e6c9';
+        setTimeout(function () { idCell.style.background = ''; }, 600);
+      });
 
       // v4.5.37: checkbox drives row highlight (same classes parameters use)
       var rowCb = li.querySelector('input.tp-checkbox');
@@ -7943,7 +7963,8 @@ li.tp-row--selected > div {
     var items = _sectionsMount.listEl.querySelectorAll(':scope > li');
     items.forEach(function (li) {
       var name = li.dataset.sectionName || '';
-      var match = !q || name.indexOf(q) !== -1;
+      var id = li.dataset.sectionId || '';
+      var match = !q || name.indexOf(q) !== -1 || id.indexOf(q) !== -1;
       li.classList.toggle('panel-pro--filter-hidden', !match);
     });
   }
@@ -8344,7 +8365,7 @@ li.tp-row--selected > div {
       ],
       pagination: { perPage: 50 },
       footer: {
-        version: 'v4.5.74',
+        version: 'v4.5.75',
         links: [
           { label: 'Propozycja', icon: 'star', tooltip: 'Zaproponuj funkcjonalność', variant: 'feature', href: 'https://github.com/design4artPl/tampermonkey/issues/new?labels=enhancement', target: '_blank' },
           { label: 'Zgłoś błąd', icon: 'bug_report', tooltip: 'Zgłoś błąd', variant: 'bug', href: 'https://github.com/design4artPl/tampermonkey/issues/new?labels=bug', target: '_blank' }
