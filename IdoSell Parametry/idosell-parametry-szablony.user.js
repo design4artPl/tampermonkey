@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         IdoSell - Parametry Toolbar
 // @namespace    https://idosell.com/
-// @version      4.5.81
+// @version      4.5.82
 // @description  Toolbar do grupowej edycji parametrow: panel-pro v1.2.4 inline + new-panel support, checkboxy, zaznaczanie, rozwijanie/zwijanie, grupowe usuwanie/edycja, import CSV
 // @author       SyncOffer
 // @match        https://*.iai-shop.com/panel/app/parameters.php*
@@ -202,7 +202,7 @@
     '.panel-pro__dropdown__toggle { display: inline-flex; align-items: center; gap: 4px; padding: 5px 10px; border: 1px solid transparent; border-radius: 4px; background: transparent; cursor: pointer; font-size: 13px; color: #334155; font-family: inherit; font-weight: 500; }',
     '.panel-pro__dropdown__toggle:hover { background: #f1f5f9; }',
     '.panel-pro__dropdown__toggle .material-symbols-outlined { font-size: 18px; color: #5f6368; }',
-    '.panel-pro__dropdown__menu { position: absolute; top: calc(100% + 4px); right: 0; min-width: 220px; background: #fff; border: 1px solid #e2e8f0; border-radius: 6px; box-shadow: 0 4px 12px rgba(0,0,0,0.1); z-index: 10000; display: none; padding: 4px 0; }',
+    '.panel-pro__dropdown__menu { position: absolute; top: calc(100% + 4px); right: 0; min-width: 220px; background: #fff; border: 1px solid #e2e8f0; border-radius: 6px; box-shadow: 0 4px 12px rgba(0,0,0,0.1); z-index: 2147483000; display: none; padding: 4px 0; }',
     '.panel-pro__dropdown__menu.panel-pro--open { display: block; }',
     '.panel-pro__dropdown__item { display: flex; align-items: center; padding: 8px 12px; cursor: pointer; font-size: 13px; color: #334155; gap: 8px; }',
     '.panel-pro__dropdown__item:hover { background: #f1f5f9; }',
@@ -7365,6 +7365,76 @@ li.tp-row--selected > div {
     setTimeout(function () { input.focus(); input.select(); }, 30);
   }
 
+  // v4.5.82: ładny modal potwierdzenia (zamiast natywnego confirm())
+  function showConfirmModal(doc, opts) {
+    opts = opts || {};
+    var d = doc || document;
+    var danger = opts.okVariant === 'danger';
+    var overlay = d.createElement('div');
+    overlay.className = 'tp-overlay';
+    var modal = d.createElement('div');
+    modal.className = 'tp-modal';
+    modal.style.width = '440px';
+    modal.style.maxWidth = 'calc(100vw - 32px)';
+
+    var accent = danger ? { bg: '#fdecea', fg: '#d93025' } : { bg: '#e8eeff', fg: '#1a73e8' };
+    var header = d.createElement('div');
+    header.className = 'tp-modal-header';
+    header.style.cssText = 'background:#fff;color:#202124;border-bottom:1px solid #eef0f4;';
+    header.innerHTML =
+      '<span style="width:40px;height:40px;border-radius:10px;flex-shrink:0;display:flex;align-items:center;justify-content:center;background:' + accent.bg + ';color:' + accent.fg + ';">' +
+        '<span class="material-symbols-outlined" style="font-size:22px">' + (opts.icon || (danger ? 'delete' : 'sync')) + '</span>' +
+      '</span>' +
+      '<span style="display:flex;flex-direction:column;gap:2px;min-width:0;">' +
+        '<span style="font-size:16px;font-weight:600;color:#1a1a2e;">' + escapeHtml(opts.title || 'Potwierdź') + '</span>' +
+        (opts.subtitle ? '<span style="font-size:12.5px;font-weight:400;color:#98a2b3;">' + escapeHtml(opts.subtitle) + '</span>' : '') +
+      '</span>' +
+      '<button type="button" class="tp-modal-header-close" aria-label="Zamknij" style="color:#b0b8c9;">✕</button>';
+
+    var body = d.createElement('div');
+    body.className = 'tp-modal-body';
+    body.style.background = '#fff';
+    var msg = d.createElement('div');
+    msg.style.cssText = 'font-size:13.5px;color:#344054;line-height:1.5;';
+    msg.textContent = opts.message || 'Czy na pewno?';
+    body.appendChild(msg);
+
+    var footer = d.createElement('div');
+    footer.className = 'tp-modal-footer';
+    var cancel = d.createElement('button');
+    cancel.className = 'tp-btn-modal-secondary';
+    cancel.type = 'button';
+    cancel.textContent = opts.cancelLabel || 'Anuluj';
+    var ok = d.createElement('button');
+    ok.className = danger ? 'tp-btn-modal-danger' : 'tp-btn-modal-primary';
+    ok.type = 'button';
+    ok.textContent = opts.okLabel || 'OK';
+    footer.appendChild(cancel);
+    footer.appendChild(ok);
+
+    modal.appendChild(header);
+    modal.appendChild(body);
+    modal.appendChild(footer);
+    overlay.appendChild(modal);
+    d.body.appendChild(overlay);
+
+    function close() {
+      overlay.classList.add('tp-closing');
+      setTimeout(function () { if (overlay.parentNode) overlay.remove(); }, 180);
+    }
+    function confirmIt() { close(); if (opts.onOk) opts.onOk(); }
+    header.querySelector('.tp-modal-header-close').addEventListener('click', close);
+    cancel.addEventListener('click', close);
+    ok.addEventListener('click', confirmIt);
+    overlay.addEventListener('mousedown', function (e) { if (e.target === overlay) close(); });
+    d.addEventListener('keydown', function onKey(e) {
+      if (!overlay.parentNode) { d.removeEventListener('keydown', onKey); return; }
+      if (e.key === 'Enter') { e.preventDefault(); d.removeEventListener('keydown', onKey); confirmIt(); }
+      else if (e.key === 'Escape') { e.preventDefault(); d.removeEventListener('keydown', onKey); close(); }
+    });
+    setTimeout(function () { ok.focus(); }, 30);
+  }
+
   function applyViewFilter(doc, view) {
     var items = doc.querySelectorAll('li[id^="m_"]');
     if (!view) {
@@ -7440,8 +7510,8 @@ li.tp-row--selected > div {
           '<span class="material-symbols-outlined">' + (isActive ? 'check' : 'bookmark') + '</span>' +
           '<span style="flex:1">' + escapeHtml(v.name) + '</span>' +
           '<span style="background:#f1f5f9;color:#64748b;font-size:11px;padding:1px 6px;border-radius:10px;">' + v.nodes.length + '</span>' +
-          '<button class="tp-view-update" data-view-id="' + v.id + '" title="Zaktualizuj widok aktualnie zaznaczonymi" style="width:20px;height:20px;padding:0;border:none;background:transparent;cursor:pointer;color:#94a3b8;display:inline-flex;align-items:center;justify-content:center;border-radius:50%;"><span class="material-symbols-outlined" style="font-size:14px">sync</span></button>' +
-          '<button class="tp-view-delete" data-view-id="' + v.id + '" title="Usu\u0144 widok" style="width:20px;height:20px;padding:0;border:none;background:transparent;cursor:pointer;color:#94a3b8;display:inline-flex;align-items:center;justify-content:center;border-radius:50%;"><span class="material-symbols-outlined" style="font-size:14px">close</span></button>';
+          '<button class="tp-view-update" data-view-id="' + v.id + '" title="Zaktualizuj widok aktualnie zaznaczonymi" style="width:22px;height:22px;padding:0;border:none;background:transparent;cursor:pointer;color:#1a73e8;display:inline-flex;align-items:center;justify-content:center;border-radius:50%;"><span class="material-symbols-outlined" style="font-size:16px">sync</span></button>' +
+          '<button class="tp-view-delete" data-view-id="' + v.id + '" title="Usu\u0144 widok" style="width:22px;height:22px;padding:0;border:none;background:transparent;cursor:pointer;color:#d93025;display:inline-flex;align-items:center;justify-content:center;border-radius:50%;"><span class="material-symbols-outlined" style="font-size:16px">delete</span></button>';
         item.addEventListener('click', function (e) {
           if (e.target.closest('.tp-view-delete') || e.target.closest('.tp-view-update')) return;
           e.stopPropagation();
@@ -7455,22 +7525,41 @@ li.tp-row--selected > div {
           e.stopPropagation();
           var sel = getCheckedTreeNodeIds(doc);
           if (!sel.length) { alert('Najpierw zaznacz parametry/warto\u015bci, kt\u00f3rymi chcesz nadpisa\u0107 widok'); return; }
-          if (!confirm('Zaktualizowa\u0107 widok "' + v.name + '" \u2014 zapisa\u0107 aktualnie zaznaczone (' + sel.length + ')?')) return;
-          var list = loadSavedViews();
-          var t = list.find(function (x) { return x.id === v.id; });
-          if (t) { t.nodes = sel; t.updated = Date.now(); storeSavedViews(list); }
-          if (_activeViewId === v.id && t) applyViewFilter(doc, t);
-          if (_panel) _panel.showStatus('Zaktualizowano widok "' + v.name + '" (' + sel.length + ')');
-          rebuildViewsDropdown(doc);
+          menu.classList.remove('panel-pro--open');
+          showConfirmModal(doc, {
+            icon: 'sync',
+            title: 'Zaktualizowa\u0107 widok?',
+            subtitle: '\u201e' + v.name + '\u201d',
+            message: 'Zapisa\u0107 aktualnie zaznaczone (' + sel.length + ') jako now\u0105 zawarto\u015b\u0107 tego widoku? Poprzednia zawarto\u015b\u0107 zostanie nadpisana.',
+            okLabel: 'Zaktualizuj',
+            onOk: function () {
+              var list = loadSavedViews();
+              var t = list.find(function (x) { return x.id === v.id; });
+              if (t) { t.nodes = sel; t.updated = Date.now(); storeSavedViews(list); }
+              if (_activeViewId === v.id && t) applyViewFilter(doc, t);
+              if (_panel) _panel.showStatus('Zaktualizowano widok "' + v.name + '" (' + sel.length + ')');
+              rebuildViewsDropdown(doc);
+            }
+          });
         });
         var delBtn = item.querySelector('.tp-view-delete');
         if (delBtn) delBtn.addEventListener('click', function (e) {
           e.stopPropagation();
-          if (!confirm('Usun\u0105\u0107 widok "' + v.name + '"?')) return;
-          var list = loadSavedViews().filter(function (x) { return x.id !== v.id; });
-          storeSavedViews(list);
-          if (_activeViewId === v.id) { _activeViewId = null; applyViewFilter(doc, null); }
-          rebuildViewsDropdown(doc);
+          menu.classList.remove('panel-pro--open');
+          showConfirmModal(doc, {
+            icon: 'delete',
+            okVariant: 'danger',
+            title: 'Usun\u0105\u0107 widok?',
+            subtitle: '\u201e' + v.name + '\u201d',
+            message: 'Widok zostanie trwale usuni\u0119ty. Tej operacji nie mo\u017cna cofn\u0105\u0107.',
+            okLabel: 'Usu\u0144',
+            onOk: function () {
+              var list = loadSavedViews().filter(function (x) { return x.id !== v.id; });
+              storeSavedViews(list);
+              if (_activeViewId === v.id) { _activeViewId = null; applyViewFilter(doc, null); }
+              rebuildViewsDropdown(doc);
+            }
+          });
         });
         menu.appendChild(item);
       });
@@ -7591,8 +7680,8 @@ li.tp-row--selected > div {
           '<span class="material-symbols-outlined">' + (isActive ? 'check' : 'bookmark') + '</span>' +
           '<span style="flex:1">' + escapeHtml(v.name) + '</span>' +
           '<span style="background:#f1f5f9;color:#64748b;font-size:11px;padding:1px 6px;border-radius:10px;">' + v.nodes.length + '</span>' +
-          '<button class="tp-view-update" data-view-id="' + v.id + '" title="Zaktualizuj widok aktualnie zaznaczonymi" style="width:20px;height:20px;padding:0;border:none;background:transparent;cursor:pointer;color:#94a3b8;display:inline-flex;align-items:center;justify-content:center;border-radius:50%;"><span class="material-symbols-outlined" style="font-size:14px">sync</span></button>' +
-          '<button class="tp-view-delete" data-view-id="' + v.id + '" title="Usuń widok" style="width:20px;height:20px;padding:0;border:none;background:transparent;cursor:pointer;color:#94a3b8;display:inline-flex;align-items:center;justify-content:center;border-radius:50%;"><span class="material-symbols-outlined" style="font-size:14px">close</span></button>';
+          '<button class="tp-view-update" data-view-id="' + v.id + '" title="Zaktualizuj widok aktualnie zaznaczonymi" style="width:22px;height:22px;padding:0;border:none;background:transparent;cursor:pointer;color:#1a73e8;display:inline-flex;align-items:center;justify-content:center;border-radius:50%;"><span class="material-symbols-outlined" style="font-size:16px">sync</span></button>' +
+          '<button class="tp-view-delete" data-view-id="' + v.id + '" title="Usuń widok" style="width:22px;height:22px;padding:0;border:none;background:transparent;cursor:pointer;color:#d93025;display:inline-flex;align-items:center;justify-content:center;border-radius:50%;"><span class="material-symbols-outlined" style="font-size:16px">delete</span></button>';
         item.addEventListener('click', function (e) {
           if (e.target.closest('.tp-view-delete') || e.target.closest('.tp-view-update')) return;
           e.stopPropagation();
@@ -7606,22 +7695,41 @@ li.tp-row--selected > div {
           e.stopPropagation();
           var sel = getSelectedSectionIds(doc);
           if (!sel.length) { alert('Najpierw zaznacz sekcje, którymi chcesz nadpisać widok'); return; }
-          if (!confirm('Zaktualizować widok "' + v.name + '" — zapisać aktualnie zaznaczone (' + sel.length + ')?')) return;
-          var list = loadSavedSectionViews();
-          var t = list.find(function (x) { return x.id === v.id; });
-          if (t) { t.nodes = sel.slice(); t.updated = Date.now(); storeSavedSectionViews(list); }
-          if (_activeSectionViewId === v.id && t) applySectionViewFilter(doc, t);
-          if (_panel) _panel.showStatus('Zaktualizowano widok sekcji "' + v.name + '" (' + sel.length + ')');
-          rebuildSectionsViewsDropdown(doc);
+          menu.classList.remove('panel-pro--open');
+          showConfirmModal(doc, {
+            icon: 'sync',
+            title: 'Zaktualizować widok sekcji?',
+            subtitle: '„' + v.name + '”',
+            message: 'Zapisać aktualnie zaznaczone (' + sel.length + ') jako nową zawartość tego widoku? Poprzednia zawartość zostanie nadpisana.',
+            okLabel: 'Zaktualizuj',
+            onOk: function () {
+              var list = loadSavedSectionViews();
+              var t = list.find(function (x) { return x.id === v.id; });
+              if (t) { t.nodes = sel.slice(); t.updated = Date.now(); storeSavedSectionViews(list); }
+              if (_activeSectionViewId === v.id && t) applySectionViewFilter(doc, t);
+              if (_panel) _panel.showStatus('Zaktualizowano widok sekcji "' + v.name + '" (' + sel.length + ')');
+              rebuildSectionsViewsDropdown(doc);
+            }
+          });
         });
         var delBtn = item.querySelector('.tp-view-delete');
         if (delBtn) delBtn.addEventListener('click', function (e) {
           e.stopPropagation();
-          if (!confirm('Usunąć widok "' + v.name + '"?')) return;
-          var list = loadSavedSectionViews().filter(function (x) { return x.id !== v.id; });
-          storeSavedSectionViews(list);
-          if (_activeSectionViewId === v.id) { _activeSectionViewId = null; applySectionViewFilter(doc, null); }
-          rebuildSectionsViewsDropdown(doc);
+          menu.classList.remove('panel-pro--open');
+          showConfirmModal(doc, {
+            icon: 'delete',
+            okVariant: 'danger',
+            title: 'Usunąć widok sekcji?',
+            subtitle: '„' + v.name + '”',
+            message: 'Widok zostanie trwale usunięty. Tej operacji nie można cofnąć.',
+            okLabel: 'Usuń',
+            onOk: function () {
+              var list = loadSavedSectionViews().filter(function (x) { return x.id !== v.id; });
+              storeSavedSectionViews(list);
+              if (_activeSectionViewId === v.id) { _activeSectionViewId = null; applySectionViewFilter(doc, null); }
+              rebuildSectionsViewsDropdown(doc);
+            }
+          });
         });
         menu.appendChild(item);
       });
@@ -8004,7 +8112,7 @@ li.tp-row--selected > div {
         { id: 'actions',  label: 'Akcje',        width: '160px' }
       ],
       selectionBar: {
-        selectedLabel: 'Wybrano {n} sekcji',
+        selectedLabel: 'Liczba wybranych elementów {n}',
         actions: [
           { icon: 'delete', label: 'Usu\u0144', tooltip: 'Usu\u0144 zaznaczone sekcje', variant: 'danger', onClick: function () { bulkDeleteSelectedSections(doc); } }
         ],
@@ -8533,7 +8641,7 @@ li.tp-row--selected > div {
         tooltip: 'Poka\u017c / ukryj kolumny'
       },
       selectionBar: {
-        selectedLabel: 'Wybrano {n} obiekt\u00f3w',
+        selectedLabel: 'Liczba wybranych element\u00f3w ({n})',
         actions: [
           { icon: 'edit',            label: 'Edytuj',   tooltip: 'Grupowa edycja zaznaczonych',     variant: 'primary', onClick: function () { showBulkEditModal(doc); } },
           { icon: 'drive_file_move', label: 'Przenie\u015b', tooltip: 'Przenie\u015b zaznaczone warto\u015bci', variant: 'accent',  onClick: function () { showBulkMoveModal(doc); } },
@@ -8557,7 +8665,7 @@ li.tp-row--selected > div {
       ],
       pagination: { perPage: 50 },
       footer: {
-        version: 'v4.5.81',
+        version: 'v4.5.82',
         links: [
           { label: 'Propozycja', icon: 'star', tooltip: 'Zaproponuj funkcjonalność', variant: 'feature', href: 'https://github.com/design4artPl/tampermonkey/issues/new?labels=enhancement', target: '_blank' },
           { label: 'Zgłoś błąd', icon: 'bug_report', tooltip: 'Zgłoś błąd', variant: 'bug', href: 'https://github.com/design4artPl/tampermonkey/issues/new?labels=bug', target: '_blank' }
