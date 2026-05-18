@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         IdoSell - Parametry Toolbar
 // @namespace    https://idosell.com/
-// @version      4.5.79
+// @version      4.5.80
 // @description  Toolbar do grupowej edycji parametrow: panel-pro v1.2.4 inline + new-panel support, checkboxy, zaznaczanie, rozwijanie/zwijanie, grupowe usuwanie/edycja, import CSV
 // @author       SyncOffer
 // @match        https://*.iai-shop.com/panel/app/parameters.php*
@@ -7247,6 +7247,26 @@ li.tp-row--selected > div {
     try { localStorage.setItem(VIEWS_KEY, JSON.stringify(arr)); } catch (e) {}
   }
 
+  // v4.5.80: ID zaznaczonych węzłów wprost z DOM (źródło prawdy = zaznaczone checkboxy).
+  // selectedNodes bywa rozjechany po re-renderach drzewa — to liczy realnie zaznaczone.
+  function getCheckedTreeNodeIds(doc) {
+    var set = {};
+    var root = doc.getElementById('block_group0');
+    if (!root) return [];
+    var cbs = root.querySelectorAll('input.tp-checkbox');
+    for (var i = 0; i < cbs.length; i++) {
+      var cb = cbs[i];
+      if (!cb.checked) continue;
+      var id = cb.dataset.nodeId;
+      if (!id) {
+        var li = cb.closest('li[id^="m_"]');
+        if (li) id = getNodeId(li);
+      }
+      if (id) set[String(id)] = true;
+    }
+    return Object.keys(set);
+  }
+
   // v4.5.78: ładny modal do wpisania nazwy (zamiast natywnego prompt())
   function showInputModal(doc, opts) {
     opts = opts || {};
@@ -7447,15 +7467,16 @@ li.tp-row--selected > div {
     menu.appendChild(sep2);
 
     var saveItem = doc.createElement('div');
-    var disabled = selectedNodes.size === 0;
+    var disabled = getCheckedTreeNodeIds(doc).length === 0;
     saveItem.className = 'panel-pro__dropdown__item';
     saveItem.style.cssText = disabled ? 'opacity:.45;cursor:not-allowed;' : '';
     saveItem.innerHTML = '<span class="material-symbols-outlined" style="opacity:1">bookmark_add</span>Zapisz zaznaczone jako widok\u2026';
     saveItem.addEventListener('click', function (e) {
       e.stopPropagation();
-      if (disabled) { alert('Najpierw zaznacz elementy do zapisania w widoku'); return; }
+      // v4.5.80: licz zaznaczenie z DOM w momencie kliknięcia
+      var snapshot = getCheckedTreeNodeIds(doc);
+      if (!snapshot.length) { alert('Najpierw zaznacz parametry/wartości do zapisania w widoku'); return; }
       menu.classList.remove('panel-pro--open');
-      var snapshot = Array.from(selectedNodes);
       showInputModal(doc, {
         icon: 'bookmark_add',
         title: 'Zapisz widok',
@@ -8508,7 +8529,7 @@ li.tp-row--selected > div {
       ],
       pagination: { perPage: 50 },
       footer: {
-        version: 'v4.5.79',
+        version: 'v4.5.80',
         links: [
           { label: 'Propozycja', icon: 'star', tooltip: 'Zaproponuj funkcjonalność', variant: 'feature', href: 'https://github.com/design4artPl/tampermonkey/issues/new?labels=enhancement', target: '_blank' },
           { label: 'Zgłoś błąd', icon: 'bug_report', tooltip: 'Zgłoś błąd', variant: 'bug', href: 'https://github.com/design4artPl/tampermonkey/issues/new?labels=bug', target: '_blank' }
