@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         IdoSell - Parametry Toolbar
 // @namespace    https://idosell.com/
-// @version      4.5.94
+// @version      4.5.95
 // @description  Toolbar do grupowej edycji parametrow: panel-pro v1.2.4 inline + new-panel support, checkboxy, zaznaczanie, rozwijanie/zwijanie, grupowe usuwanie/edycja, import CSV
 // @author       SyncOffer
 // @match        https://*.iai-shop.com/panel/app/parameters.php*
@@ -299,7 +299,8 @@
     '.tp-global-footer__link--bug:hover { background: #f1f3f4; color: #d93025; border-color: #d93025; }',
     '.tp-global-footer__brand { display: flex; align-items: center; opacity: .9; }',
     '.tp-global-footer__brand svg { height: 34px; width: auto; display: block; }',
-    '.panel-pro__footer__left { display: flex; align-items: center; gap: 16px; flex-wrap: wrap; }',
+    '.panel-pro__footer__left { display: flex; align-items: center; gap: 0; flex-wrap: wrap; }',
+    '.panel-pro__sep { color: #dadce0; margin: 0 12px; user-select: none; }',
     '.panel-pro__footer__right { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; }',
     '.panel-pro__counter { color: #5f6368; font-size: 13px; font-weight: 400; }',
     '.panel-pro__counter--selected { color: #1a73e8; font-weight: 400; }',
@@ -311,7 +312,7 @@
     '.panel-pro__footer-link--bug:hover { background: #f1f3f4; color: #d93025; border-color: #d93025; }',
     '.panel-pro__version { color: #9aa0a6; font-size: 11px; }',
     '.panel-pro__pagination { display: flex; align-items: center; gap: 4px; flex-wrap: wrap; }',
-    '.panel-pro__pagination__info { color: #5f6368; font-size: 12px; margin-right: 8px; }',
+    '.panel-pro__pagination__info { color: #5f6368; font-size: 12px; margin: 0; }',
     '.panel-pro__pagination__btn, .panel-pro__pagination__page { display: inline-flex; align-items: center; justify-content: center; min-width: 30px; height: 30px; padding: 0 8px; border: 1px solid #e2e8f0; border-radius: 4px; background: #fff; cursor: pointer; font-size: 13px; color: #334155; font-family: inherit; }',
     '.panel-pro__pagination__btn:hover:not(:disabled), .panel-pro__pagination__page:hover:not(.panel-pro--active) { background: #f8fafc; border-color: #cbd5e1; }',
     '.panel-pro__pagination__page--active { background: #2563eb !important; color: #fff !important; border-color: #2563eb !important; }',
@@ -728,7 +729,9 @@
     var totalPages = perPage === 0 ? 1 : Math.max(1, Math.ceil(total / perPage));
     var start = perPage === 0 ? 1 : (page - 1) * perPage + 1;
     var end = perPage === 0 ? total : Math.min(page * perPage, total);
-    container.appendChild(el(doc, 'span', { className: 'panel-pro__pagination__info', textContent: '| Widoczne: ' + start + '-' + end + ' |' }));
+    var _info = el(doc, 'span', { className: 'panel-pro__pagination__info' });
+    _info.innerHTML = '<span class="panel-pro__sep">|</span>Widoczne: ' + start + '-' + end + '<span class="panel-pro__sep">|</span>';
+    container.appendChild(_info);
     var prev = el(doc, 'button', { className: 'panel-pro__pagination__btn', type: 'button' });
     prev.appendChild(icon(doc, 'chevron_left'));
     if (page <= 1) prev.disabled = true;
@@ -4003,9 +4006,10 @@ li.tp-row--selected > div {
         if (/^\d+$/.test(_ct)) _vCount += parseInt(_ct, 10);
       }
       var _se = selectedNodes.size;
+      var _sep = '<span class="panel-pro__sep">|</span>';
       var _h = 'Wszystkich parametrów: <span class="panel-pro__counter--total">' + _pCount + '</span>' +
-               ' | Wszystkich wartości: <span class="panel-pro__counter--total">' + _vCount + '</span>';
-      if (_se > 0) _h += ' | Zaznaczone: <span class="panel-pro__counter--selected">' + _se + '</span>';
+               _sep + 'Wszystkich wartości: <span class="panel-pro__counter--total">' + _vCount + '</span>';
+      if (_se > 0) _h += _sep + 'Zaznaczone: <span class="panel-pro__counter--selected">' + _se + '</span>';
       _panel.setCounter(_h);
     }
     if (_counterTimer) return;
@@ -8166,7 +8170,7 @@ li.tp-row--selected > div {
       },
       pagination: { perPage: loadPerPagePref('Sec') },
       footer: {
-        version: 'v4.5.94',
+        version: 'v4.5.95',
         links: []
       }
     });
@@ -8363,7 +8367,7 @@ li.tp-row--selected > div {
     var sel = _sectionsMount.listEl
       ? _sectionsMount.listEl.querySelectorAll(':scope > li input.tp-checkbox:checked').length : 0;
     var h = 'Wszystkich sekcji: <span class="panel-pro__counter--total">' + total + '</span>';
-    if (sel > 0) h += ' | Zaznaczone: <span class="panel-pro__counter--selected">' + sel + '</span>';
+    if (sel > 0) h += '<span class="panel-pro__sep">|</span>Zaznaczone: <span class="panel-pro__counter--selected">' + sel + '</span>';
     _sectionsMount.panel.setCounter(h);
   }
 
@@ -8813,7 +8817,7 @@ li.tp-row--selected > div {
       ],
       pagination: { perPage: 50 },
       footer: {
-        version: 'v4.5.94',
+        version: 'v4.5.95',
         links: []
       }
     });
