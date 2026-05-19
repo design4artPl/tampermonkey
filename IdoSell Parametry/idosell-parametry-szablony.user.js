@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         IdoSell - Parametry Toolbar
 // @namespace    https://idosell.com/
-// @version      4.6.10
+// @version      4.6.11
 // @description  Toolbar do grupowej edycji parametrow: panel-pro v1.2.4 inline + new-panel support, checkboxy, zaznaczanie, rozwijanie/zwijanie, grupowe usuwanie/edycja, import CSV
 // @author       SyncOffer
 // @match        https://*.iai-shop.com/panel/app/parameters.php*
@@ -8317,7 +8317,7 @@ li.tp-row--selected > div {
       },
       pagination: { perPage: loadPerPagePref('Sec') },
       footer: {
-        version: 'v4.6.10',
+        version: 'v4.6.11',
         links: []
       }
     });
@@ -9065,6 +9065,7 @@ li.tp-row--selected > div {
       var lblShop = d.createElement('span'); lblShop.className = 'tp-se-lbl'; lblShop.textContent = 'Sklep';
       var ctlShop = d.createElement('div'); ctlShop.className = 'tp-se-ctl';
       var gfxShopSel = d.createElement('select');
+      gfxShopSel.innerHTML = '<option>Wczytywanie…</option>'; gfxShopSel.disabled = true;
       ctlShop.appendChild(gfxShopSel);
       rowShop.appendChild(lblShop); rowShop.appendChild(ctlShop);
       bodyG.appendChild(rowShop);
@@ -9073,47 +9074,83 @@ li.tp-row--selected > div {
       body.appendChild(cardG);
 
       var GW = (typeof getIframeWin === 'function') ? getIframeWin() : window;
+      var GIDOC = (typeof getIframeDoc === 'function') ? getIframeDoc() : (doc || document);
       var GCTX = [{ k: 'search', t: 'Grafika wyświetlana na liście towarów' }, { k: 'projector', t: 'Grafika wyświetlana na karcie towaru' }];
-      var gfxType = {};      // lang -> shop -> {search,projector}
-      var shopsByLang = {};  // lang -> [shopIdx]
-      langs.forEach(function (lg) {
-        var ld = dt.langData[lg] || {};
-        var sset = {};
-        ['icon_search', 'icon_projector'].forEach(function (kk) {
-          if (ld[kk] && typeof ld[kk] === 'object') Object.keys(ld[kk]).forEach(function (sh) { sset[sh] = true; });
-        });
-        var shops = Object.keys(sset).sort(function (a, b) { return (parseInt(a, 10) || 0) - (parseInt(b, 10) || 0); });
-        shopsByLang[lg] = shops;
-        gfxType[lg] = {};
-        shops.forEach(function (sh) {
-          function pick(cx) {
-            var tk = 'icon_' + cx + '_type';
-            var v = ld[tk] && ld[tk][sh];
-            return (v === 'img' || v === 'img_rwd') ? v : 'img_rwd';
-          }
-          gfxType[lg][sh] = { search: pick('search'), projector: pick('projector') };
-        });
-      });
+      var gfxType = {};   // lang -> shop -> {search,projector}
+      var gfxData = {};   // lang -> { shops:[{idx,domain}], paths:{shop:{ctx:{single,desktop,tablet,mobile}}}, img:{shop:{ctx:url}} }
+      var gfxReady = false;
 
-      function gfxUploadPath(cx, sh, sizeSuffix) {
-        return '/data/lang/' + curLang + '/traits/gfx/' + cx + '/' + nodeId + '_' + sh + (sizeSuffix || '');
+      function parsePathFromOnclick(s) {
+        var m = /IAI\.PictureUploader\.select\([^,]+,\s*'[^']*'\s*,\s*'([^']+)'/.exec(s || '');
+        return m ? m[1] : null;
       }
-      function mkUploadBtn(label, cx, sh, sizeSuffix) {
+      function parseNativeGfx() {
+        langs.forEach(function (lg) {
+          var g = GIDOC.getElementById('fg_id_shopsTr_' + lg);
+          var entry = { shops: [], paths: {}, img: {} };
+          gfxType[lg] = gfxType[lg] || {};
+          if (g) {
+            var anchors = g.querySelectorAll('ul.yui3-tabview-list li a, .yui3-tabview-list > li > a');
+            [].forEach.call(anchors, function (a, i) {
+              entry.shops.push({ idx: i + 1, domain: (a.textContent || '').trim() });
+            });
+            // radia + obrazki + sciezki uploadu per sklep/kontekst
+            ['search', 'projector'].forEach(function (cx) {
+              entry.shops.forEach(function (sp) {
+                var sh = String(sp.idx);
+                gfxType[lg][sh] = gfxType[lg][sh] || {};
+                var rsel = g.querySelector('input[name="icon_type_' + lg + '_' + sh + '_' + cx + '"]:checked');
+                gfxType[lg][sh][cx] = (rsel && (rsel.value === 'img' || rsel.value === 'img_rwd')) ? rsel.value : 'img_rwd';
+                var im = g.querySelector('#img_' + cx + '_' + nodeId + '_' + lg + '_' + sh + ', img[id="img_' + cx + '_' + nodeId + '_' + lg + '_' + sh + '"]');
+                if (!entry.img[sh]) entry.img[sh] = {};
+                entry.img[sh][cx] = im ? (im.getAttribute('src') || '') : '';
+                if (!entry.paths[sh]) entry.paths[sh] = {};
+                entry.paths[sh][cx] = { single: null, desktop: null, tablet: null, mobile: null };
+              });
+            });
+            // sciezki z onclick spanow "wgraj plik"
+            [].forEach.call(g.querySelectorAll('[onclick*="IAI.PictureUploader.select"]'), function (el) {
+              var p = parsePathFromOnclick(el.getAttribute('onclick'));
+              if (!p) return;
+              // /data/lang/<lg>/traits/gfx/<ctx>/<id>_<shop>[_desktop|_tablet|_mobile]
+              var mm = /\/traits\/gfx\/(search|projector)\/\d+_(\d+)(_desktop|_tablet|_mobile)?$/.exec(p);
+              if (!mm) return;
+              var cx = mm[1], sh = mm[2], suf = mm[3] || '';
+              if (!entry.paths[sh]) entry.paths[sh] = {};
+              if (!entry.paths[sh][cx]) entry.paths[sh][cx] = { single: null, desktop: null, tablet: null, mobile: null };
+              if (suf === '_desktop') entry.paths[sh][cx].desktop = p;
+              else if (suf === '_tablet') entry.paths[sh][cx].tablet = p;
+              else if (suf === '_mobile') entry.paths[sh][cx].mobile = p;
+              else entry.paths[sh][cx].single = p;
+            });
+          }
+          gfxData[lg] = entry;
+        });
+        gfxReady = true;
+      }
+
+      function gfxPath(lg, cx, sh, kind) {
+        var pd = gfxData[lg] && gfxData[lg].paths[sh] && gfxData[lg].paths[sh][cx];
+        if (pd && pd[kind]) return pd[kind];
+        // rekonstrukcja jeśli brak w parsie
+        var suf = kind === 'single' ? '' : ('_' + kind);
+        return '/data/lang/' + lg + '/traits/gfx/' + cx + '/' + nodeId + '_' + sh + suf;
+      }
+      function mkUploadBtn(cx, sh, kind) {
         var b = d.createElement('button');
         b.type = 'button'; b.className = 'tp-btn-modal-secondary';
         b.style.cssText = 'font-size:12px;padding:6px 12px;';
-        b.textContent = label;
+        b.textContent = 'Wgraj plik';
         b.addEventListener('click', function () {
           try {
             if (GW && GW.IAI && GW.IAI.PictureUploader) {
-              GW.IAI.PictureUploader.select(b, '/panel/ajax/parameters.php', gfxUploadPath(cx, sh, sizeSuffix));
-            } else { alert('Uploader panelu (IAI.PictureUploader) niedostępny w tym kontekście.'); }
+              GW.IAI.PictureUploader.select(b, '/panel/ajax/parameters.php', gfxPath(curLang, cx, sh, kind));
+            } else { alert('Uploader panelu (IAI.PictureUploader) niedostępny.'); }
           } catch (e) { alert('Błąd uploadu: ' + (e.message || e)); }
         });
         return b;
       }
       function renderCtxBlock(host, cx, label, sh) {
-        var ld = dt.langData[curLang] || {};
         var card = d.createElement('div');
         card.style.cssText = 'border:1px solid #eef0f4;border-radius:10px;margin-bottom:10px;overflow:hidden;';
         var hd = d.createElement('div');
@@ -9121,7 +9158,6 @@ li.tp-row--selected > div {
         hd.textContent = label;
         card.appendChild(hd);
         var bd = d.createElement('div'); bd.style.cssText = 'padding:6px 14px 12px;';
-        // wiersz: Typ grafiki
         var rt = d.createElement('div'); rt.className = 'tp-se-row';
         var rl = d.createElement('span'); rl.className = 'tp-se-lbl'; rl.textContent = 'Typ grafiki';
         var rc = d.createElement('div'); rc.className = 'tp-se-ctl';
@@ -9134,37 +9170,32 @@ li.tp-row--selected > div {
         var slots = d.createElement('div'); slots.style.cssText = 'padding-top:10px;';
         function renderSlots() {
           slots.innerHTML = '';
-          var cur = (ld['icon_' + cx] && ld['icon_' + cx][sh]) ? String(ld['icon_' + cx][sh]) : '';
+          var cur = (gfxData[curLang] && gfxData[curLang].img[sh] && gfxData[curLang].img[sh][cx]) || '';
+          var pv = d.createElement('div');
+          pv.style.cssText = 'display:flex;align-items:center;gap:10px;margin-bottom:10px;';
           if (cur) {
-            var pv = d.createElement('div');
-            pv.style.cssText = 'display:flex;align-items:center;gap:10px;margin-bottom:10px;';
             pv.innerHTML = '<span style="font-size:12px;color:#98a2b3;">Aktualna grafika:</span>' +
               '<img src="' + escapeHtml(cur) + '" style="max-height:48px;max-width:160px;border:1px solid #e0e3ea;border-radius:6px;background:#fff;">';
-            slots.appendChild(pv);
           } else {
-            var nb = d.createElement('div');
-            nb.style.cssText = 'font-size:12px;color:#98a2b3;margin-bottom:10px;';
-            nb.textContent = 'Brak grafiki dla tego sklepu.';
-            slots.appendChild(nb);
+            pv.innerHTML = '<span style="font-size:12px;color:#98a2b3;">Brak grafiki dla tego sklepu.</span>';
           }
-          var rows;
-          if (sel.value === 'img_rwd') {
-            rows = [{ s: '_desktop', l: 'Wgraj plik (komputer)' }, { s: '_tablet', l: 'Wgraj plik (tablet)' }, { s: '_mobile', l: 'Wgraj plik (smartfon)' }];
-          } else {
-            rows = [{ s: '', l: 'Wgraj plik' }];
-          }
+          slots.appendChild(pv);
+          var rows = (sel.value === 'img_rwd')
+            ? [{ k: 'desktop', l: 'Komputer' }, { k: 'tablet', l: 'Tablet' }, { k: 'mobile', l: 'Smartfon' }]
+            : [{ k: 'single', l: 'Nowa grafika' }];
           rows.forEach(function (r) {
             var row = d.createElement('div');
             row.style.cssText = 'display:flex;align-items:center;gap:10px;padding:4px 0;';
             var rlab = d.createElement('span');
-            rlab.style.cssText = 'font-size:12.5px;color:#344054;min-width:150px;';
-            rlab.textContent = r.l.replace('Wgraj plik', 'Nowa grafika') + (sel.value === 'img_rwd' ? '' : ':');
+            rlab.style.cssText = 'font-size:12.5px;color:#344054;min-width:130px;';
+            rlab.textContent = r.l + ':';
             row.appendChild(rlab);
-            row.appendChild(mkUploadBtn('Wgraj plik', cx, sh, r.s));
+            row.appendChild(mkUploadBtn(cx, sh, r.k));
             slots.appendChild(row);
           });
         }
         sel.addEventListener('change', function () {
+          gfxType[curLang][sh] = gfxType[curLang][sh] || {};
           gfxType[curLang][sh][cx] = sel.value;
           renderSlots();
         });
@@ -9182,23 +9213,77 @@ li.tp-row--selected > div {
         GCTX.forEach(function (c) { renderCtxBlock(gfxHost, c.k, c.t, sh); });
       }
       function renderShopSelect() {
-        var shops = shopsByLang[curLang] || [];
+        if (!gfxReady) { gfxShopSel.innerHTML = '<option>Wczytywanie…</option>'; gfxShopSel.disabled = true; return; }
+        var shops = (gfxData[curLang] && gfxData[curLang].shops) || [];
         if (!shops.length) {
           gfxShopSel.innerHTML = '<option>Brak sklepów z językiem ' + escapeHtml(getLangName(curLang)) + '</option>';
-          gfxShopSel.disabled = true;
-          renderGfxBody(null);
-          return;
+          gfxShopSel.disabled = true; renderGfxBody(null); return;
         }
         gfxShopSel.disabled = false;
         gfxShopSel.innerHTML = shops.map(function (s) {
-          return '<option value="' + s + '">Sklep ' + s + '</option>';
+          return '<option value="' + s.idx + '">' + escapeHtml(s.domain || ('Sklep ' + s.idx)) + '</option>';
         }).join('');
-        gfxShopSel.value = shops[0];
-        renderGfxBody(shops[0]);
+        gfxShopSel.value = String(shops[0].idx);
+        renderGfxBody(String(shops[0].idx));
       }
       gfxShopSel.addEventListener('change', function () { renderGfxBody(gfxShopSel.value); });
       function showGfxForLang() { renderShopSelect(); }
-      renderShopSelect();
+
+      // Jednorazowe, offscreen: otwórz natywny edytor, sparsuj, zniszcz (bez migania, bez przycisku)
+      (function initNativeGfx() {
+        var sty = GIDOC.getElementById('tp-gfx-hide');
+        if (!sty) {
+          sty = GIDOC.createElement('style');
+          sty.id = 'tp-gfx-hide';
+          sty.textContent = '.tp-gfx-killed{position:fixed !important;left:-99999px !important;top:-99999px !important;width:1px !important;height:1px !important;opacity:0 !important;visibility:hidden !important;pointer-events:none !important;z-index:-1 !important;}';
+          GIDOC.head.appendChild(sty);
+        }
+        function kill() {
+          var f = GIDOC.querySelector('form[id^="form_editEl_"]');
+          if (f) {
+            var c = f;
+            while (c && c.parentElement && c.parentElement.tagName !== 'BODY') c = c.parentElement;
+            if (c && c !== GIDOC.body && !c.classList.contains('tp-gfx-killed')) c.classList.add('tp-gfx-killed');
+          }
+          GIDOC.querySelectorAll('[id^="longdesc_edit_window"], .yui3-widget-mask, .ui-widget-overlay').forEach(function (n) {
+            if (!n.classList.contains('tp-gfx-killed')) n.classList.add('tp-gfx-killed');
+          });
+        }
+        var killIv = setInterval(kill, 25);
+        var p1 = 0;
+        var ivOpen = setInterval(function () {
+          p1++;
+          var nm = GIDOC.getElementById('showMenuSub_' + nodeId);
+          if (nm) { try { nm.click(); } catch (e) {} }
+          var edl = GIDOC.getElementById('editEl_' + nodeId);
+          if (edl) { clearInterval(ivOpen); try { edl.click(); } catch (e) {} kill(); waitForm(); }
+          else if (p1 > 30) { clearInterval(ivOpen); finish(false); }
+        }, 120);
+        function waitForm() {
+          var t = 0;
+          var iv = setInterval(function () {
+            t++; kill();
+            var any = langs.map(function (l) { return GIDOC.getElementById('fg_id_shopsTr_' + l); }).filter(Boolean)[0];
+            if (any || t > 45) { clearInterval(iv); finish(!!any); }
+          }, 150);
+        }
+        function finish(ok) {
+          clearInterval(killIv);
+          try { if (ok) parseNativeGfx(); } catch (e) {}
+          // zniszcz natywny dialog i sprzątnij
+          try {
+            var f = GIDOC.querySelector('form[id^="form_editEl_"]');
+            var c = f;
+            while (c && c.parentElement && c.parentElement.tagName !== 'BODY') c = c.parentElement;
+            if (c && c !== GIDOC.body && c.parentNode) c.parentNode.removeChild(c);
+          } catch (e) {}
+          try { GIDOC.querySelectorAll('.tp-gfx-killed').forEach(function (n) { if (n.parentNode) n.parentNode.removeChild(n); }); } catch (e) {}
+          try { GIDOC.querySelectorAll('[id^="longdesc_edit_window"]').forEach(function (n) { n.remove(); }); } catch (e) {}
+          try { if (sty && sty.parentNode) sty.parentNode.removeChild(sty); } catch (e) {}
+          gfxReady = true;
+          renderShopSelect();
+        }
+      })();
 
       function stash() { if (curLang) { st[curLang].name = inN.value; st[curLang].description = edD.getValue(); } }
       function paintTabs() {
@@ -9415,7 +9500,7 @@ li.tp-row--selected > div {
       ],
       pagination: { perPage: 50 },
       footer: {
-        version: 'v4.6.10',
+        version: 'v4.6.11',
         links: []
       }
     });
