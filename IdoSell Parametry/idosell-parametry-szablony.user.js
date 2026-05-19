@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         IdoSell - Parametry Toolbar
 // @namespace    https://idosell.com/
-// @version      4.6.15
+// @version      4.6.16
 // @description  Toolbar do grupowej edycji parametrow: panel-pro v1.2.4 inline + new-panel support, checkboxy, zaznaczanie, rozwijanie/zwijanie, grupowe usuwanie/edycja, import CSV
 // @author       SyncOffer
 // @match        https://*.iai-shop.com/panel/app/parameters.php*
@@ -3798,11 +3798,25 @@ li.tp-row--selected > div {
     var contextCell = doc.createElement('div');
     contextCell.className = 'tp-col-context';
     contextCell.style.cssText = 'text-align:center';
+    // v4.6.16: kolumny Grafika + Opis (status), wypełniane razem z kontekstem
+    var gfxCell = doc.createElement('div');
+    gfxCell.className = 'tp-col-gfx';
+    gfxCell.style.cssText = 'text-align:center';
+    var descCell = doc.createElement('div');
+    descCell.className = 'tp-col-desc';
+    descCell.style.cssText = 'text-align:center';
     var cachedCtx = _ctxCache[nodeId];
-    if (cachedCtx) { contextCell.dataset.ctxLoaded = '1'; renderContextCell(contextCell, cachedCtx.ctx); }
+    if (cachedCtx) {
+      contextCell.dataset.ctxLoaded = '1';
+      renderContextCell(contextCell, cachedCtx.ctx);
+      renderGfxCell(gfxCell, cachedCtx.gfx);
+      renderDescCell(descCell, cachedCtx.descSet);
+    }
 
     // Insert cells at the beginning (before existing content)
     li.insertBefore(actionsCell, li.firstChild);
+    li.insertBefore(descCell, li.firstChild);
+    li.insertBefore(gfxCell, li.firstChild);
     li.insertBefore(contextCell, li.firstChild);
     li.insertBefore(productsCell, li.firstChild);
     li.insertBefore(childrenCell, li.firstChild);
@@ -8331,7 +8345,7 @@ li.tp-row--selected > div {
       },
       pagination: { perPage: loadPerPagePref('Sec') },
       footer: {
-        version: 'v4.6.15',
+        version: 'v4.6.16',
         links: []
       }
     });
@@ -9047,16 +9061,18 @@ li.tp-row--selected > div {
       });
       bodyL.appendChild(tabs);
       var copyRow = d.createElement('div');
-      copyRow.style.cssText = 'display:flex;align-items:center;gap:10px;padding:8px 0 2px;flex-wrap:wrap;';
-      var copyBtn = d.createElement('button');
-      copyBtn.type = 'button'; copyBtn.className = 'tp-btn-modal-secondary';
-      copyBtn.style.cssText = 'font-size:12px;padding:6px 14px;';
-      copyBtn.innerHTML = '<span class="material-symbols-outlined" style="font-size:15px;vertical-align:-3px;margin-right:5px">content_copy</span>Powiel aktywny język na wszystkie';
+      copyRow.style.cssText = 'display:flex;align-items:center;justify-content:space-between;gap:10px;padding:10px 0 2px;flex-wrap:wrap;';
       var copyHint = d.createElement('span');
       copyHint.style.cssText = 'font-size:11.5px;color:#98a2b3;';
-      copyHint.textContent = 'Kopiuje nazwę, opis i ustawienia grafik z bieżącego języka do pozostałych.';
+      copyHint.textContent = 'Powiel nazwę, opis i ustawienia grafik na pozostałe języki.';
+      var copyBtn = d.createElement('button');
+      copyBtn.type = 'button';
+      copyBtn.style.cssText = 'background:none;border:none;padding:0;font:600 12.5px/1 inherit;color:#4f8cff;cursor:pointer;font-family:inherit;';
+      copyBtn.textContent = 'Powiel na wszystkie języki';
+      copyBtn.addEventListener('mouseenter', function () { copyBtn.style.textDecoration = 'underline'; });
+      copyBtn.addEventListener('mouseleave', function () { copyBtn.style.textDecoration = 'none'; });
       copyBtn.addEventListener('click', function () { copyActiveLangToAll(); });
-      copyRow.appendChild(copyBtn); copyRow.appendChild(copyHint);
+      copyRow.appendChild(copyHint); copyRow.appendChild(copyBtn);
       bodyL.appendChild(copyRow);
       cardL.appendChild(bodyL);
       body.appendChild(cardL);
@@ -9192,15 +9208,22 @@ li.tp-row--selected > div {
         var lab = d.createElement('span'); lab.className = 'tp-gfx-upload-label'; lab.textContent = labelTxt;
         var btn = d.createElement('button'); btn.type = 'button'; btn.className = 'tp-gfx-browse'; btn.textContent = 'Przeglądaj…';
         var stt = d.createElement('span'); stt.className = 'tp-gfx-upload-state'; stt.textContent = 'Nie wybrano pliku.';
-        btn.addEventListener('click', function () {
-          try {
-            if (GW && GW.IAI && GW.IAI.PictureUploader) {
-              GW.IAI.PictureUploader.select(btn, '/panel/ajax/parameters.php', gfxPath(curLang, cx, sh, kind));
-              stt.textContent = 'Wybierz plik w oknie panelu…';
-            } else { alert('Uploader panelu (IAI.PictureUploader) niedostępny.'); }
-          } catch (e) { alert('Błąd uploadu: ' + (e.message || e)); }
+        var fin = d.createElement('input');
+        fin.type = 'file'; fin.accept = 'image/*'; fin.style.display = 'none';
+        btn.addEventListener('click', function () { fin.value = ''; fin.click(); });
+        fin.addEventListener('change', function () {
+          var f = fin.files && fin.files[0];
+          if (!f) return;
+          stt.textContent = f.name + ' — wgrywanie…';
+          uploadOneFile(f, cx, sh, kind).then(function () {
+            stt.textContent = f.name + ' — wgrano ✓';
+            if (_panel) _panel.showStatus('Wgrano grafikę: ' + f.name);
+          }).catch(function (e) {
+            stt.textContent = f.name + ' — błąd';
+            alert('Błąd wgrywania „' + f.name + '": ' + (e.message || e));
+          });
         });
-        row.appendChild(lab); row.appendChild(btn); row.appendChild(stt);
+        row.appendChild(lab); row.appendChild(btn); row.appendChild(stt); row.appendChild(fin);
         return row;
       }
       function mkFolderUpload(cx, sh) {
@@ -9651,7 +9674,7 @@ li.tp-row--selected > div {
       },
       columnsMenu: {
         key: 'tp.cols.parametry',
-        toggleable: ['id', 'children', 'products', 'context'],
+        toggleable: ['id', 'children', 'products', 'context', 'gfx', 'desc'],
         tooltip: 'Poka\u017c / ukryj kolumny'
       },
       selectionBar: {
@@ -9675,11 +9698,13 @@ li.tp-row--selected > div {
         { id: 'children', label: 'Dzieci',   width: '80px' },
         { id: 'products', label: 'Produkty', width: '90px' },
         { id: 'context',  label: 'Kontekst', width: '90px' },
+        { id: 'gfx',      label: 'Grafika',  width: '95px' },
+        { id: 'desc',     label: 'Opis',     width: '60px' },
         { id: 'actions',  label: 'Akcje',    width: '220px' }
       ],
       pagination: { perPage: 50 },
       footer: {
-        version: 'v4.6.15',
+        version: 'v4.6.16',
         links: []
       }
     });
@@ -9851,21 +9876,42 @@ li.tp-row--selected > div {
   };
   function contextLabel(ctx) { return ctx ? (CONTEXT_LABELS[ctx] || ctx) : ''; }
 
+  // v4.6.16: jedno żądanie getParameterLangData dostarcza: kontekst, status opisu i grafik
+  function _metaFromLangData(d) {
+    var ctx = (d.type === 'value' ? d.context_value_id : d.context_id) || null;
+    var descSet = false, anyGfxField = false, hasList = false, hasCard = false;
+    var ld = d.langData || {};
+    Object.keys(ld).forEach(function (lg) {
+      var L = ld[lg] || {};
+      if (L.description != null && String(L.description).replace(/<[^>]*>/g, '').trim() !== '') descSet = true;
+      ['icon_search', 'icon_projector'].forEach(function (kk) {
+        if (L[kk] && typeof L[kk] === 'object') {
+          anyGfxField = true;
+          Object.keys(L[kk]).forEach(function (sh) {
+            if (L[kk][sh] && String(L[kk][sh]).trim() !== '') {
+              if (kk === 'icon_search') hasList = true; else hasCard = true;
+            }
+          });
+        }
+      });
+    });
+    var gfx = !anyGfxField ? null : (hasList && hasCard ? 'both' : hasList ? 'list' : hasCard ? 'card' : 'none');
+    return { ctx: ctx, type: d.type, descSet: descSet, gfx: gfx };
+  }
   async function fetchContextForNode(nodeId) {
     if (_ctxCache[nodeId]) return _ctxCache[nodeId];
-    // v4.5.55: persistent cache TTL 24h
-    var cached = tpCacheGet('ctx', nodeId, TP_TTL_CTX);
+    // v4.6.16: cache scope 'cx2' (stare 'ctx' bez descSet/gfx ignorujemy)
+    var cached = tpCacheGet('cx2', nodeId, TP_TTL_CTX);
     if (cached !== null) { _ctxCache[nodeId] = cached; return cached; }
     try {
       var r = await fetchAjax('action=getParameterLangData&id=' + encodeURIComponent(nodeId));
       var d = r && r.data ? r.data : null;
-      if (!d) { _ctxCache[nodeId] = { ctx: null }; tpCacheSet('ctx', nodeId, { ctx: null }); return _ctxCache[nodeId]; }
-      var ctx = (d.type === 'value' ? d.context_value_id : d.context_id) || null;
-      _ctxCache[nodeId] = { ctx: ctx, type: d.type };
-      tpCacheSet('ctx', nodeId, _ctxCache[nodeId]);
+      if (!d) { _ctxCache[nodeId] = { ctx: null, descSet: false, gfx: null }; tpCacheSet('cx2', nodeId, _ctxCache[nodeId]); return _ctxCache[nodeId]; }
+      _ctxCache[nodeId] = _metaFromLangData(d);
+      tpCacheSet('cx2', nodeId, _ctxCache[nodeId]);
       return _ctxCache[nodeId];
     } catch (e) {
-      _ctxCache[nodeId] = { ctx: null };
+      _ctxCache[nodeId] = { ctx: null, descSet: false, gfx: null };
       return _ctxCache[nodeId];
     }
   }
@@ -9883,6 +9929,41 @@ li.tp-row--selected > div {
     cell.appendChild(icon);
   }
 
+  function renderGfxCell(cell, gfx) {
+    if (!cell) return;
+    cell.innerHTML = '';
+    var map = {
+      both: { t: 'obie', c: '#137333', i: 'check_circle' },
+      list: { t: 'na liście', c: '#1a73e8', i: 'image' },
+      card: { t: 'na karcie', c: '#1a73e8', i: 'image' },
+      none: { t: 'brak', c: '#9aa0a6', i: 'block' }
+    };
+    if (gfx == null) { cell.textContent = '–'; cell.setAttribute('data-pp-tooltip', 'Status grafik niedostępny w API'); return; }
+    var m = map[gfx] || map.none;
+    var s = cell.ownerDocument.createElement('span');
+    s.style.cssText = 'display:inline-flex;align-items:center;gap:4px;font-size:11.5px;color:' + m.c + ';';
+    s.innerHTML = '<span class="material-symbols-outlined" style="font-size:15px;color:' + m.c + '">' + m.i + '</span>' + m.t;
+    s.setAttribute('data-pp-tooltip', 'Grafiki: ' + m.t);
+    cell.appendChild(s);
+  }
+
+  function renderDescCell(cell, descSet) {
+    if (!cell) return;
+    cell.innerHTML = '';
+    var s = cell.ownerDocument.createElement('span');
+    if (descSet) {
+      s.className = 'material-symbols-outlined';
+      s.textContent = 'description';
+      s.style.cssText = 'font-size:17px;color:#137333;cursor:help';
+      s.setAttribute('data-pp-tooltip', 'Opis ustawiony');
+    } else {
+      s.textContent = '–';
+      s.style.cssText = 'font-size:13px;color:#9aa0a6;cursor:help';
+      s.setAttribute('data-pp-tooltip', 'Brak opisu');
+    }
+    cell.appendChild(s);
+  }
+
   // v4.5.49: skanujemy WSZYSTKIE wiersze (parametry + wartości) — fetchContextForNode rozróżnia
   // context_id vs context_value_id po polu type. BATCH 5 -> 15.
   async function loadContextsInBackground(doc, liList) {
@@ -9894,7 +9975,7 @@ li.tp-row--selected > div {
       var cell = li.querySelector(':scope > .tp-col-context');
       if (!cell) return;
       if (cell.dataset.ctxLoaded === '1') return;
-      targets.push({ nid: nid, cell: cell });
+      targets.push({ nid: nid, cell: cell, li: li });
     });
     var BATCH = 20;
     for (var i = 0; i < targets.length; i += BATCH) {
@@ -9904,6 +9985,10 @@ li.tp-row--selected > div {
           var info = await fetchContextForNode(t.nid);
           t.cell.dataset.ctxLoaded = '1';
           renderContextCell(t.cell, info.ctx);
+          var gC = t.li.querySelector(':scope > .tp-col-gfx');
+          if (gC) renderGfxCell(gC, info.gfx);
+          var dC = t.li.querySelector(':scope > .tp-col-desc');
+          if (dC) renderDescCell(dC, info.descSet);
         } catch (e) {}
       }));
     }
