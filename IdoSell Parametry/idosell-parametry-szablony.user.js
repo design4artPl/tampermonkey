@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         IdoSell - Parametry Toolbar
 // @namespace    https://idosell.com/
-// @version      4.6.11
+// @version      4.6.12
 // @description  Toolbar do grupowej edycji parametrow: panel-pro v1.2.4 inline + new-panel support, checkboxy, zaznaczanie, rozwijanie/zwijanie, grupowe usuwanie/edycja, import CSV
 // @author       SyncOffer
 // @match        https://*.iai-shop.com/panel/app/parameters.php*
@@ -2448,12 +2448,26 @@ li.ui-draggable-disabled.tp-row-enhanced {
 .tp-se .tp-ed-src { border:1px solid #e0e3ea !important; border-radius:10px !important; background:#f8f9fb !important; }
 .tp-se .tp-ed-wys { border:1px solid #e0e3ea; border-radius:10px; background:#f8f9fb; }
 /* integracja natywnego edytora grafik */
-.tp-se .tp-gfx-native .yui3-tabview-list { display:none !important; }
-.tp-se .tp-gfx-native table { width:100% !important; border:none !important; background:none !important; }
-.tp-se .tp-gfx-native td.description { width:42% !important; font-size:13px; color:#344054; padding:8px 6px !important; }
-.tp-se .tp-gfx-native td.text, .tp-se .tp-gfx-native td.text2 { padding:8px 6px !important; font-size:13px; }
-.tp-se .tp-gfx-native .tableRowDescription { font-size:11px; font-weight:700; color:#667085; text-transform:uppercase; letter-spacing:.05em; padding:10px 6px 4px !important; }
-.tp-se .tp-gfx-native .nohref { color:#2f6ad6; cursor:pointer; }
+/* v4.6.12: sekcja grafik w stylu Menu */
+.tp-se .tp-gfx-slot-header { font-size:11.5px; font-weight:700; color:#e65100; text-transform:uppercase; letter-spacing:.05em; padding:14px 0 6px; }
+.tp-se .tp-gfx-subfield { display:flex; align-items:center; justify-content:space-between; padding:8px 0; gap:16px; }
+.tp-se .tp-gfx-subfield .tp-se-lbl { font-size:13.5px; color:#344054; flex:1 1 auto; }
+.tp-se .tp-gfx-subfield .tp-se-ctl { flex:0 0 420px; max-width:420px; }
+.tp-se .tp-gfx-slot-upload { padding:4px 0 8px; }
+.tp-se .tp-gfx-upload-row { display:flex; align-items:center; gap:12px; padding:10px 14px; background:#f8f9fb; border:1px dashed #d0d5dd; border-radius:8px; margin-bottom:8px; transition:border-color .15s; }
+.tp-se .tp-gfx-upload-row:hover { border-color:#4f8cff; }
+.tp-se .tp-gfx-upload-label { font-size:12.5px; color:#667085; flex-shrink:0; min-width:120px; }
+.tp-se .tp-gfx-browse { padding:5px 14px; border-radius:6px; border:1px solid #d0d5dd; background:#fff; font-size:12px; color:#344054; cursor:pointer; font-weight:500; font-family:inherit; }
+.tp-se .tp-gfx-browse:hover { background:#f8f9fb; border-color:#b0b7c3; }
+.tp-se .tp-gfx-upload-state { font-size:12px; color:#98a2b3; flex:1; }
+.tp-se .tp-gfx-existing { display:flex; align-items:center; gap:10px; padding:8px 12px; background:#fff; border:1px solid #e8ebf0; border-radius:8px; margin-bottom:8px; font-size:12.5px; }
+.tp-se .tp-gfx-existing-label { font-size:12px; color:#667085; font-weight:500; flex-shrink:0; }
+.tp-se .tp-gfx-thumb { height:40px; width:auto; max-width:120px; border-radius:4px; border:1px solid #e8ebf0; object-fit:contain; background:#fff; }
+.tp-se .tp-gfx-existing-actions { display:flex; align-items:center; gap:10px; margin-left:auto; }
+.tp-se .tp-gfx-link { font-size:12px; color:#4f8cff; text-decoration:none; font-weight:500; cursor:pointer; }
+.tp-se .tp-gfx-link:hover { text-decoration:underline; }
+.tp-se .tp-gfx-del { font-size:12px; color:#d32f2f; cursor:pointer; font-weight:500; }
+.tp-se .tp-gfx-del:hover { text-decoration:underline; }
 
 /* Hide native elements inside enhanced rows */
 li.tp-row-enhanced > .showChildren,
@@ -8317,7 +8331,7 @@ li.tp-row--selected > div {
       },
       pagination: { perPage: loadPerPagePref('Sec') },
       footer: {
-        version: 'v4.6.11',
+        version: 'v4.6.12',
         links: []
       }
     });
@@ -8992,7 +9006,7 @@ li.tp-row--selected > div {
       overlay.className = 'tp-overlay';
       var modal = d.createElement('div');
       modal.className = 'tp-modal';
-      modal.style.width = '680px';
+      modal.style.width = '950px';
       modal.style.maxWidth = 'calc(100vw - 32px)';
 
       var header = d.createElement('div');
@@ -9150,15 +9164,27 @@ li.tp-row--selected > div {
         });
         return b;
       }
+      function mkUploadRow(labelTxt, cx, sh, kind) {
+        var row = d.createElement('div'); row.className = 'tp-gfx-upload-row';
+        var lab = d.createElement('span'); lab.className = 'tp-gfx-upload-label'; lab.textContent = labelTxt;
+        var btn = d.createElement('button'); btn.type = 'button'; btn.className = 'tp-gfx-browse'; btn.textContent = 'Przeglądaj…';
+        var stt = d.createElement('span'); stt.className = 'tp-gfx-upload-state'; stt.textContent = 'Nie wybrano pliku.';
+        btn.addEventListener('click', function () {
+          try {
+            if (GW && GW.IAI && GW.IAI.PictureUploader) {
+              GW.IAI.PictureUploader.select(btn, '/panel/ajax/parameters.php', gfxPath(curLang, cx, sh, kind));
+              stt.textContent = 'Wybierz plik w oknie panelu…';
+            } else { alert('Uploader panelu (IAI.PictureUploader) niedostępny.'); }
+          } catch (e) { alert('Błąd uploadu: ' + (e.message || e)); }
+        });
+        row.appendChild(lab); row.appendChild(btn); row.appendChild(stt);
+        return row;
+      }
       function renderCtxBlock(host, cx, label, sh) {
-        var card = d.createElement('div');
-        card.style.cssText = 'border:1px solid #eef0f4;border-radius:10px;margin-bottom:10px;overflow:hidden;';
-        var hd = d.createElement('div');
-        hd.style.cssText = 'padding:9px 14px;background:#fafbfc;border-bottom:1px solid #eef0f4;font-size:12px;font-weight:700;color:#667085;text-transform:uppercase;letter-spacing:.05em;';
-        hd.textContent = label;
-        card.appendChild(hd);
-        var bd = d.createElement('div'); bd.style.cssText = 'padding:6px 14px 12px;';
-        var rt = d.createElement('div'); rt.className = 'tp-se-row';
+        var hd = d.createElement('div'); hd.className = 'tp-gfx-slot-header'; hd.textContent = label;
+        host.appendChild(hd);
+
+        var rt = d.createElement('div'); rt.className = 'tp-gfx-subfield';
         var rl = d.createElement('span'); rl.className = 'tp-se-lbl'; rl.textContent = 'Typ grafiki';
         var rc = d.createElement('div'); rc.className = 'tp-se-ctl';
         var sel = d.createElement('select');
@@ -9166,33 +9192,27 @@ li.tp-row--selected > div {
         sel.value = (gfxType[curLang][sh] && gfxType[curLang][sh][cx]) || 'img_rwd';
         rc.appendChild(sel);
         rt.appendChild(rl); rt.appendChild(rc);
-        bd.appendChild(rt);
-        var slots = d.createElement('div'); slots.style.cssText = 'padding-top:10px;';
+        host.appendChild(rt);
+
+        var slots = d.createElement('div'); slots.className = 'tp-gfx-slot-upload';
+        host.appendChild(slots);
         function renderSlots() {
           slots.innerHTML = '';
           var cur = (gfxData[curLang] && gfxData[curLang].img[sh] && gfxData[curLang].img[sh][cx]) || '';
-          var pv = d.createElement('div');
-          pv.style.cssText = 'display:flex;align-items:center;gap:10px;margin-bottom:10px;';
           if (cur) {
-            pv.innerHTML = '<span style="font-size:12px;color:#98a2b3;">Aktualna grafika:</span>' +
-              '<img src="' + escapeHtml(cur) + '" style="max-height:48px;max-width:160px;border:1px solid #e0e3ea;border-radius:6px;background:#fff;">';
-          } else {
-            pv.innerHTML = '<span style="font-size:12px;color:#98a2b3;">Brak grafiki dla tego sklepu.</span>';
+            var ex = d.createElement('div'); ex.className = 'tp-gfx-existing';
+            ex.innerHTML =
+              '<span class="tp-gfx-existing-label">Aktualna grafika:</span>' +
+              '<img class="tp-gfx-thumb" src="' + escapeHtml(cur) + '">' +
+              '<span class="tp-gfx-existing-actions">' +
+                '<a class="tp-gfx-link" href="' + escapeHtml(cur) + '" target="_blank" rel="noopener">podgląd</a>' +
+              '</span>';
+            slots.appendChild(ex);
           }
-          slots.appendChild(pv);
           var rows = (sel.value === 'img_rwd')
-            ? [{ k: 'desktop', l: 'Komputer' }, { k: 'tablet', l: 'Tablet' }, { k: 'mobile', l: 'Smartfon' }]
-            : [{ k: 'single', l: 'Nowa grafika' }];
-          rows.forEach(function (r) {
-            var row = d.createElement('div');
-            row.style.cssText = 'display:flex;align-items:center;gap:10px;padding:4px 0;';
-            var rlab = d.createElement('span');
-            rlab.style.cssText = 'font-size:12.5px;color:#344054;min-width:130px;';
-            rlab.textContent = r.l + ':';
-            row.appendChild(rlab);
-            row.appendChild(mkUploadBtn(cx, sh, r.k));
-            slots.appendChild(row);
-          });
+            ? [{ k: 'desktop', l: 'Nowa grafika (komputer):' }, { k: 'tablet', l: 'Nowa grafika (tablet):' }, { k: 'mobile', l: 'Nowa grafika (smartfon):' }]
+            : [{ k: 'single', l: 'Nowa grafika:' }];
+          rows.forEach(function (r) { slots.appendChild(mkUploadRow(r.l, cx, sh, r.k)); });
         }
         sel.addEventListener('change', function () {
           gfxType[curLang][sh] = gfxType[curLang][sh] || {};
@@ -9200,9 +9220,6 @@ li.tp-row--selected > div {
           renderSlots();
         });
         renderSlots();
-        bd.appendChild(slots);
-        card.appendChild(bd);
-        host.appendChild(card);
       }
       function renderGfxBody(sh) {
         gfxHost.innerHTML = '';
@@ -9500,7 +9517,7 @@ li.tp-row--selected > div {
       ],
       pagination: { perPage: 50 },
       footer: {
-        version: 'v4.6.11',
+        version: 'v4.6.12',
         links: []
       }
     });
