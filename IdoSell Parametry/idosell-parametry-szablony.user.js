@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         IdoSell - Parametry Toolbar
 // @namespace    https://idosell.com/
-// @version      4.6.8
+// @version      4.6.9
 // @description  Toolbar do grupowej edycji parametrow: panel-pro v1.2.4 inline + new-panel support, checkboxy, zaznaczanie, rozwijanie/zwijanie, grupowe usuwanie/edycja, import CSV
 // @author       SyncOffer
 // @match        https://*.iai-shop.com/panel/app/parameters.php*
@@ -2412,11 +2412,16 @@ li.ui-draggable-disabled.tp-row-enhanced {
 .tp-se .tp-se-head { padding:13px 20px; border-bottom:1px solid #eef0f4; background:#fafbfc; font-size:12px; font-weight:700; color:#344054; text-transform:uppercase; letter-spacing:.06em; display:flex; align-items:center; gap:10px; }
 .tp-se .tp-se-head .material-symbols-outlined { font-size:17px; color:#667085; opacity:.75; }
 .tp-se .tp-se-body { padding:4px 20px 10px; }
-.tp-se .tp-se-langs { display:grid; grid-template-columns:repeat(auto-fill,minmax(150px,1fr)); gap:8px; padding:10px 0 6px; }
-.tp-se .tp-se-lang { display:flex; align-items:center; gap:8px; padding:9px 12px; border:1px solid #e0e3ea; background:#fff; border-radius:10px; cursor:pointer; font-size:13px; color:#344054; font-family:inherit; transition:border-color .15s,background .15s; text-align:left; }
-.tp-se .tp-se-lang:hover { background:#fafbff; }
-.tp-se .tp-se-lang img { border-radius:2px; }
-.tp-se .tp-se-lang.tp-on { border-color:#4f8cff; background:#eef3ff; color:#1a1a2e; font-weight:600; box-shadow:0 0 0 1px #4f8cff; }
+.tp-se .lang-list { display:grid; grid-template-columns:repeat(auto-fill,minmax(140px,1fr)); gap:6px; padding:10px 0 6px; }
+.tp-se .lang-item { display:flex; align-items:center; gap:8px; padding:6px 10px; border:1px solid #e0e3ea; border-radius:8px; cursor:pointer; font-size:12.5px; color:#344054; transition:all .15s; user-select:none; background:#fff; font-family:inherit; text-align:left; }
+.tp-se .lang-item:hover { background:#fafbfd; }
+.tp-se .lang-item.checked { border:2px solid #4f8cff; padding:5px 9px; background:#f5f8ff; }
+.tp-se .lang-flag { display:inline-flex; }
+.tp-se .lang-name { flex:1; }
+.tp-se .lang-item input { display:none; }
+.tp-se .lang-check { width:14px; height:14px; border-radius:3px; border:1.5px solid #c6d0e0; flex-shrink:0; position:relative; }
+.tp-se .lang-item.checked .lang-check { background:#4f8cff; border-color:#4f8cff; }
+.tp-se .lang-item.checked .lang-check::after { content:''; position:absolute; left:3.5px; top:.5px; width:4px; height:8px; border:solid #fff; border-width:0 2px 2px 0; transform:rotate(45deg); }
 .tp-se .tp-se-row { display:flex; align-items:center; justify-content:space-between; padding:11px 0; border-bottom:1px solid #f0f2f5; gap:16px; }
 .tp-se .tp-se-row:last-child { border-bottom:none; }
 .tp-se .tp-se-row--col { display:block; padding:12px 0 6px; }
@@ -8312,7 +8317,7 @@ li.tp-row--selected > div {
       },
       pagination: { perPage: loadPerPagePref('Sec') },
       footer: {
-        version: 'v4.6.8',
+        version: 'v4.6.9',
         links: []
       }
     });
@@ -8987,7 +8992,7 @@ li.tp-row--selected > div {
       overlay.className = 'tp-overlay';
       var modal = d.createElement('div');
       modal.className = 'tp-modal';
-      modal.style.width = '640px';
+      modal.style.width = '680px';
       modal.style.maxWidth = 'calc(100vw - 32px)';
 
       var header = d.createElement('div');
@@ -9010,11 +9015,14 @@ li.tp-row--selected > div {
       var cardL = d.createElement('div'); cardL.className = 'tp-se-card';
       cardL.innerHTML = '<div class="tp-se-head"><span class="material-symbols-outlined">translate</span>Język edycji</div>';
       var bodyL = d.createElement('div'); bodyL.className = 'tp-se-body';
-      var tabs = d.createElement('div'); tabs.className = 'tp-se-langs';
+      var tabs = d.createElement('div'); tabs.className = 'lang-list';
       langs.forEach(function (lg) {
-        var t = d.createElement('button');
-        t.type = 'button'; t.className = 'tp-se-lang'; t.dataset.lang = lg;
-        t.innerHTML = getLangFlag(lg, 18) + '<span>' + escapeHtml(getLangName(lg)) + '</span>';
+        var t = d.createElement('label');
+        t.className = 'lang-item'; t.dataset.lang = lg;
+        t.innerHTML = '<span class="lang-check"></span>' +
+          '<span class="lang-flag">' + getLangFlag(lg, 16) + '</span>' +
+          '<span class="lang-name">' + escapeHtml(getLangName(lg)) + '</span>' +
+          '<input type="radio" name="tp-se-lang">';
         tabs.appendChild(t);
       });
       bodyL.appendChild(tabs);
@@ -9057,11 +9065,20 @@ li.tp-row--selected > div {
       var lblShop = d.createElement('span'); lblShop.className = 'tp-se-lbl'; lblShop.textContent = 'Sklep';
       var ctlShop = d.createElement('div'); ctlShop.className = 'tp-se-ctl';
       var gfxShopSel = d.createElement('select');
-      gfxShopSel.innerHTML = '<option>Wczytywanie…</option>'; gfxShopSel.disabled = true;
+      gfxShopSel.innerHTML = '<option>—</option>'; gfxShopSel.disabled = true;
       ctlShop.appendChild(gfxShopSel);
       rowShop.appendChild(lblShop); rowShop.appendChild(ctlShop);
       bodyG.appendChild(rowShop);
       var gfxHost = d.createElement('div'); gfxHost.style.cssText = 'margin-top:8px;';
+      var gfxLoadBtn = d.createElement('button');
+      gfxLoadBtn.type = 'button'; gfxLoadBtn.className = 'tp-btn-modal-secondary'; gfxLoadBtn.style.cssText = 'margin:8px 0 4px;';
+      gfxLoadBtn.textContent = 'Wczytaj edytor grafik';
+      gfxLoadBtn.addEventListener('click', function () {
+        gfxLoadBtn.disabled = true; gfxLoadBtn.textContent = 'Wczytywanie…';
+        gfxShopSel.innerHTML = '<option>Wczytywanie…</option>';
+        loadGfx();
+      });
+      bodyG.appendChild(gfxLoadBtn);
       bodyG.appendChild(gfxHost);
       body.appendChild(cardG);
 
@@ -9129,6 +9146,7 @@ li.tp-row--selected > div {
             idoc.querySelectorAll('.tp-gfx-killed').forEach(function (n) { n.classList.remove('tp-gfx-killed'); });
           } catch (e) {}
           gfxShopSel.innerHTML = '<option>edytor natywny</option>'; gfxShopSel.disabled = true;
+          try { if (gfxLoadBtn && gfxLoadBtn.parentNode) gfxLoadBtn.remove(); } catch (e) {}
           gfxHost.innerHTML = '';
           var b = d.createElement('button');
           b.type = 'button'; b.className = 'tp-btn-modal-secondary'; b.style.cssText = 'margin:4px 0;';
@@ -9196,6 +9214,7 @@ li.tp-row--selected > div {
               try { idoc.querySelectorAll('[id^="longdesc_edit_window"]').forEach(function (n) { n.remove(); }); } catch (e) {}
               if (sty && sty.parentNode) sty.parentNode.removeChild(sty);
               stopKill();
+              try { if (gfxLoadBtn && gfxLoadBtn.parentNode) gfxLoadBtn.remove(); } catch (e) {}
               gfxLoaded = true;
               showGfxForLang(curLang);
             }
@@ -9206,7 +9225,7 @@ li.tp-row--selected > div {
       function stash() { if (curLang) { st[curLang].name = inN.value; st[curLang].description = edD.getValue(); } }
       function paintTabs() {
         [].forEach.call(tabs.children, function (t) {
-          t.classList.toggle('tp-on', t.dataset.lang === curLang);
+          t.classList.toggle('checked', t.dataset.lang === curLang);
         });
       }
       function loadLang(lg) { curLang = lg; inN.value = st[lg].name; edD.setValue(st[lg].description); paintTabs(); if (gfxLoaded) showGfxForLang(lg); }
@@ -9214,7 +9233,6 @@ li.tp-row--selected > div {
         t.addEventListener('click', function () { stash(); loadLang(t.dataset.lang); inN.focus(); });
       });
       loadLang(curLang);
-      setTimeout(loadGfx, 200);
       var footer = d.createElement('div');
       footer.className = 'tp-modal-footer';
       var cancel = d.createElement('button');
@@ -9420,7 +9438,7 @@ li.tp-row--selected > div {
       ],
       pagination: { perPage: 50 },
       footer: {
-        version: 'v4.6.8',
+        version: 'v4.6.9',
         links: []
       }
     });
