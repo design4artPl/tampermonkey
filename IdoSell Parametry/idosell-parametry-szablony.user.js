@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         IdoSell - Parametry Toolbar
 // @namespace    https://idosell.com/
-// @version      4.6.9
+// @version      4.6.10
 // @description  Toolbar do grupowej edycji parametrow: panel-pro v1.2.4 inline + new-panel support, checkboxy, zaznaczanie, rozwijanie/zwijanie, grupowe usuwanie/edycja, import CSV
 // @author       SyncOffer
 // @match        https://*.iai-shop.com/panel/app/parameters.php*
@@ -8317,7 +8317,7 @@ li.tp-row--selected > div {
       },
       pagination: { perPage: loadPerPagePref('Sec') },
       footer: {
-        version: 'v4.6.9',
+        version: 'v4.6.10',
         links: []
       }
     });
@@ -9059,168 +9059,146 @@ li.tp-row--selected > div {
       var bodyG = d.createElement('div'); bodyG.className = 'tp-se-body';
       cardG.appendChild(bodyG);
       var gHint = d.createElement('div'); gHint.className = 'tp-se-hint';
-      gHint.innerHTML = '<span>ℹ</span><span>Zalecany format: trzy wielkości (RWD) dla komputerów, tabletów i smartfonów. Grafiki ustawiasz dla wybranego języka w konkretnym sklepie (tylko sklepy, w których ten język jest dostępny).</span>';
+      gHint.innerHTML = '<span>ℹ</span><span>Zalecany format: trzy wielkości (RWD) dla komputerów, tabletów i smartfonów. Grafikę ustawiasz dla wybranego języka w konkretnym sklepie (tylko sklepy, w których ten język jest dostępny).</span>';
       bodyG.appendChild(gHint);
       var rowShop = d.createElement('div'); rowShop.className = 'tp-se-row';
       var lblShop = d.createElement('span'); lblShop.className = 'tp-se-lbl'; lblShop.textContent = 'Sklep';
       var ctlShop = d.createElement('div'); ctlShop.className = 'tp-se-ctl';
       var gfxShopSel = d.createElement('select');
-      gfxShopSel.innerHTML = '<option>—</option>'; gfxShopSel.disabled = true;
       ctlShop.appendChild(gfxShopSel);
       rowShop.appendChild(lblShop); rowShop.appendChild(ctlShop);
       bodyG.appendChild(rowShop);
-      var gfxHost = d.createElement('div'); gfxHost.style.cssText = 'margin-top:8px;';
-      var gfxLoadBtn = d.createElement('button');
-      gfxLoadBtn.type = 'button'; gfxLoadBtn.className = 'tp-btn-modal-secondary'; gfxLoadBtn.style.cssText = 'margin:8px 0 4px;';
-      gfxLoadBtn.textContent = 'Wczytaj edytor grafik';
-      gfxLoadBtn.addEventListener('click', function () {
-        gfxLoadBtn.disabled = true; gfxLoadBtn.textContent = 'Wczytywanie…';
-        gfxShopSel.innerHTML = '<option>Wczytywanie…</option>';
-        loadGfx();
-      });
-      bodyG.appendChild(gfxLoadBtn);
+      var gfxHost = d.createElement('div'); gfxHost.style.cssText = 'margin-top:10px;';
       bodyG.appendChild(gfxHost);
       body.appendChild(cardG);
 
-      var gfxByLang = {};
-      var gfxShops = {};
-      var gfxLoaded = false;
+      var GW = (typeof getIframeWin === 'function') ? getIframeWin() : window;
+      var GCTX = [{ k: 'search', t: 'Grafika wyświetlana na liście towarów' }, { k: 'projector', t: 'Grafika wyświetlana na karcie towaru' }];
+      var gfxType = {};      // lang -> shop -> {search,projector}
+      var shopsByLang = {};  // lang -> [shopIdx]
+      langs.forEach(function (lg) {
+        var ld = dt.langData[lg] || {};
+        var sset = {};
+        ['icon_search', 'icon_projector'].forEach(function (kk) {
+          if (ld[kk] && typeof ld[kk] === 'object') Object.keys(ld[kk]).forEach(function (sh) { sset[sh] = true; });
+        });
+        var shops = Object.keys(sset).sort(function (a, b) { return (parseInt(a, 10) || 0) - (parseInt(b, 10) || 0); });
+        shopsByLang[lg] = shops;
+        gfxType[lg] = {};
+        shops.forEach(function (sh) {
+          function pick(cx) {
+            var tk = 'icon_' + cx + '_type';
+            var v = ld[tk] && ld[tk][sh];
+            return (v === 'img' || v === 'img_rwd') ? v : 'img_rwd';
+          }
+          gfxType[lg][sh] = { search: pick('search'), projector: pick('projector') };
+        });
+      });
 
+      function gfxUploadPath(cx, sh, sizeSuffix) {
+        return '/data/lang/' + curLang + '/traits/gfx/' + cx + '/' + nodeId + '_' + sh + (sizeSuffix || '');
+      }
+      function mkUploadBtn(label, cx, sh, sizeSuffix) {
+        var b = d.createElement('button');
+        b.type = 'button'; b.className = 'tp-btn-modal-secondary';
+        b.style.cssText = 'font-size:12px;padding:6px 12px;';
+        b.textContent = label;
+        b.addEventListener('click', function () {
+          try {
+            if (GW && GW.IAI && GW.IAI.PictureUploader) {
+              GW.IAI.PictureUploader.select(b, '/panel/ajax/parameters.php', gfxUploadPath(cx, sh, sizeSuffix));
+            } else { alert('Uploader panelu (IAI.PictureUploader) niedostępny w tym kontekście.'); }
+          } catch (e) { alert('Błąd uploadu: ' + (e.message || e)); }
+        });
+        return b;
+      }
+      function renderCtxBlock(host, cx, label, sh) {
+        var ld = dt.langData[curLang] || {};
+        var card = d.createElement('div');
+        card.style.cssText = 'border:1px solid #eef0f4;border-radius:10px;margin-bottom:10px;overflow:hidden;';
+        var hd = d.createElement('div');
+        hd.style.cssText = 'padding:9px 14px;background:#fafbfc;border-bottom:1px solid #eef0f4;font-size:12px;font-weight:700;color:#667085;text-transform:uppercase;letter-spacing:.05em;';
+        hd.textContent = label;
+        card.appendChild(hd);
+        var bd = d.createElement('div'); bd.style.cssText = 'padding:6px 14px 12px;';
+        // wiersz: Typ grafiki
+        var rt = d.createElement('div'); rt.className = 'tp-se-row';
+        var rl = d.createElement('span'); rl.className = 'tp-se-lbl'; rl.textContent = 'Typ grafiki';
+        var rc = d.createElement('div'); rc.className = 'tp-se-ctl';
+        var sel = d.createElement('select');
+        sel.innerHTML = '<option value="img_rwd">Obrazek (trzy wielkości — RWD)</option><option value="img">Obrazek (jedna wielkość — niezalecany, chyba że SVG)</option>';
+        sel.value = (gfxType[curLang][sh] && gfxType[curLang][sh][cx]) || 'img_rwd';
+        rc.appendChild(sel);
+        rt.appendChild(rl); rt.appendChild(rc);
+        bd.appendChild(rt);
+        var slots = d.createElement('div'); slots.style.cssText = 'padding-top:10px;';
+        function renderSlots() {
+          slots.innerHTML = '';
+          var cur = (ld['icon_' + cx] && ld['icon_' + cx][sh]) ? String(ld['icon_' + cx][sh]) : '';
+          if (cur) {
+            var pv = d.createElement('div');
+            pv.style.cssText = 'display:flex;align-items:center;gap:10px;margin-bottom:10px;';
+            pv.innerHTML = '<span style="font-size:12px;color:#98a2b3;">Aktualna grafika:</span>' +
+              '<img src="' + escapeHtml(cur) + '" style="max-height:48px;max-width:160px;border:1px solid #e0e3ea;border-radius:6px;background:#fff;">';
+            slots.appendChild(pv);
+          } else {
+            var nb = d.createElement('div');
+            nb.style.cssText = 'font-size:12px;color:#98a2b3;margin-bottom:10px;';
+            nb.textContent = 'Brak grafiki dla tego sklepu.';
+            slots.appendChild(nb);
+          }
+          var rows;
+          if (sel.value === 'img_rwd') {
+            rows = [{ s: '_desktop', l: 'Wgraj plik (komputer)' }, { s: '_tablet', l: 'Wgraj plik (tablet)' }, { s: '_mobile', l: 'Wgraj plik (smartfon)' }];
+          } else {
+            rows = [{ s: '', l: 'Wgraj plik' }];
+          }
+          rows.forEach(function (r) {
+            var row = d.createElement('div');
+            row.style.cssText = 'display:flex;align-items:center;gap:10px;padding:4px 0;';
+            var rlab = d.createElement('span');
+            rlab.style.cssText = 'font-size:12.5px;color:#344054;min-width:150px;';
+            rlab.textContent = r.l.replace('Wgraj plik', 'Nowa grafika') + (sel.value === 'img_rwd' ? '' : ':');
+            row.appendChild(rlab);
+            row.appendChild(mkUploadBtn('Wgraj plik', cx, sh, r.s));
+            slots.appendChild(row);
+          });
+        }
+        sel.addEventListener('change', function () {
+          gfxType[curLang][sh][cx] = sel.value;
+          renderSlots();
+        });
+        renderSlots();
+        bd.appendChild(slots);
+        card.appendChild(bd);
+        host.appendChild(card);
+      }
+      function renderGfxBody(sh) {
+        gfxHost.innerHTML = '';
+        if (!sh) {
+          gfxHost.innerHTML = '<div style="font-size:12.5px;color:#98a2b3;padding:6px 0;">Dla języka „' + escapeHtml(getLangName(curLang)) + '" brak sklepów z dostępną grafiką.</div>';
+          return;
+        }
+        GCTX.forEach(function (c) { renderCtxBlock(gfxHost, c.k, c.t, sh); });
+      }
       function renderShopSelect() {
-        var list = gfxShops[curLang] || [];
-        if (!gfxLoaded) { gfxShopSel.innerHTML = '<option>Wczytywanie…</option>'; gfxShopSel.disabled = true; return; }
-        if (!list.length) {
+        var shops = shopsByLang[curLang] || [];
+        if (!shops.length) {
           gfxShopSel.innerHTML = '<option>Brak sklepów z językiem ' + escapeHtml(getLangName(curLang)) + '</option>';
-          gfxShopSel.disabled = true; return;
+          gfxShopSel.disabled = true;
+          renderGfxBody(null);
+          return;
         }
         gfxShopSel.disabled = false;
-        gfxShopSel.innerHTML = list.map(function (s, i) {
-          return '<option value="' + i + '">' + escapeHtml(s.domain) + '</option>';
+        gfxShopSel.innerHTML = shops.map(function (s) {
+          return '<option value="' + s + '">Sklep ' + s + '</option>';
         }).join('');
-        selectShop(0);
+        gfxShopSel.value = shops[0];
+        renderGfxBody(shops[0]);
       }
-      function selectShop(i) {
-        var list = gfxShops[curLang] || [];
-        if (!list[i]) return;
-        gfxShopSel.value = String(i);
-        try { if (list[i].anchor) list[i].anchor.click(); } catch (e) {}
-      }
-      gfxShopSel.addEventListener('change', function () { selectShop(parseInt(gfxShopSel.value, 10) || 0); });
-
-      function showGfxForLang(lg) {
-        Object.keys(gfxByLang).forEach(function (k) {
-          if (gfxByLang[k]) gfxByLang[k].style.display = (k === lg) ? '' : 'none';
-        });
-        renderShopSelect();
-      }
-
-      function loadGfx() {
-        if (gfxLoaded) return;
-        var idoc = (typeof getIframeDoc === 'function') ? getIframeDoc() : doc;
-        // CSS-owe ukrycie kontenerów dialogów (różne implementacje: jQuery UI / YUI)
-        var sty = idoc.getElementById('tp-gfx-hide');
-        if (!sty) {
-          sty = idoc.createElement('style');
-          sty.id = 'tp-gfx-hide';
-          sty.textContent = '.tp-gfx-killed{position:fixed !important;left:-99999px !important;top:-99999px !important;width:1px !important;height:1px !important;opacity:0 !important;visibility:hidden !important;pointer-events:none !important;z-index:-1 !important;}';
-          idoc.head.appendChild(sty);
-        }
-        // Aktywne, natychmiastowe chowanie natywnego dialogu edycji (zanim mignie)
-        function killNativeDialog() {
-          var f = idoc.querySelector('form[id^="form_editEl_"]');
-          if (f) {
-            var c = f;
-            while (c && c.parentElement && c.parentElement !== idoc.body && c.parentElement.tagName !== 'BODY') c = c.parentElement;
-            if (c && c !== idoc.body && !c.classList.contains('tp-gfx-killed')) c.classList.add('tp-gfx-killed');
-          }
-          // ukryj ewentualną maskę/zaciemnienie i popup opisu
-          var ld = idoc.querySelectorAll('[id^="longdesc_edit_window"], .yui3-widget-mask, .ui-widget-overlay, .mask');
-          ld.forEach(function (n) { if (!n.classList.contains('tp-gfx-killed')) n.classList.add('tp-gfx-killed'); });
-        }
-        var killIv = setInterval(killNativeDialog, 25);
-        function stopKill() { clearInterval(killIv); }
-        function fallbackNative() {
-          stopKill();
-          try {
-            if (sty && sty.parentNode) sty.parentNode.removeChild(sty);
-            idoc.querySelectorAll('.tp-gfx-killed').forEach(function (n) { n.classList.remove('tp-gfx-killed'); });
-          } catch (e) {}
-          gfxShopSel.innerHTML = '<option>edytor natywny</option>'; gfxShopSel.disabled = true;
-          try { if (gfxLoadBtn && gfxLoadBtn.parentNode) gfxLoadBtn.remove(); } catch (e) {}
-          gfxHost.innerHTML = '';
-          var b = d.createElement('button');
-          b.type = 'button'; b.className = 'tp-btn-modal-secondary'; b.style.cssText = 'margin:4px 0;';
-          b.textContent = 'Otwórz natywny edytor grafik';
-          b.addEventListener('click', function () {
-            var nm2 = idoc.getElementById('showMenuSub_' + nodeId); if (nm2) nm2.click();
-            setTimeout(function () { var e2 = idoc.getElementById('editEl_' + nodeId); if (e2) e2.click(); }, 250);
-          });
-          var hint = d.createElement('div');
-          hint.style.cssText = 'font-size:12px;color:#98a2b3;margin-top:6px;';
-          hint.textContent = 'Wbudowany edytor grafik chwilowo niedostępny — użyj natywnego (otworzy się osobne okno panelu).';
-          gfxHost.appendChild(b); gfxHost.appendChild(hint);
-        }
-        // Faza 1: otwórz natywną edycję (retry, czekaj na dokładny editEl_<id>)
-        var p1 = 0;
-        var ivOpen = setInterval(function () {
-          p1++;
-          var nm = idoc.getElementById('showMenuSub_' + nodeId);
-          if (nm) { try { nm.click(); } catch (e) {} }
-          var edl = idoc.getElementById('editEl_' + nodeId);
-          if (edl) {
-            clearInterval(ivOpen);
-            try { edl.click(); } catch (e) {}
-            killNativeDialog();
-            phase2();
-          } else if (p1 > 24) { // ~3s
-            clearInterval(ivOpen);
-            fallbackNative();
-          }
-        }, 120);
-
-        function phase2() {
-          var tries = 0;
-          var iv = setInterval(function () {
-            tries++;
-            killNativeDialog();
-            var first = langs.map(function (l) { return idoc.getElementById('fg_id_shopsTr_' + l); }).filter(Boolean)[0];
-            if (first || tries > 40) {
-              clearInterval(iv);
-              if (!first) { fallbackNative(); return; }
-              var nativeForm = idoc.querySelector('form[id^="form_editEl_"]');
-              langs.forEach(function (lg) {
-                var g = idoc.getElementById('fg_id_shopsTr_' + lg);
-                var cont = d.createElement('div');
-                cont.className = 'tp-gfx-native';
-                cont.style.display = (lg === curLang) ? '' : 'none';
-                if (g) {
-                  cont.appendChild(g);
-                  var anchors = g.querySelectorAll('ul.yui3-tabview-list li a, .yui3-tabview-list > li > a');
-                  gfxShops[lg] = [].map.call(anchors, function (a) {
-                    return { domain: (a.textContent || '').trim(), anchor: a };
-                  });
-                } else {
-                  cont.innerHTML = '<div style="color:#98a2b3;font-size:12px;padding:8px">Brak grafik dla języka ' + escapeHtml(getLangName(lg)) + '</div>';
-                  gfxShops[lg] = [];
-                }
-                gfxByLang[lg] = cont;
-                gfxHost.appendChild(cont);
-              });
-              try {
-                var dlg = nativeForm && (nativeForm.closest('.ui-dialog') || (nativeForm.parentElement && nativeForm.parentElement.classList.contains('tp-gfx-killed') ? nativeForm.parentElement : null));
-                if (dlg && dlg.parentNode) dlg.parentNode.removeChild(dlg);
-                else idoc.querySelectorAll('.tp-gfx-killed').forEach(function (n) { if (n.parentNode) n.parentNode.removeChild(n); });
-              } catch (e) {}
-              try { idoc.querySelectorAll('[id^="longdesc_edit_window"]').forEach(function (n) { n.remove(); }); } catch (e) {}
-              if (sty && sty.parentNode) sty.parentNode.removeChild(sty);
-              stopKill();
-              try { if (gfxLoadBtn && gfxLoadBtn.parentNode) gfxLoadBtn.remove(); } catch (e) {}
-              gfxLoaded = true;
-              showGfxForLang(curLang);
-            }
-          }, 150);
-        }
-      }
+      gfxShopSel.addEventListener('change', function () { renderGfxBody(gfxShopSel.value); });
+      function showGfxForLang() { renderShopSelect(); }
+      renderShopSelect();
 
       function stash() { if (curLang) { st[curLang].name = inN.value; st[curLang].description = edD.getValue(); } }
       function paintTabs() {
@@ -9228,7 +9206,7 @@ li.tp-row--selected > div {
           t.classList.toggle('checked', t.dataset.lang === curLang);
         });
       }
-      function loadLang(lg) { curLang = lg; inN.value = st[lg].name; edD.setValue(st[lg].description); paintTabs(); if (gfxLoaded) showGfxForLang(lg); }
+      function loadLang(lg) { curLang = lg; inN.value = st[lg].name; edD.setValue(st[lg].description); paintTabs(); showGfxForLang(); }
       [].forEach.call(tabs.children, function (t) {
         t.addEventListener('click', function () { stash(); loadLang(t.dataset.lang); inN.focus(); });
       });
@@ -9256,17 +9234,16 @@ li.tp-row--selected > div {
         var nameBody = 'action=setSettings&id=' + encodeURIComponent(nodeId) + '&menuSection=true';
         langs.forEach(function (lg) { nameBody += '&names[' + lg + ']=' + encodeURIComponent(st[lg].name); });
         // v4.6.6: typy grafik z natywnych radiów (icon_type_<lang>_<shop>_<ctx>)
-        if (gfxLoaded) {
-          Object.keys(gfxByLang).forEach(function (lg) {
-            var cont = gfxByLang[lg];
-            if (!cont) return;
-            cont.querySelectorAll('input[type="radio"]:checked').forEach(function (r) {
-              var m = /^icon_type_([a-z]{3})_(\d+)_(search|projector)$/.exec(r.name || '');
-              if (!m) return;
-              nameBody += '&icon_' + m[3] + '_type[' + m[1] + '][' + m[2] + ']=' + encodeURIComponent(r.value);
+        // v4.6.10: typy grafik z naszego stanu gfxType
+        langs.forEach(function (lg) {
+          var sh = gfxType[lg] || {};
+          Object.keys(sh).forEach(function (shop) {
+            ['search', 'projector'].forEach(function (cx) {
+              var v = sh[shop] && sh[shop][cx];
+              if (v) nameBody += '&icon_' + cx + '_type[' + lg + '][' + shop + ']=' + encodeURIComponent(v);
             });
           });
-        }
+        });
         var descLangs = langs.filter(function (lg) { return st[lg].description !== st[lg].oDesc; });
         fetchAjax(nameBody).then(function (r1) {
           if (r1 && r1.errno && r1.errno !== 0) throw new Error(r1.message || ('errno ' + r1.errno));
@@ -9438,7 +9415,7 @@ li.tp-row--selected > div {
       ],
       pagination: { perPage: 50 },
       footer: {
-        version: 'v4.6.9',
+        version: 'v4.6.10',
         links: []
       }
     });
