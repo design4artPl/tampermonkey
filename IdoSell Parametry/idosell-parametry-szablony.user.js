@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         IdoSell - Parametry Toolbar
 // @namespace    https://idosell.com/
-// @version      4.6.13
+// @version      4.6.14
 // @description  Toolbar do grupowej edycji parametrow: panel-pro v1.2.4 inline + new-panel support, checkboxy, zaznaczanie, rozwijanie/zwijanie, grupowe usuwanie/edycja, import CSV
 // @author       SyncOffer
 // @match        https://*.iai-shop.com/panel/app/parameters.php*
@@ -8331,7 +8331,7 @@ li.tp-row--selected > div {
       },
       pagination: { perPage: loadPerPagePref('Sec') },
       footer: {
-        version: 'v4.6.13',
+        version: 'v4.6.14',
         links: []
       }
     });
@@ -9097,6 +9097,7 @@ li.tp-row--selected > div {
       var GIDOC = (typeof getIframeDoc === 'function') ? getIframeDoc() : (doc || document);
       var GCTX = [{ k: 'search', t: 'Grafika wyświetlana na liście towarów' }, { k: 'projector', t: 'Grafika wyświetlana na karcie towaru' }];
       var gfxType = {};   // lang -> shop -> {search,projector}
+      var gfxEnable = {}; // lang -> shop -> {search,projector} : 'n'|'y_manual'|'y_folder'
       var gfxData = {};   // lang -> { shops:[{idx,domain}], paths:{shop:{ctx:{single,desktop,tablet,mobile}}}, img:{shop:{ctx:url}} }
       var gfxReady = false;
 
@@ -9119,11 +9120,15 @@ li.tp-row--selected > div {
               entry.shops.forEach(function (sp) {
                 var sh = String(sp.idx);
                 gfxType[lg][sh] = gfxType[lg][sh] || {};
+                gfxEnable[lg] = gfxEnable[lg] || {};
+                gfxEnable[lg][sh] = gfxEnable[lg][sh] || {};
                 var rsel = g.querySelector('input[name="icon_type_' + lg + '_' + sh + '_' + cx + '"]:checked');
                 gfxType[lg][sh][cx] = (rsel && (rsel.value === 'img' || rsel.value === 'img_rwd')) ? rsel.value : 'img_rwd';
                 var im = g.querySelector('#img_' + cx + '_' + nodeId + '_' + lg + '_' + sh + ', img[id="img_' + cx + '_' + nodeId + '_' + lg + '_' + sh + '"]');
                 if (!entry.img[sh]) entry.img[sh] = {};
                 entry.img[sh][cx] = im ? (im.getAttribute('src') || '') : '';
+                // istniejąca grafika => kontekst domyślnie „Włączona — wskaż grafiki"
+                gfxEnable[lg][sh][cx] = (entry.img[sh][cx]) ? 'y_manual' : 'n';
                 if (!entry.paths[sh]) entry.paths[sh] = {};
                 entry.paths[sh][cx] = { single: null, desktop: null, tablet: null, mobile: null };
               });
@@ -9186,24 +9191,123 @@ li.tp-row--selected > div {
         row.appendChild(lab); row.appendChild(btn); row.appendChild(stt);
         return row;
       }
+      function mkFolderUpload(cx, sh) {
+        var wrap = d.createElement('div');
+        var guide = d.createElement('div');
+        guide.style.cssText = 'font-size:12px;color:#667085;background:#f8f9fb;border:1px solid #e8ebf0;border-radius:8px;padding:10px 12px;margin-bottom:8px;line-height:1.5;';
+        guide.innerHTML = '<strong>Schemat nazw plików:</strong> <code>' + nodeId + '_' + sh + '[_desktop|_tablet|_mobile].jpg</code>' +
+          '<br>Pliki z folderu zostaną dopasowane do slotów po nazwie (brak sufiksu = jedna wielkość).';
+        wrap.appendChild(guide);
+        var fi = d.createElement('input');
+        fi.type = 'file'; fi.setAttribute('webkitdirectory', ''); fi.setAttribute('multiple', '');
+        fi.style.cssText = 'font-size:12px;margin-bottom:8px;';
+        wrap.appendChild(fi);
+        var mapBox = d.createElement('div');
+        mapBox.style.cssText = 'display:none;font-size:12px;color:#344054;background:#fff;border:1px solid #e8ebf0;border-radius:8px;padding:10px 12px;';
+        wrap.appendChild(mapBox);
+        function classify(name) {
+          var n = name.toLowerCase();
+          if (/_desktop\.[a-z0-9]+$/.test(n)) return 'desktop';
+          if (/_tablet\.[a-z0-9]+$/.test(n)) return 'tablet';
+          if (/_mobile\.[a-z0-9]+$/.test(n)) return 'mobile';
+          return 'single';
+        }
+        fi.addEventListener('change', function () {
+          var files = [].slice.call(fi.files || []).filter(function (f) { return /^image\//.test(f.type); });
+          if (!files.length) { mapBox.style.display = 'none'; return; }
+          mapBox.style.display = '';
+          var rwd = (gfxType[curLang][sh] && gfxType[curLang][sh][cx]) === 'img_rwd';
+          var rows = [];
+          files.forEach(function (f) {
+            var slot = classify(f.name);
+            if (!rwd) slot = 'single';
+            rows.push({ f: f, slot: slot });
+          });
+          var html = '<strong>Dopasowanie:</strong><div style="margin-top:6px;display:flex;flex-direction:column;gap:4px;">';
+          rows.forEach(function (r) {
+            html += '<div>✓ ' + escapeHtml(r.slot) + ' ← ' + escapeHtml(r.f.name) + ' (' + (r.f.size / 1024).toFixed(1) + ' KB)</div>';
+          });
+          html += '</div>';
+          mapBox.innerHTML = html;
+          var go = d.createElement('button');
+          go.type = 'button'; go.className = 'tp-btn-modal-primary'; go.style.cssText = 'margin-top:10px;font-size:12px;padding:6px 14px;';
+          go.textContent = 'Wgraj dopasowane (' + rows.length + ')';
+          go.addEventListener('click', function () {
+            go.disabled = true; go.textContent = 'Wgrywanie…';
+            (function next(i) {
+              if (i >= rows.length) { go.textContent = 'Gotowe ✓'; if (_panel) _panel.showStatus('Wgrano ' + rows.length + ' grafik z katalogu'); return; }
+              var r = rows[i];
+              uploadOneFile(r.f, cx, sh, r.slot).then(function () { next(i + 1); })
+                .catch(function (e) { go.disabled = false; go.textContent = 'Wgraj dopasowane (' + rows.length + ')'; alert('Błąd wgrywania „' + r.f.name + '": ' + (e.message || e)); });
+            })(0);
+          });
+          mapBox.appendChild(go);
+        });
+        return wrap;
+      }
+      // Port mechanizmu z Menu: chunk upload -> /panel/ajax/uploadLargeFile.php, potem skojarzenie przez gate
+      function uploadOneFile(file, cx, sh, kind) {
+        var fn = file.name.replace(/\.jpeg$/i, '.jpg');
+        var url = '/panel/ajax/uploadLargeFile.php?largeFileMode=1&fileSize=' + file.size +
+          '&fileName=' + encodeURIComponent(fn) + '&dir=&offset=0&chunkSize=' + file.size;
+        return file.arrayBuffer().then(function (ab) {
+          return fetch(url, { method: 'POST', credentials: 'same-origin', body: ab });
+        }).then(function (r) { return r.json(); }).then(function (data) {
+          if (!data || data.status !== 'OK' || !data.name) throw new Error((data && data.errmsg) || 'Upload odrzucony');
+          var path = gfxPath(curLang, cx, sh, kind);
+          var body = 'completed_fileUploaderField=' + encodeURIComponent(JSON.stringify([[fn, data.name]])) +
+            '&picturePath=' + encodeURIComponent(path) +
+            '&lang=' + encodeURIComponent(curLang) + '&id=' + encodeURIComponent(nodeId) + '&shop=' + encodeURIComponent(sh);
+          return fetch('/panel/ajax/parameters.php?picturePath=' + encodeURIComponent(path), {
+            method: 'POST', credentials: 'same-origin',
+            headers: { 'Content-Type': 'application/x-www-form-urlencoded', 'X-Requested-With': 'XMLHttpRequest' },
+            body: body
+          });
+        }).then(function (r) { return r.text(); });
+      }
+
       function renderCtxBlock(host, cx, label, sh) {
+        gfxType[curLang] = gfxType[curLang] || {};
+        gfxType[curLang][sh] = gfxType[curLang][sh] || {};
+        gfxEnable[curLang] = gfxEnable[curLang] || {};
+        gfxEnable[curLang][sh] = gfxEnable[curLang][sh] || {};
+        if (!gfxEnable[curLang][sh][cx]) gfxEnable[curLang][sh][cx] = 'n';
+
         var hd = d.createElement('div'); hd.className = 'tp-gfx-slot-header'; hd.textContent = label;
         host.appendChild(hd);
 
+        // Selektor stanu: Wyłączona / Włączona — wskaż grafiki / Włączona — wgraj z katalogu
+        var re = d.createElement('div'); re.className = 'tp-gfx-subfield';
+        var rel = d.createElement('span'); rel.className = 'tp-se-lbl'; rel.textContent = 'Grafika';
+        var rec = d.createElement('div'); rec.className = 'tp-se-ctl';
+        var enSel = d.createElement('select');
+        enSel.innerHTML = '<option value="n">Wyłączona</option>' +
+          '<option value="y_manual">Włączona — wskaż grafiki</option>' +
+          '<option value="y_folder">Włączona — wgraj z katalogu</option>';
+        enSel.value = gfxEnable[curLang][sh][cx];
+        rec.appendChild(enSel);
+        re.appendChild(rel); re.appendChild(rec);
+        host.appendChild(re);
+
+        // Typ grafiki (warunkowy)
         var rt = d.createElement('div'); rt.className = 'tp-gfx-subfield';
         var rl = d.createElement('span'); rl.className = 'tp-se-lbl'; rl.textContent = 'Typ grafiki';
         var rc = d.createElement('div'); rc.className = 'tp-se-ctl';
         var sel = d.createElement('select');
         sel.innerHTML = '<option value="img_rwd">Obrazek (trzy wielkości — RWD)</option><option value="img">Obrazek (jedna wielkość — niezalecany, chyba że SVG)</option>';
-        sel.value = (gfxType[curLang][sh] && gfxType[curLang][sh][cx]) || 'img_rwd';
+        sel.value = gfxType[curLang][sh][cx] || 'img_rwd';
         rc.appendChild(sel);
         rt.appendChild(rl); rt.appendChild(rc);
         host.appendChild(rt);
 
         var slots = d.createElement('div'); slots.className = 'tp-gfx-slot-upload';
         host.appendChild(slots);
+
         function renderSlots() {
           slots.innerHTML = '';
+          var mode = enSel.value;
+          rt.style.display = (mode === 'n') ? 'none' : '';
+          if (mode === 'n') return;
           var cur = (gfxData[curLang] && gfxData[curLang].img[sh] && gfxData[curLang].img[sh][cx]) || '';
           if (cur) {
             var ex = d.createElement('div'); ex.className = 'tp-gfx-existing';
@@ -9215,13 +9319,20 @@ li.tp-row--selected > div {
               '</span>';
             slots.appendChild(ex);
           }
+          if (mode === 'y_folder') {
+            slots.appendChild(mkFolderUpload(cx, sh));
+            return;
+          }
           var rows = (sel.value === 'img_rwd')
             ? [{ k: 'desktop', l: 'Nowa grafika (komputer):' }, { k: 'tablet', l: 'Nowa grafika (tablet):' }, { k: 'mobile', l: 'Nowa grafika (smartfon):' }]
             : [{ k: 'single', l: 'Nowa grafika:' }];
           rows.forEach(function (r) { slots.appendChild(mkUploadRow(r.l, cx, sh, r.k)); });
         }
+        enSel.addEventListener('change', function () {
+          gfxEnable[curLang][sh][cx] = enSel.value;
+          renderSlots();
+        });
         sel.addEventListener('change', function () {
-          gfxType[curLang][sh] = gfxType[curLang][sh] || {};
           gfxType[curLang][sh][cx] = sel.value;
           renderSlots();
         });
@@ -9342,11 +9453,13 @@ li.tp-row--selected > div {
         var nameBody = 'action=setSettings&id=' + encodeURIComponent(nodeId) + '&menuSection=true';
         langs.forEach(function (lg) { nameBody += '&names[' + lg + ']=' + encodeURIComponent(st[lg].name); });
         // v4.6.6: typy grafik z natywnych radiów (icon_type_<lang>_<shop>_<ctx>)
-        // v4.6.10: typy grafik z naszego stanu gfxType
+        // v4.6.14: typ grafiki wysyłany tylko gdy kontekst włączony (Wyłączona = pomijamy)
         langs.forEach(function (lg) {
           var sh = gfxType[lg] || {};
           Object.keys(sh).forEach(function (shop) {
             ['search', 'projector'].forEach(function (cx) {
+              var en = gfxEnable[lg] && gfxEnable[lg][shop] && gfxEnable[lg][shop][cx];
+              if (!en || en === 'n') return;
               var v = sh[shop] && sh[shop][cx];
               if (v) nameBody += '&icon_' + cx + '_type[' + lg + '][' + shop + ']=' + encodeURIComponent(v);
             });
@@ -9523,7 +9636,7 @@ li.tp-row--selected > div {
       ],
       pagination: { perPage: 50 },
       footer: {
-        version: 'v4.6.13',
+        version: 'v4.6.14',
         links: []
       }
     });
