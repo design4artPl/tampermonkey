@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         IdoSell - Parametry Toolbar
 // @namespace    https://idosell.com/
-// @version      4.6.14
+// @version      4.6.15
 // @description  Toolbar do grupowej edycji parametrow: panel-pro v1.2.4 inline + new-panel support, checkboxy, zaznaczanie, rozwijanie/zwijanie, grupowe usuwanie/edycja, import CSV
 // @author       SyncOffer
 // @match        https://*.iai-shop.com/panel/app/parameters.php*
@@ -8331,7 +8331,7 @@ li.tp-row--selected > div {
       },
       pagination: { perPage: loadPerPagePref('Sec') },
       footer: {
-        version: 'v4.6.14',
+        version: 'v4.6.15',
         links: []
       }
     });
@@ -9046,6 +9046,18 @@ li.tp-row--selected > div {
         tabs.appendChild(t);
       });
       bodyL.appendChild(tabs);
+      var copyRow = d.createElement('div');
+      copyRow.style.cssText = 'display:flex;align-items:center;gap:10px;padding:8px 0 2px;flex-wrap:wrap;';
+      var copyBtn = d.createElement('button');
+      copyBtn.type = 'button'; copyBtn.className = 'tp-btn-modal-secondary';
+      copyBtn.style.cssText = 'font-size:12px;padding:6px 14px;';
+      copyBtn.innerHTML = '<span class="material-symbols-outlined" style="font-size:15px;vertical-align:-3px;margin-right:5px">content_copy</span>Powiel aktywny język na wszystkie';
+      var copyHint = d.createElement('span');
+      copyHint.style.cssText = 'font-size:11.5px;color:#98a2b3;';
+      copyHint.textContent = 'Kopiuje nazwę, opis i ustawienia grafik z bieżącego języka do pozostałych.';
+      copyBtn.addEventListener('click', function () { copyActiveLangToAll(); });
+      copyRow.appendChild(copyBtn); copyRow.appendChild(copyHint);
+      bodyL.appendChild(copyRow);
       cardL.appendChild(bodyL);
       body.appendChild(cardL);
 
@@ -9426,6 +9438,37 @@ li.tp-row--selected > div {
         });
       }
       function loadLang(lg) { curLang = lg; inN.value = st[lg].name; edD.setValue(st[lg].description); paintTabs(); showGfxForLang(); }
+      function copyActiveLangToAll() {
+        stash();
+        var src = curLang;
+        var others = langs.filter(function (l) { return l !== src; });
+        if (!others.length) { if (_panel) _panel.showStatus('Tylko jeden język — nie ma dokąd kopiować'); return; }
+        showConfirmModal(doc, {
+          icon: 'content_copy',
+          title: 'Powielić język?',
+          subtitle: 'z „' + escapeHtml(getLangName(src)) + '" do ' + others.length + ' pozostałych',
+          message: 'Nazwa, opis i ustawienia grafik (typ + stan: Wyłączona/Wskaż/Z katalogu) zostaną nadpisane we wszystkich pozostałych językach. Same pliki grafik nie są kopiowane między językami — kopiowane są tylko ustawienia.',
+          okLabel: 'Powiel',
+          onOk: function () {
+            others.forEach(function (lg) {
+              st[lg].name = st[src].name;
+              st[lg].description = st[src].description;
+              // grafiki: kopiuj typ + stan tylko dla sklepów istniejących w języku docelowym
+              var tgtShops = (gfxData[lg] && gfxData[lg].shops) ? gfxData[lg].shops.map(function (s) { return String(s.idx); }) : Object.keys(gfxType[src] || {});
+              gfxType[lg] = gfxType[lg] || {};
+              gfxEnable[lg] = gfxEnable[lg] || {};
+              tgtShops.forEach(function (sh) {
+                var sT = (gfxType[src] && gfxType[src][sh]) || {};
+                var sE = (gfxEnable[src] && gfxEnable[src][sh]) || {};
+                gfxType[lg][sh] = { search: sT.search || 'img_rwd', projector: sT.projector || 'img_rwd' };
+                gfxEnable[lg][sh] = { search: sE.search || 'n', projector: sE.projector || 'n' };
+              });
+            });
+            loadLang(src);
+            if (_panel) _panel.showStatus('Powielono język „' + getLangName(src) + '" do pozostałych (' + others.length + ')');
+          }
+        });
+      }
       [].forEach.call(tabs.children, function (t) {
         t.addEventListener('click', function () { stash(); loadLang(t.dataset.lang); inN.focus(); });
       });
@@ -9636,7 +9679,7 @@ li.tp-row--selected > div {
       ],
       pagination: { perPage: 50 },
       footer: {
-        version: 'v4.6.14',
+        version: 'v4.6.15',
         links: []
       }
     });
