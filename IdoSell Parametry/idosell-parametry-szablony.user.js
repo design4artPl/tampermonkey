@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         IdoSell - Parametry Toolbar
 // @namespace    https://idosell.com/
-// @version      4.6.12
+// @version      4.6.13
 // @description  Toolbar do grupowej edycji parametrow: panel-pro v1.2.4 inline + new-panel support, checkboxy, zaznaczanie, rozwijanie/zwijanie, grupowe usuwanie/edycja, import CSV
 // @author       SyncOffer
 // @match        https://*.iai-shop.com/panel/app/parameters.php*
@@ -2413,10 +2413,10 @@ li.ui-draggable-disabled.tp-row-enhanced {
 .tp-se .tp-se-head .material-symbols-outlined { font-size:17px; color:#667085; opacity:.75; }
 .tp-se .tp-se-body { padding:4px 20px 10px; }
 .tp-se .lang-list { display:grid; grid-template-columns:repeat(auto-fill,minmax(140px,1fr)); gap:6px; padding:10px 0 6px; }
-.tp-se .lang-item { display:flex; align-items:center; gap:8px; padding:6px 10px; border:1px solid #e0e3ea; border-radius:8px; cursor:pointer; font-size:12.5px; color:#344054; transition:all .15s; user-select:none; background:#fff; font-family:inherit; text-align:left; }
+.tp-se .lang-item { display:flex; align-items:center; gap:8px; padding:6px 10px; border:1px solid #e0e3ea; border-radius:8px; cursor:pointer; font-size:12.5px; color:#344054; transition:all .15s; user-select:none; background:transparent; font-family:'DM Sans',system-ui,-apple-system,'Segoe UI',Roboto,sans-serif; text-align:left; }
 .tp-se .lang-item:hover { background:#fafbfd; }
 .tp-se .lang-item.checked { border:2px solid #4f8cff; padding:5px 9px; background:#f5f8ff; }
-.tp-se .lang-flag { display:inline-flex; }
+.tp-se .lang-flag { font-size:14px; }
 .tp-se .lang-name { flex:1; }
 .tp-se .lang-item input { display:none; }
 .tp-se .lang-check { width:14px; height:14px; border-radius:3px; border:1.5px solid #c6d0e0; flex-shrink:0; position:relative; }
@@ -8331,7 +8331,7 @@ li.tp-row--selected > div {
       },
       pagination: { perPage: loadPerPagePref('Sec') },
       footer: {
-        version: 'v4.6.12',
+        version: 'v4.6.13',
         links: []
       }
     });
@@ -9029,12 +9029,18 @@ li.tp-row--selected > div {
       var cardL = d.createElement('div'); cardL.className = 'tp-se-card';
       cardL.innerHTML = '<div class="tp-se-head"><span class="material-symbols-outlined">translate</span>Język edycji</div>';
       var bodyL = d.createElement('div'); bodyL.className = 'tp-se-body';
+      // emoji flagi 1:1 jak w modalu eksportu
+      var SE_LC = { pol:'PL', eng:'GB', ger:'DE', deu:'DE', fra:'FR', ces:'CZ', cze:'CZ', ukr:'UA', ita:'IT', esp:'ES', rus:'RU', por:'PT', nld:'NL', hun:'HU', swe:'SE', nor:'NO', dan:'DK', fin:'FI', rum:'RO', rom:'RO', bul:'BG', hrv:'HR', slk:'SK', slv:'SI', lit:'LT', lav:'LV', est:'EE', ara:'SA' };
+      function seFlag(code) {
+        var cc = SE_LC[code]; if (!cc) return '';
+        return String.fromCodePoint.apply(String, cc.split('').map(function (c) { return 0x1F1E6 + c.charCodeAt(0) - 65; }));
+      }
       var tabs = d.createElement('div'); tabs.className = 'lang-list';
       langs.forEach(function (lg) {
         var t = d.createElement('label');
         t.className = 'lang-item'; t.dataset.lang = lg;
         t.innerHTML = '<span class="lang-check"></span>' +
-          '<span class="lang-flag">' + getLangFlag(lg, 16) + '</span>' +
+          '<span class="lang-flag">' + seFlag(lg) + '</span>' +
           '<span class="lang-name">' + escapeHtml(getLangName(lg)) + '</span>' +
           '<input type="radio" name="tp-se-lang">';
         tabs.appendChild(t);
@@ -9517,7 +9523,7 @@ li.tp-row--selected > div {
       ],
       pagination: { perPage: 50 },
       footer: {
-        version: 'v4.6.12',
+        version: 'v4.6.13',
         links: []
       }
     });
