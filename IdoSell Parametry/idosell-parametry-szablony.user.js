@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Parametry PRO
 // @namespace    https://idosell.com/
-// @version      4.6.147
+// @version      4.6.148
 // @description  Toolbar do grupowej edycji parametrow: panel-pro v1.2.4 inline + new-panel support, checkboxy, zaznaczanie, rozwijanie/zwijanie, grupowe usuwanie/edycja, import CSV
 // @author       SyncOffer
 // @match        https://*.iai-shop.com/panel/app/parameters.php*
@@ -6918,6 +6918,12 @@ li.tp-row--selected > div {
       return String.fromCodePoint.apply(String, cc.split('').map(function (c) { return 0x1F1E6 + c.charCodeAt(0) - 65; }));
     }
     var stateLangs = COMMON_LANGS.map(function (l) { return { code: l.code, label: l.label, on: l.code === LANG }; });
+    // v4.6.148: lista sklepow z IAI.shops_list — wybor ktorych eksportowac
+    var _winSE = (typeof getIframeWin === 'function') ? getIframeWin() : window;
+    var _slSE = (_winSE && _winSE.IAI && _winSE.IAI.shops_list) ? _winSE.IAI.shops_list : [];
+    var stateShops = _slSE.length
+      ? _slSE.map(function (s) { return { code: String(s.id), label: s.name || ('Sklep ' + s.id), on: true }; })
+      : [{ code: '1', label: 'Sklep 1', on: true }];
     // v4.6.145: redesign na wzor Menu — 3 sekcje (General/SEO/Extras)
     // v4.6.146: rozbicie na granularne pola (display + filtry + typ grafiki)
     var stateGeneral = isSec ? [
@@ -7069,6 +7075,17 @@ li.tp-row--selected > div {
 
     var st = document.createElement('style'); st.textContent = CSS; shadow.appendChild(st);
 
+    // v4.6.148: lista sklepow (analogiczna struktura do langow, bez flagi)
+    function buildShopHtml() {
+      return stateShops.map(function (s) {
+        return '<label class="lang-item' + (s.on ? ' checked' : '') + '" data-shop="' + s.code + '">' +
+          '<span class="lang-check"></span>' +
+          '<span class="lang-flag">🏬</span>' +
+          '<span class="lang-name">' + s.label + ' <span style="color:#9aa0a6;font-size:11px">(' + s.code + ')</span></span>' +
+          '<input type="checkbox"' + (s.on ? ' checked' : '') + '>' +
+        '</label>';
+      }).join('');
+    }
     function buildLangHtml() {
       return stateLangs.map(function (l) {
         return '<label class="lang-item' + (l.on ? ' checked' : '') + '" data-lang="' + l.code + '">' +
@@ -7144,6 +7161,11 @@ li.tp-row--selected > div {
               '<button type="button" class="pill' + (currentScope === 'selected' ? ' active' : '') + (hasSelection ? '' : ' disabled') + '" data-scope="selected">Tylko zaznaczone' + (hasSelection ? ' (' + selCount + ')' : '') + '</button>' +
             '</div>' +
           '</div>' +
+          // v4.6.148: Sklepy PRZED jezykami (kolejnosc: scope → format → SKLEPY → jezyki → ...)
+          '<div class="sec">' +
+            '<div class="lbl-row"><div class="lbl">Sklepy</div><button type="button" class="col-toggle" data-toggle-all="shops">Odznacz</button></div>' +
+            '<div class="lang-list" data-role="shop-list">' + buildShopHtml() + '</div>' +
+          '</div>' +
           '<div class="sec">' +
             '<div class="lbl-row"><div class="lbl">Języki</div><button type="button" class="col-toggle" data-toggle-all="langs">Zaznacz</button></div>' +
             '<div class="lang-list" data-role="lang-list">' + buildLangHtml() + '</div>' +
@@ -7193,7 +7215,7 @@ li.tp-row--selected > div {
         p.classList.add('active');
       });
     });
-    shadow.querySelectorAll('.lang-item').forEach(function (item) {
+    shadow.querySelectorAll('.lang-item[data-lang]').forEach(function (item) {
       item.addEventListener('click', function (e) {
         e.preventDefault();
         var code = item.dataset.lang;
@@ -7206,11 +7228,36 @@ li.tp-row--selected > div {
         if (btn) btn.textContent = stateLangs.every(function (l) { return l.on; }) ? 'Odznacz' : 'Zaznacz';
       });
     });
+    // v4.6.148: listener dla wierszy sklepow (analogicznie jak langi)
+    shadow.querySelectorAll('.lang-item[data-shop]').forEach(function (item) {
+      item.addEventListener('click', function (e) {
+        e.preventDefault();
+        var code = item.dataset.shop;
+        var s = stateShops.find(function (x) { return x.code === code; });
+        if (!s) return;
+        s.on = !s.on;
+        item.classList.toggle('checked', s.on);
+        var cb = item.querySelector('input'); if (cb) cb.checked = s.on;
+        var btn = shadow.querySelector('[data-toggle-all="shops"]');
+        if (btn) btn.textContent = stateShops.every(function (l) { return l.on; }) ? 'Odznacz' : 'Zaznacz';
+      });
+    });
+    shadow.querySelectorAll('[data-toggle-all="shops"]').forEach(function (btn) {
+      btn.addEventListener('click', function () {
+        var newState = btn.textContent.trim() !== 'Odznacz';
+        stateShops.forEach(function (s) { s.on = newState; });
+        shadow.querySelectorAll('.lang-item[data-shop]').forEach(function (item) {
+          item.classList.toggle('checked', newState);
+          var cb = item.querySelector('input'); if (cb) cb.checked = newState;
+        });
+        btn.textContent = newState ? 'Odznacz' : 'Zaznacz';
+      });
+    });
     shadow.querySelectorAll('[data-toggle-all="langs"]').forEach(function (btn) {
       btn.addEventListener('click', function () {
         var newState = btn.textContent.trim() !== 'Odznacz';
         stateLangs.forEach(function (l) { l.on = newState; });
-        shadow.querySelectorAll('.lang-item').forEach(function (item) {
+        shadow.querySelectorAll('.lang-item[data-lang]').forEach(function (item) {
           item.classList.toggle('checked', newState);
           var cb = item.querySelector('input'); if (cb) cb.checked = newState;
         });
@@ -7306,6 +7353,8 @@ li.tp-row--selected > div {
     shadow.querySelector('[data-role="ok"]').addEventListener('click', function () {
       var langs = stateLangs.filter(function (l) { return l.on; }).map(function (l) { return l.code; });
       if (!langs.length) { alert('Wybierz przynajmniej jeden język'); return; }
+      var shops = stateShops.filter(function (s) { return s.on; }).map(function (s) { return s.code; });
+      if (!shops.length) { alert('Wybierz przynajmniej jeden sklep'); return; }
       var extras = {};
       stateExtras.forEach(function (f) { extras[f.key] = !!f.on; });
       // v4.6.145: dodaj pola general + seo do extras (jako extras.<key> = bool)
@@ -7325,7 +7374,7 @@ li.tp-row--selected > div {
       if (apiKey) { try { localStorage.setItem('tp.adminApiKey', apiKey); } catch (e) {} }
       close();
       var runner = isSec ? runSectionsExport : runExport;
-      runner(targetDoc, { scope: currentScope, format: currentFormat, langs: langs, extras: extras, apiKey: apiKey }).catch(function (e) {
+      runner(targetDoc, { scope: currentScope, format: currentFormat, langs: langs, shops: shops, extras: extras, apiKey: apiKey }).catch(function (e) {
         alert('Błąd eksportu: ' + (e.message || e));
       });
     });
@@ -7585,12 +7634,14 @@ li.tp-row--selected > div {
             var ld = await fetchAjax('action=getParameterLangData&id=' + encodeURIComponent(t.id));
             var langData = (ld && ld.data && ld.data.langData) || {};
             var icons = {};
+            var shopFilter = (opts.shops && opts.shops.length) ? opts.shops : null;
             opts.langs.forEach(function (lang) {
               var L = langData[lang] || {};
               ICON_KEYS.forEach(function (key) {
                 var perShop = L[key];
                 if (!perShop || typeof perShop !== 'object') return;
                 Object.keys(perShop).forEach(function (shop) {
+                  if (shopFilter && shopFilter.indexOf(String(shop)) < 0) return;
                   var url = perShop[shop];
                   if (!url) return;
                   if (!icons[shop]) icons[shop] = {};
@@ -7716,10 +7767,16 @@ li.tp-row--selected > div {
     }
 
     // v4.6.144: per-shop ustawienia (display + headline + listDesc + filtry per shop×lang)
+    // v4.6.148: uzywa opts.shops (wybor uzytkownika) zamiast wszystkich z IAI.shops_list
     if (extras.shopSettings) {
-      var _winE = (typeof getIframeWin === 'function') ? getIframeWin() : window;
-      var _slE = (_winE && _winE.IAI && _winE.IAI.shops_list) ? _winE.IAI.shops_list : [];
-      var allShops = _slE.length ? _slE.map(function (s) { return String(s.id); }) : ['1'];
+      var allShops;
+      if (opts.shops && opts.shops.length) {
+        allShops = opts.shops;
+      } else {
+        var _winE = (typeof getIframeWin === 'function') ? getIframeWin() : window;
+        var _slE = (_winE && _winE.IAI && _winE.IAI.shops_list) ? _winE.IAI.shops_list : [];
+        allShops = _slE.length ? _slE.map(function (s) { return String(s.id); }) : ['1'];
+      }
       var ssTargets = [];
       data.parameters.forEach(function (p) {
         p.shopSettings = {};
@@ -9287,7 +9344,7 @@ li.tp-row--selected > div {
       },
       pagination: { perPage: loadPerPagePref('Sec') },
       footer: {
-        version: 'v4.6.147',
+        version: 'v4.6.148',
         links: []
       }
     });
@@ -13531,7 +13588,7 @@ li.tp-row--selected > div {
       ],
       pagination: { perPage: 50 },
       footer: {
-        version: 'v4.6.147',
+        version: 'v4.6.148',
         links: []
       }
     });
