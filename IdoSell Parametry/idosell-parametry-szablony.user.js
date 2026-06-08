@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Parametry PRO
 // @namespace    https://idosell.com/
-// @version      4.6.184
+// @version      4.6.185
 // @description  Toolbar do grupowej edycji parametrow: panel-pro v1.2.4 inline + new-panel support, checkboxy, zaznaczanie, rozwijanie/zwijanie, grupowe usuwanie/edycja, import CSV
 // @author       SyncOffer
 // @match        https://*.iai-shop.com/panel/app/parameters.php*
@@ -5148,11 +5148,23 @@ li.tp-row--selected > div {
   async function _detachOrphanSourceParam(srcParamId, affectedProductIds, onStatus) {
     if (!srcParamId || !affectedProductIds || !affectedProductIds.length) return { detached: 0, errs: [] };
     var stillHasParam = {};
+    var nowList = [];
     try {
-      var nowList = await _getProductIdsForNode(srcParamId);
+      nowList = await _getProductIdsForNode(srcParamId);
       nowList.forEach(function (id) { stillHasParam[String(id)] = 1; });
     } catch (e) { return { detached: 0, errs: [{ msg: 'cannot refresh ' + srcParamId }] }; }
-    var orphans = affectedProductIds.filter(function (pid) { return !stillHasParam[String(pid)]; });
+    // v4.6.185: kluczowy fix — jesli natywny licznik source param = 0 (nie ma juz ZADNEJ
+    // wartosci w drzewie), to parameter→product zostaje jako "sierota" (cache w bazie).
+    // products-list?trait=srcParamId zwraca produkty (bo parameter→product istnieje)
+    // ale faktycznie sa pustymi parametrami. Detach WSZYSTKIE affected w tym przypadku.
+    var nativeCnt = (nowList && nowList.nativeCount) || 0;
+    var orphans;
+    if (nativeCnt === 0) {
+      console.log('[Parametry PRO][_detachOrphanSourceParam] srcParam=' + srcParamId + ' natywny licznik=0 → odpinam WSZYSTKIE ' + affectedProductIds.length + ' affected');
+      orphans = affectedProductIds.slice();
+    } else {
+      orphans = affectedProductIds.filter(function (pid) { return !stillHasParam[String(pid)]; });
+    }
     if (!orphans.length) return { detached: 0, errs: [] };
     var data = JSON.stringify([{ operation: 'remove', parameter: String(srcParamId) }]);
     var body = 'data=' + encodeURIComponent(data) + '&columns=' + encodeURIComponent('[]');
@@ -10348,7 +10360,7 @@ li.tp-row--selected > div {
       },
       pagination: { perPage: loadPerPagePref('Sec') },
       footer: {
-        version: 'v4.6.184',
+        version: 'v4.6.185',
         links: []
       }
     });
@@ -15139,7 +15151,7 @@ li.tp-row--selected > div {
       ],
       pagination: { perPage: 50 },
       footer: {
-        version: 'v4.6.184',
+        version: 'v4.6.185',
         links: []
       }
     });
