@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Parametry PRO
 // @namespace    https://idosell.com/
-// @version      4.6.181
+// @version      4.6.182
 // @description  Toolbar do grupowej edycji parametrow: panel-pro v1.2.4 inline + new-panel support, checkboxy, zaznaczanie, rozwijanie/zwijanie, grupowe usuwanie/edycja, import CSV
 // @author       SyncOffer
 // @match        https://*.iai-shop.com/panel/app/parameters.php*
@@ -4957,53 +4957,61 @@ li.tp-row--selected > div {
     return { ok: ok, errs: errs, verified: verified, missing: missing };
   }
 
-  // v4.6.178: robust scrape ID produktow z wielu zrodel + paginacja products-list.
-  // - products-list.php?trait= filtruje przez JOIN parameter→product AND value→product,
-  //   wiec dziala dla wartosci tylko gdy oba assignmenty istnieja (czyli PRZED merge).
-  // - numberOfOccurrence bywa zawodne (na demo37 zwraca [] mimo assignmentow).
-  // - natywny iteminfo daje LICZBE produktow (do walidacji ostrzezenia).
-  // Pobiera unie ze wszystkich zrodel + paginacja po liscie products.
+  // v4.6.182: WLASCIWY endpoint do listy produktow wartosci/parametru.
+  // Zniffowane live z natywnego UI products-list (DOM render via dataTable XHR):
+  //   POST /panel/ajax/view-manager.php?type=products&view=ajax_content
+  //   body: __iai_shop_panel[__encoding]=utf-8&trait=<id>&trait_id[0]=<id>
+  //         &current_page=<n>&sort[column]=id&sort[type]=d
+  // products-list.php?trait= w XHR zwraca tylko HTML shell (3.2MB) bez idt= bo
+  // dataTable laduje sie osobnym AJAX. To wlasciwy endpoint laduje dataTable.
   async function _getProductIdsForNode(nodeId) {
     var ids = [];
     var seen = {};
     function add(id) { var s = String(id); if (!seen[s] && /^\d+$/.test(s)) { seen[s] = 1; ids.push(s); } }
     var iWin = (typeof getIframeWin === 'function') ? getIframeWin() : null;
-    function xhrGet(url) {
+    function xhrPost(url, body) {
       return new Promise(function (resolve) {
         var xhr = iWin ? new iWin.XMLHttpRequest() : new XMLHttpRequest();
-        xhr.open('GET', url);
+        xhr.open('POST', url);
+        xhr.setRequestHeader('Content-Type', 'application/x-www-form-urlencoded');
         xhr.setRequestHeader('X-Requested-With', 'XMLHttpRequest');
         xhr.onload = function () { resolve(xhr.responseText || ''); };
         xhr.onerror = function () { resolve(''); };
-        xhr.send();
+        xhr.send(body);
       });
     }
-    // 1) products-list.php?trait= primary + paginacja jesli > 50 produktow
+    // 1) view-manager.php dataTable AJAX z paginacja
+    var url = '/panel/ajax/view-manager.php?type=products&view=ajax_content';
+    var baseBody = '__iai_shop_panel[__encoding]=utf-8&trait=' + encodeURIComponent(nodeId) +
+                   '&trait_id[0]=' + encodeURIComponent(nodeId) +
+                   '&sort[column]=id&sort[type]=d';
     try {
-      var page1 = await xhrGet('/panel/products-list.php?trait=' + encodeURIComponent(nodeId));
+      var page1 = await xhrPost(url, baseBody + '&current_page=1');
       var re = /idt=(\d+)/g, m;
       while ((m = re.exec(page1)) !== null) add(m[1]);
-      // Paginacja: szukaj 'Łącznie: N' lub 'paginacja' z totalCount
-      var totalM = page1.match(/Ł[aą]cznie[:\s]+(\d+)/i) || page1.match(/total[^\d]+(\d+)/i);
+      // Paginacja: szukaj total/lacznie/maxPages
+      var totalM = page1.match(/Ł[aą]cznie[^\d]*(\d+)/i) || page1.match(/maxPages?[^\d]*(\d+)/i);
       var totalCnt = totalM ? Number(totalM[1]) : 0;
       var perPage = 50;
       if (totalCnt > perPage && ids.length < totalCnt) {
         var pages = Math.ceil(totalCnt / perPage);
-        for (var p = 2; p <= Math.min(pages, 20); p++) {
-          var pageN = await xhrGet('/panel/products-list.php?trait=' + encodeURIComponent(nodeId) + '&page=' + p);
+        for (var p = 2; p <= Math.min(pages, 50); p++) {
+          var pageN = await xhrPost(url, baseBody + '&current_page=' + p);
           var re2 = /idt=(\d+)/g, m2;
           while ((m2 = re2.exec(pageN)) !== null) add(m2[1]);
         }
       }
     } catch (e) {}
-    // 2) numberOfOccurrence fallback
-    try {
-      var occ = await fetchAjax('action=numberOfOccurrence&id=' + encodeURIComponent(nodeId));
-      var raw = occ && occ.data ? occ.data.products : null;
-      if (Array.isArray(raw)) raw.forEach(function (p) { add(typeof p === 'object' ? (p.id || p.product_id) : p); });
-      else if (raw && typeof raw === 'object') Object.values(raw).forEach(function (p) { add(typeof p === 'object' ? (p.id || p.product_id) : p); });
-    } catch (e) {}
-    // 3) natywny licznik z DOM iteminfo (do porownania z zebrana lista)
+    // 2) numberOfOccurrence fallback (jesli dataTable z jakiegos powodu nie dziala)
+    if (!ids.length) {
+      try {
+        var occ = await fetchAjax('action=numberOfOccurrence&id=' + encodeURIComponent(nodeId));
+        var raw = occ && occ.data ? occ.data.products : null;
+        if (Array.isArray(raw)) raw.forEach(function (p) { add(typeof p === 'object' ? (p.id || p.product_id) : p); });
+        else if (raw && typeof raw === 'object') Object.values(raw).forEach(function (p) { add(typeof p === 'object' ? (p.id || p.product_id) : p); });
+      } catch (e) {}
+    }
+    // 3) natywny licznik z DOM iteminfo (do porownania)
     var nativeCnt = 0;
     try {
       var d = (typeof getIframeDoc === 'function') ? getIframeDoc() : document;
@@ -5012,12 +5020,11 @@ li.tp-row--selected > div {
         var nm = (nativeBadge.textContent || '').match(/(\d+)/);
         nativeCnt = nm ? Number(nm[1]) : 0;
         if (nativeCnt > ids.length) {
-          console.warn('[Parametry PRO][_getProductIdsForNode]', nodeId, 'natywny licznik=' + nativeCnt, 'ale zebrano tylko', ids.length, '— zawodny endpoint IdoSell, ryzyko sieroty');
+          console.warn('[Parametry PRO][_getProductIdsForNode]', nodeId, 'natywny=' + nativeCnt, 'zebrano=' + ids.length, '— sprawdz paginacje');
         }
       }
     } catch (e) {}
-    try { console.log('[Parametry PRO][_getProductIdsForNode]', nodeId, '→', ids.length, 'zebrane (native=' + nativeCnt + ')', ids); } catch (e) {}
-    // BACKWARD COMPAT: zwraca Array, ale ma .nativeCount property dla nowych callerow
+    try { console.log('[Parametry PRO][_getProductIdsForNode v4.6.182]', nodeId, '→', ids.length, 'zebrane (native=' + nativeCnt + ')', ids.slice(0, 10)); } catch (e) {}
     ids.nativeCount = nativeCnt;
     return ids;
   }
@@ -10342,7 +10349,7 @@ li.tp-row--selected > div {
       },
       pagination: { perPage: loadPerPagePref('Sec') },
       footer: {
-        version: 'v4.6.181',
+        version: 'v4.6.182',
         links: []
       }
     });
@@ -15133,7 +15140,7 @@ li.tp-row--selected > div {
       ],
       pagination: { perPage: 50 },
       footer: {
-        version: 'v4.6.181',
+        version: 'v4.6.182',
         links: []
       }
     });
