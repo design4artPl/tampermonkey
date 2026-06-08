@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Parametry PRO
 // @namespace    https://idosell.com/
-// @version      4.6.179
+// @version      4.6.180
 // @description  Toolbar do grupowej edycji parametrow: panel-pro v1.2.4 inline + new-panel support, checkboxy, zaznaczanie, rozwijanie/zwijanie, grupowe usuwanie/edycja, import CSV
 // @author       SyncOffer
 // @match        https://*.iai-shop.com/panel/app/parameters.php*
@@ -3529,7 +3529,11 @@ li.tp-row--selected > div {
       // v4.6.174: po merge — dopnij parameter→product w target dla produktow z source
       if (affectedProductsForFix.length) {
         showForceDeleteStatus(doc, 'Dopinanie parametru docelowego do ' + affectedProductsForFix.length + ' towar(ów)...');
-        await _attachParameterValueToProducts(affectedProductsForFix, tgtParentForFix, targetId);
+        var attachResMM = await _attachParameterValueToProducts(affectedProductsForFix, tgtParentForFix, targetId);
+        // v4.6.180: guided manual repair gdy attach nie zadzialal
+        if (attachResMM && attachResMM.missing && attachResMM.missing.length) {
+          _showManualRepairModal(doc, tgtParentForFix, getNodeName(doc, tgtParentForFix), targetId, sourceName, attachResMM.missing);
+        }
         // v4.6.178: odepnij source parametr z towarow ktore stracily ostatnia jego wartosc
         showForceDeleteStatus(doc, 'Sprawdzanie i odpinanie pustego parametru źródłowego...');
         await _detachOrphanSourceParam(srcParentForFix, affectedProductsForFix);
@@ -3808,7 +3812,11 @@ li.tp-row--selected > div {
       // v4.6.174: dopnij parameter→product w target dla produktow z source
       if (affectedForMove.length) {
         showForceDeleteStatus(doc, 'Dopinanie parametru docelowego do ' + affectedForMove.length + ' towar(ów)...');
-        await _attachParameterValueToProducts(affectedForMove, targetParamId, targetValueId);
+        var attachResPM = await _attachParameterValueToProducts(affectedForMove, targetParamId, targetValueId);
+        // v4.6.180: guided manual repair gdy attach nie zadzialal
+        if (attachResPM && attachResPM.missing && attachResPM.missing.length) {
+          _showManualRepairModal(doc, targetParamId, targetParamName, targetValueId, sourceName, attachResPM.missing);
+        }
         // v4.6.178: odepnij source parametr z towarow ktore stracily ostatnia jego wartosc
         showForceDeleteStatus(doc, 'Sprawdzanie i odpinanie pustego parametru źródłowego...');
         await _detachOrphanSourceParam(sourceParamId, affectedForMove);
@@ -4936,19 +4944,20 @@ li.tp-row--selected > div {
     }
     // v4.6.179: weryfikacja — po wszystkich operacjach sprawdz czy parameter→product istnieje
     // dla wszystkich produktow (przez products-list?trait=paramId). Logujmy diff.
+    var missing = [];
     try {
       var verifySet = await _getProductIdsForNode(paramId);
       var verifyMap = {};
       verifySet.forEach(function (p) { verifyMap[String(p)] = 1; });
       verified = productIds.filter(function (p) { return verifyMap[String(p)]; }).length;
-      var missing = productIds.filter(function (p) { return !verifyMap[String(p)]; });
+      missing = productIds.filter(function (p) { return !verifyMap[String(p)]; });
       if (missing.length) {
-        console.error('[Parametry PRO][_attachParameterValueToProducts] WERYFIKACJA: parametr ' + paramId + ' nadal NIE jest przypisany do', missing.length, 'towarow:', missing, '— mozliwe ze IdoSell ignoruje payload');
+        console.error('[Parametry PRO][_attachParameterValueToProducts] WERYFIKACJA: parametr ' + paramId + ' nadal NIE jest przypisany do', missing.length, 'towarow:', missing, '— IdoSell zignorowal payload, wymagana naprawa reczna');
       } else {
         console.log('[Parametry PRO][_attachParameterValueToProducts] WERYFIKACJA OK: parametr ' + paramId + ' przypisany do wszystkich ' + verified + ' towarow');
       }
     } catch (e) {}
-    return { ok: ok, errs: errs, verified: verified };
+    return { ok: ok, errs: errs, verified: verified, missing: missing };
   }
 
   // v4.6.178: robust scrape ID produktow z wielu zrodel + paginacja products-list.
@@ -5030,6 +5039,88 @@ li.tp-row--selected > div {
       return confirm(msg);
     }
     return true;
+  }
+
+  // v4.6.180: modal "Wymagana ręczna naprawa" — gdy automatyczny attach nie zadziałał
+  // (saveParametersChanges zwraca errno:0 ale nie tworzy assignmentu — odkryte live na
+  // demo37; patrz [[saveparameterschanges-cannot-create]]). Wyświetla listę produktów
+  // z linkami do edycji + instrukcją krok-po-krok.
+  function _showManualRepairModal(doc, paramId, paramName, valueId, valueName, productIds) {
+    var d = doc || (typeof getIframeDoc === 'function' ? getIframeDoc() : document);
+    var overlay = d.createElement('div'); overlay.className = 'tm-fe-overlay';
+    var modal = d.createElement('div'); modal.className = 'tm-fe-modal tm-fe-modal--wide';
+    var header = d.createElement('div'); header.className = 'tm-fe-header';
+    var icon = d.createElement('div'); icon.className = 'tm-fe-icon';
+    icon.style.background = '#fef3c7'; icon.style.borderColor = '#fcd34d';
+    icon.innerHTML = '<svg viewBox="0 0 24 24" fill="none" stroke="#d97706" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"/><line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12.01" y2="17"/></svg>';
+    var titleGroup = d.createElement('div'); titleGroup.className = 'tm-fe-title-group';
+    var h2 = d.createElement('h2'); h2.textContent = 'Wymagana ręczna naprawa';
+    var pEl = d.createElement('p'); pEl.textContent = 'Skrypt wykonał przeniesienie, ale IdoSell nie utworzył relacji parametr→towar';
+    titleGroup.appendChild(h2); titleGroup.appendChild(pEl);
+    var closeBtn = d.createElement('button'); closeBtn.type = 'button'; closeBtn.className = 'tm-fe-close';
+    closeBtn.innerHTML = '<svg viewBox="0 0 24 24" fill="none" stroke-linecap="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>';
+    header.appendChild(icon); header.appendChild(titleGroup); header.appendChild(closeBtn);
+    modal.appendChild(header);
+
+    var body = d.createElement('div'); body.className = 'tm-fe-body';
+    var info = d.createElement('div'); info.className = 'tm-fe-field-block';
+    info.style.padding = '16px 24px';
+    info.innerHTML =
+      '<div style="font-size:13.5px;color:#1a202c;line-height:1.55;">' +
+      'Operacja przeniesienia wartości „<b>' + valueName + '</b>" do parametru „<b>' + paramName + '</b>" została wykonana, ' +
+      'ale panel IdoSell nie utworzył automatycznie wiązania parametr→towar dla ' +
+      productIds.length + ' towar(ów). ' +
+      'Trzeba je dodać ręcznie:' +
+      '<ol style="margin-top:10px;padding-left:20px;line-height:1.7;">' +
+      '<li>Kliknij link <b>Edytuj</b> przy każdym towarze poniżej (otwiera się w nowej karcie)</li>' +
+      '<li>Przewiń do sekcji „Parametry" i kliknij <b>Dodaj parametr</b></li>' +
+      '<li>Wybierz parametr „<b>' + paramName + '</b>" i wartość „<b>' + valueName + '</b>"</li>' +
+      '<li>Kliknij <b>Zapisz</b></li>' +
+      '</ol></div>';
+    body.appendChild(info);
+
+    var listBlock = d.createElement('div'); listBlock.className = 'tm-fe-field-block';
+    listBlock.style.padding = '16px 24px';
+    var listLabel = d.createElement('div'); listLabel.className = 'tm-fe-field-label';
+    listLabel.textContent = 'Towary do naprawy (' + productIds.length + ')';
+    listBlock.appendChild(listLabel);
+    var list = d.createElement('div');
+    list.style.cssText = 'max-height:280px;overflow-y:auto;background:#fafbfc;border:1px solid #e4e7ec;border-radius:8px;padding:8px 12px;';
+    productIds.forEach(function (pid) {
+      var row = d.createElement('div');
+      row.style.cssText = 'font-size:13px;color:#1a202c;padding:6px 0;border-bottom:1px solid #eef0f3;display:flex;align-items:center;gap:10px;';
+      var label = d.createElement('span');
+      label.style.cssText = 'flex:1;font-family:monospace;color:#4a5568;';
+      label.textContent = 'ID: ' + pid;
+      var editLink = d.createElement('a');
+      editLink.href = '/panel/app/product-edit.php?idt=' + pid;
+      editLink.target = '_blank';
+      editLink.className = 'tm-fe-btn tm-fe-btn-primary';
+      editLink.style.cssText = 'padding:4px 14px;font-size:12px;text-decoration:none;display:inline-block;';
+      editLink.textContent = 'Edytuj towar →';
+      row.appendChild(label); row.appendChild(editLink);
+      list.appendChild(row);
+    });
+    listBlock.appendChild(list);
+    body.appendChild(listBlock);
+    modal.appendChild(body);
+
+    var footer = d.createElement('div'); footer.className = 'tm-fe-footer';
+    var copyBtn = d.createElement('button'); copyBtn.type = 'button'; copyBtn.className = 'tm-fe-btn tm-fe-btn-ghost'; copyBtn.textContent = 'Kopiuj listę ID';
+    var okBtn = d.createElement('button'); okBtn.type = 'button'; okBtn.className = 'tm-fe-btn tm-fe-btn-primary'; okBtn.textContent = 'Rozumiem, zamknij';
+    footer.appendChild(copyBtn); footer.appendChild(okBtn);
+    modal.appendChild(footer);
+    overlay.appendChild(modal);
+    d.body.appendChild(overlay);
+
+    function close() { overlay.remove(); }
+    closeBtn.addEventListener('click', close);
+    okBtn.addEventListener('click', close);
+    overlay.addEventListener('click', function (e) { if (e.target === overlay) close(); });
+    copyBtn.addEventListener('click', function () {
+      var txt = productIds.join('\n');
+      try { (d.defaultView || window).navigator.clipboard.writeText(txt); copyBtn.textContent = 'Skopiowane ✓'; setTimeout(function () { copyBtn.textContent = 'Kopiuj listę ID'; }, 1500); } catch (e) {}
+    });
   }
 
   // v4.6.178: po remove source value, dla kazdego produktu z affectedProducts sprawdz
@@ -6323,7 +6414,11 @@ li.tp-row--selected > div {
           // v4.6.174: domknij relacje parameter→product w target dla produktow z source
           if (affectedProducts.length) {
             statusText.textContent = 'Dopinanie parametru docelowego do ' + affectedProducts.length + ' towar(ów)...';
-            await _attachParameterValueToProducts(affectedProducts, selectedParamId, targetValueId);
+            var attachRes = await _attachParameterValueToProducts(affectedProducts, selectedParamId, targetValueId);
+            // v4.6.180: gdy IdoSell zignorowal payload, pokaz modal z guided manual repair
+            if (attachRes && attachRes.missing && attachRes.missing.length) {
+              _showManualRepairModal(doc, selectedParamId, selectedParamName, targetValueId, valName, attachRes.missing);
+            }
             // v4.6.178: odepnij source parametr od towarow ktore stracily wszystkie jego wartosci
             statusText.textContent = 'Sprawdzanie i odpinanie pustego parametru źródłowego...';
             await _detachOrphanSourceParam(sourceParamId, affectedProducts);
@@ -10246,7 +10341,7 @@ li.tp-row--selected > div {
       },
       pagination: { perPage: loadPerPagePref('Sec') },
       footer: {
-        version: 'v4.6.179',
+        version: 'v4.6.180',
         links: []
       }
     });
@@ -15037,7 +15132,7 @@ li.tp-row--selected > div {
       ],
       pagination: { perPage: 50 },
       footer: {
-        version: 'v4.6.179',
+        version: 'v4.6.180',
         links: []
       }
     });
