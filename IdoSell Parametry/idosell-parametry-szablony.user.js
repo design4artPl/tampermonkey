@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Parametry PRO
 // @namespace    https://idosell.com/
-// @version      4.6.176
+// @version      4.6.177
 // @description  Toolbar do grupowej edycji parametrow: panel-pro v1.2.4 inline + new-panel support, checkboxy, zaznaczanie, rozwijanie/zwijanie, grupowe usuwanie/edycja, import CSV
 // @author       SyncOffer
 // @match        https://*.iai-shop.com/panel/app/parameters.php*
@@ -4914,16 +4914,37 @@ li.tp-row--selected > div {
     return { ok: ok, errs: errs };
   }
 
-  // v4.6.174: pobierz liste ID produktow dla wartosci/parametru
+  // v4.6.177: pobierz liste ID produktow dla wezla — primary: products-list?trait=
+  // (zweryfikowane na demo37 — dziala dla value→product gdy parameter→product istnieje);
+  // fallback: numberOfOccurrence (zawodne, ale czasem dziala). Po v4.6.174 bug: uzywalem
+  // tylko numberOfOccurrence ktore zwracalo [] → fix mergeParam→attach nie wywolany.
   async function _getProductIdsForNode(nodeId) {
+    var ids = [];
+    var seen = {};
+    function add(id) { var s = String(id); if (!seen[s]) { seen[s] = 1; ids.push(s); } }
+    // 1) products-list.php?trait= (primary, najwiarygodniejsze)
+    try {
+      var iWin = (typeof getIframeWin === 'function') ? getIframeWin() : null;
+      var txt = await new Promise(function (resolve) {
+        var xhr = iWin ? new iWin.XMLHttpRequest() : new XMLHttpRequest();
+        xhr.open('GET', '/panel/products-list.php?trait=' + encodeURIComponent(nodeId));
+        xhr.setRequestHeader('X-Requested-With', 'XMLHttpRequest');
+        xhr.onload = function () { resolve(xhr.responseText || ''); };
+        xhr.onerror = function () { resolve(''); };
+        xhr.send();
+      });
+      var re = /idt=(\d+)/g, m;
+      while ((m = re.exec(txt)) !== null) add(m[1]);
+    } catch (e) {}
+    // 2) numberOfOccurrence fallback — czesto puste ale czasem zwraca cos czego nie ma w products-list
     try {
       var occ = await fetchAjax('action=numberOfOccurrence&id=' + encodeURIComponent(nodeId));
       var raw = occ && occ.data ? occ.data.products : null;
-      var out = [];
-      if (Array.isArray(raw)) raw.forEach(function (p) { out.push(String(typeof p === 'object' ? (p.id || p.product_id) : p)); });
-      else if (raw && typeof raw === 'object') Object.values(raw).forEach(function (p) { out.push(String(typeof p === 'object' ? (p.id || p.product_id) : p)); });
-      return out;
-    } catch (e) { return []; }
+      if (Array.isArray(raw)) raw.forEach(function (p) { add(typeof p === 'object' ? (p.id || p.product_id) : p); });
+      else if (raw && typeof raw === 'object') Object.values(raw).forEach(function (p) { add(typeof p === 'object' ? (p.id || p.product_id) : p); });
+    } catch (e) {}
+    try { console.log('[Parametry PRO][_getProductIdsForNode]', nodeId, '→', ids); } catch (e) {}
+    return ids;
   }
 
   // v4.6.175: pobierz liste ID produktow dla wezla przez natywna strone products-list?trait=
@@ -4949,6 +4970,8 @@ li.tp-row--selected > div {
     });
   }
 
+  // v4.6.177: globalna flaga abortu skanu (cancelBtn ustawia true → petle sie konczą)
+  var _repairAbortRequested = false;
   // v4.6.175: skanuje cale drzewo szukajac rozjazdow parameter→product i naprawia.
   // Dla kazdej wartosci V z parent P: produkty(V) - produkty(P) = sieroty → attach.
   async function scanAndRepairParameterProductAssignments(doc, onProgress) {
@@ -4968,8 +4991,9 @@ li.tp-row--selected > div {
     });
     if (onProgress) try { onProgress({ stage: 'init', total: params.length }); } catch (e) {}
 
-    var fixed = 0, scanned = 0, errors = [], details = [];
+    var fixed = 0, scanned = 0, errors = [], details = [], suspects = [];
     for (var i = 0; i < params.length; i++) {
+      if (_repairAbortRequested) break;
       var p = params[i];
       if (onProgress) try { onProgress({ stage: 'param', index: i + 1, total: params.length, name: p.name }); } catch (e) {}
       try {
@@ -4982,14 +5006,13 @@ li.tp-row--selected > div {
         var paramSet = {};
         paramProducts.forEach(function (id) { paramSet[id] = 1; });
         for (var v = 0; v < values.length; v++) {
+          if (_repairAbortRequested) break;
           var val = values[v];
           if (onProgress) try { onProgress({ stage: 'value', paramName: p.name, valueName: val.name, valueIndex: v + 1, valueTotal: values.length }); } catch (e) {}
-          // wartosci bez produktow (natywny licznik) — pominiete dla wydajnosci
-          if (val.productCount === 0) { scanned++; continue; }
+          scanned++;
           // 4) produkty wartosci (value→product)
           var valProducts = await _getProductIdsViaProductsList(val.id);
-          scanned++;
-          // 5) sieroty = produkty wartosci ktore NIE sa w parametrze
+          // 5a) sieroty = produkty wartosci ktore NIE sa w parametrze
           var orphans = valProducts.filter(function (pid) { return !paramSet[pid]; });
           if (orphans.length) {
             details.push({ paramId: p.id, paramName: p.name, valueId: val.id, valueName: val.name, orphans: orphans.slice() });
@@ -4997,8 +5020,13 @@ li.tp-row--selected > div {
             var res = await _attachParameterValueToProducts(orphans, p.id, val.id);
             fixed += res.ok;
             if (res.errs && res.errs.length) res.errs.forEach(function (e) { errors.push({ vid: val.id, vname: val.name, pid: e.pid, msg: e.msg }); });
-            // dodaj naprawione do setu parametru, zeby nie powtarzac
             orphans.forEach(function (pid) { paramSet[pid] = 1; });
+          } else if (val.productCount > 0 && valProducts.length === 0) {
+            // 5b) PODEJRZANE SIEROTY: natywny licznik > 0 ale API zwraca puste —
+            // bug typu Congrats→BE: value→product istnieje ale parameter→product nie,
+            // przez co products-list?trait= filtruje przez JOIN i nie zwraca. Nie mamy
+            // ID produktu, ale user moze go wpisac recznie.
+            suspects.push({ paramId: p.id, paramName: p.name, valueId: val.id, valueName: val.name, nativeCount: val.productCount });
           }
           await sleep(50);
         }
@@ -5006,7 +5034,7 @@ li.tp-row--selected > div {
         errors.push({ paramId: p.id, paramName: p.name, msg: e.message || String(e) });
       }
     }
-    return { fixed: fixed, scanned: scanned, errors: errors, details: details, paramCount: params.length };
+    return { fixed: fixed, scanned: scanned, errors: errors, details: details, suspects: suspects, paramCount: params.length, aborted: _repairAbortRequested };
   }
 
   // v4.6.175: modal diagnostyczny "Napraw przypisania parametr↔towar"
@@ -5061,9 +5089,18 @@ li.tp-row--selected > div {
     d.body.appendChild(overlay);
 
     function close() { overlay.remove(); }
-    closeBtn.addEventListener('click', close);
-    cancelBtn.addEventListener('click', close);
-    overlay.addEventListener('click', function (e) { if (e.target === overlay) close(); });
+    var _scanRunning = false;
+    closeBtn.addEventListener('click', function () { if (_scanRunning) _repairAbortRequested = true; else close(); });
+    cancelBtn.addEventListener('click', function () {
+      if (_scanRunning) {
+        _repairAbortRequested = true;
+        cancelBtn.disabled = true;
+        cancelBtn.textContent = 'Przerywanie…';
+      } else {
+        close();
+      }
+    });
+    overlay.addEventListener('click', function (e) { if (e.target === overlay && !_scanRunning) close(); });
 
     var statusBlock = body.querySelector('.tpra-status');
     var progressText = body.querySelector('.tpra-progress-text');
@@ -5071,7 +5108,11 @@ li.tp-row--selected > div {
     var resultBlock = body.querySelector('.tpra-result');
 
     startBtn.addEventListener('click', async function () {
-      startBtn.disabled = true; cancelBtn.disabled = true;
+      _repairAbortRequested = false;
+      _scanRunning = true;
+      startBtn.disabled = true;
+      cancelBtn.textContent = 'Przerwij';
+      cancelBtn.disabled = false;
       statusBlock.style.display = '';
       var lastTotal = 0;
       var res = await scanAndRepairParameterProductAssignments(d, function (ev) {
@@ -5086,18 +5127,20 @@ li.tp-row--selected > div {
         }
       });
       progressBar.style.width = '100%';
-      progressText.textContent = 'Gotowe.';
+      progressText.textContent = res.aborted ? 'Przerwano.' : 'Gotowe.';
+      _scanRunning = false;
       // Render wynik
       var html = '<div class="tm-fe-field-block" style="padding:16px 24px;">' +
-        '<div class="tm-fe-field-label">Wynik skanu</div>' +
+        '<div class="tm-fe-field-label">Wynik skanu' + (res.aborted ? ' (przerwany)' : '') + '</div>' +
         '<div style="font-size:13.5px;color:#1a202c;line-height:1.6;">' +
         'Parametry: <b>' + res.paramCount + '</b><br>' +
         'Wartości sprawdzonych: <b>' + res.scanned + '</b><br>' +
         'Naprawionych przypisań: <b style="color:' + (res.fixed ? '#16a34a' : '#9aa3b0') + ';">' + res.fixed + '</b>' +
+        (res.suspects && res.suspects.length ? '<br>Podejrzane sieroty (do ręcznej naprawy): <b style="color:#d97706;">' + res.suspects.length + '</b>' : '') +
         '</div></div>';
       if (res.details && res.details.length) {
         html += '<div class="tm-fe-field-block" style="padding:16px 24px;"><div class="tm-fe-field-label">Naprawione wartości (' + res.details.length + ')</div>' +
-          '<div style="max-height:240px;overflow-y:auto;background:#fafbfc;border:1px solid #e4e7ec;border-radius:8px;padding:8px 12px;">';
+          '<div style="max-height:200px;overflow-y:auto;background:#fafbfc;border:1px solid #e4e7ec;border-radius:8px;padding:8px 12px;">';
         res.details.forEach(function (de) {
           html += '<div style="font-size:12.5px;color:#4a5568;padding:5px 0;border-bottom:1px solid #eef0f3;">' +
             '<b style="color:#1a202c;">' + (de.paramName || de.paramId) + '</b> → ' + (de.valueName || de.valueId) +
@@ -5106,9 +5149,25 @@ li.tp-row--selected > div {
         });
         html += '</div></div>';
       }
+      if (res.suspects && res.suspects.length) {
+        html += '<div class="tm-fe-field-block" style="padding:16px 24px;"><div class="tm-fe-field-label">Podejrzane sieroty — natywny licznik > 0 ale API zwraca puste (' + res.suspects.length + ')</div>' +
+          '<div style="font-size:12px;color:#4a5568;margin-bottom:8px;">Bug typu Congrats→BE: assignment value→product istnieje, ale parameter→product nie. Aby naprawić, wpisz ID towaru (z URL edycji towaru lub kolumny ID na liście):</div>' +
+          '<div style="max-height:260px;overflow-y:auto;background:#fafbfc;border:1px solid #e4e7ec;border-radius:8px;padding:8px 12px;">';
+        res.suspects.forEach(function (su, idx) {
+          html += '<div class="tpra-suspect" data-pid="' + su.paramId + '" data-vid="' + su.valueId + '" style="font-size:12.5px;color:#4a5568;padding:8px 0;border-bottom:1px solid #eef0f3;display:flex;align-items:center;gap:8px;flex-wrap:wrap;">' +
+            '<b style="color:#1a202c;min-width:120px;">' + (su.paramName || su.paramId) + '</b>' +
+            '<span>→ ' + (su.valueName || su.valueId) + '</span>' +
+            '<span style="color:#9aa3b0;">towary: ' + su.nativeCount + '</span>' +
+            '<input type="text" class="tpra-pidInput" placeholder="ID towaru, np. 100001415" style="flex:1;min-width:140px;padding:4px 8px;border:1px solid #e4e7ec;border-radius:4px;font-size:12px;">' +
+            '<button type="button" class="tpra-fixOne tm-fe-btn tm-fe-btn-primary" style="padding:4px 12px;font-size:12px;">Napraw</button>' +
+            '<span class="tpra-fixStatus" style="font-size:11px;color:#9aa3b0;"></span>' +
+            '</div>';
+        });
+        html += '</div></div>';
+      }
       if (res.errors && res.errors.length) {
         html += '<div class="tm-fe-field-block" style="padding:16px 24px;"><div class="tm-fe-field-label">Błędy (' + res.errors.length + ')</div>' +
-          '<div style="max-height:200px;overflow-y:auto;background:#fafbfc;border:1px solid #e4e7ec;border-radius:8px;padding:8px 12px;">';
+          '<div style="max-height:160px;overflow-y:auto;background:#fafbfc;border:1px solid #e4e7ec;border-radius:8px;padding:8px 12px;">';
         res.errors.forEach(function (er) {
           html += '<div style="font-size:12.5px;color:#4a5568;padding:5px 0;border-bottom:1px solid #eef0f3;">' +
             '<b>' + (er.vname || er.paramName || '?') + '</b> <span style="color:#9aa3b0;">— ' + (er.msg || '') + '</span>' +
@@ -5118,6 +5177,27 @@ li.tp-row--selected > div {
       }
       resultBlock.innerHTML = html;
       resultBlock.style.display = '';
+      // Manual fix bindings for podejrzanych sierot
+      resultBlock.querySelectorAll('.tpra-suspect').forEach(function (row) {
+        var btn = row.querySelector('.tpra-fixOne');
+        var input = row.querySelector('.tpra-pidInput');
+        var status = row.querySelector('.tpra-fixStatus');
+        btn.addEventListener('click', async function () {
+          var pid = (input.value || '').trim();
+          if (!/^\d+$/.test(pid)) { status.textContent = 'Podaj numeryczne ID'; status.style.color = '#dc2626'; return; }
+          btn.disabled = true; status.textContent = 'Naprawiam…'; status.style.color = '#9aa3b0';
+          var paramId = row.dataset.pid, valueId = row.dataset.vid;
+          var r = await _attachParameterValueToProducts([pid], paramId, valueId);
+          if (r.ok > 0 && (!r.errs || !r.errs.length)) {
+            status.textContent = '✓ Naprawione'; status.style.color = '#16a34a';
+            row.style.opacity = '0.55';
+          } else {
+            status.textContent = '✗ ' + ((r.errs && r.errs[0] && r.errs[0].msg) || 'Błąd');
+            status.style.color = '#dc2626';
+            btn.disabled = false;
+          }
+        });
+      });
       cancelBtn.disabled = false;
       cancelBtn.textContent = 'Zamknij';
       startBtn.style.display = 'none';
@@ -10042,7 +10122,7 @@ li.tp-row--selected > div {
       },
       pagination: { perPage: loadPerPagePref('Sec') },
       footer: {
-        version: 'v4.6.176',
+        version: 'v4.6.177',
         links: []
       }
     });
@@ -14833,7 +14913,7 @@ li.tp-row--selected > div {
       ],
       pagination: { perPage: 50 },
       footer: {
-        version: 'v4.6.176',
+        version: 'v4.6.177',
         links: []
       }
     });
