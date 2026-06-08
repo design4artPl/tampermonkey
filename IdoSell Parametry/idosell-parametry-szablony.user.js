@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Parametry PRO
 // @namespace    https://idosell.com/
-// @version      4.6.172
+// @version      4.6.174
 // @description  Toolbar do grupowej edycji parametrow: panel-pro v1.2.4 inline + new-panel support, checkboxy, zaznaczanie, rozwijanie/zwijanie, grupowe usuwanie/edycja, import CSV
 // @author       SyncOffer
 // @match        https://*.iai-shop.com/panel/app/parameters.php*
@@ -3509,10 +3509,23 @@ li.tp-row--selected > div {
       var oldUrls = await _collectValueUrls(sourceId, shops, langs);
       var destUrls = await _collectValueUrls(targetId, shops, langs);
 
+      // v4.6.174: jesli to cross-parameter merge, zbierz produkty PRZED merge (mergeParam
+      // nie zaklada parameter→product w target — sprawdzone live demo37 2026-06-08)
+      var srcParentForFix = getParentId(doc, sourceId);
+      var tgtParentForFix = getParentId(doc, targetId);
+      var crossParamMerge = srcParentForFix && tgtParentForFix && srcParentForFix !== tgtParentForFix;
+      var affectedProductsForFix = crossParamMerge ? await _getProductIdsForNode(sourceId) : [];
+
       // 2) polaczenie
       showForceDeleteStatus(doc, 'Łączenie wartości...');
       var mergeResp = await fetchAjax('action=mergeParam&id=' + sourceId + '&idExist=' + targetId);
       if (mergeResp && mergeResp.error && mergeResp.error !== '') throw new Error(mergeResp.error);
+
+      // v4.6.174: po merge — dopnij parameter→product w target dla produktow z source
+      if (affectedProductsForFix.length) {
+        showForceDeleteStatus(doc, 'Dopinanie parametru docelowego do ' + affectedProductsForFix.length + ' towar(ów)...');
+        await _attachParameterValueToProducts(affectedProductsForFix, tgtParentForFix, targetId);
+      }
 
       // 3) DOM: usun zrodlo, ewentualnie pusty parametr-rodzic
       var sourceParentId = getParentId(doc, sourceId);
@@ -3773,10 +3786,17 @@ li.tp-row--selected > div {
       }
 
       // 3) przepisanie towarow + usuniecie zrodla
+      // v4.6.174: PRZED merge zbierz produkty — mergeParam nie zaklada parameter→product w target
+      var affectedForMove = await _getProductIdsForNode(sourceId);
       showForceDeleteStatus(doc, 'Przepisywanie towarow...');
       var mergeResp = await fetchAjax('action=mergeParam&id=' + sourceId + '&idExist=' + targetValueId);
       if (mergeResp && mergeResp.error && mergeResp.error !== '') throw new Error(mergeResp.error);
       await fetchAjax('action=removeParam&node=' + sourceId + '&tree=0&shop=2&parent=' + sourceParamId);
+      // v4.6.174: dopnij parameter→product w target dla produktow z source
+      if (affectedForMove.length) {
+        showForceDeleteStatus(doc, 'Dopinanie parametru docelowego do ' + affectedForMove.length + ' towar(ów)...');
+        await _attachParameterValueToProducts(affectedForMove, targetParamId, targetValueId);
+      }
 
       // 4) nowe adresy URL + przekierowania 301
       showForceDeleteStatus(doc, 'Zakladanie przekierowan 301...');
@@ -4867,6 +4887,147 @@ li.tp-row--selected > div {
     });
   }
 
+  // v4.6.174: po mergeParam (cross-parameter) trzeba osobno dopiac parameter→product
+  // bo natywny mergeParam jest plytki — przepina tylko value→product. Per produkt z source
+  // value wywolujemy saveParametersChanges z add (parametr) + changeParent (wartosc) — to
+  // ten sam payload co natywna edycja towaru (sprawdzone live demo37 2026-06-08:
+  // products-list.php?trait=<paramId> po naprawie zaczyna zwracac produkt).
+  async function _attachParameterValueToProducts(productIds, paramId, valueId, onStep) {
+    if (!productIds || !productIds.length) return { ok: 0, errs: [] };
+    var ok = 0, errs = [];
+    var data = JSON.stringify([
+      { operation: 'add', parameter: String(paramId) },
+      { operation: 'changeParent', parameter: String(paramId), value: String(valueId) }
+    ]);
+    var body = 'data=' + encodeURIComponent(data) + '&columns=' + encodeURIComponent('[]');
+    for (var i = 0; i < productIds.length; i++) {
+      if (onStep) try { onStep(i + 1, productIds.length, productIds[i]); } catch (e) {}
+      try {
+        var resp = await fetchAjaxRaw(AJAX_URL + '?action=saveParametersChanges&productId=' + encodeURIComponent(productIds[i]), body);
+        if (resp && resp.errno && Number(resp.errno) !== 0) errs.push({ pid: productIds[i], msg: resp.error || ('errno ' + resp.errno) });
+        else ok++;
+      } catch (e) {
+        errs.push({ pid: productIds[i], msg: e.message || String(e) });
+      }
+      if (i < productIds.length - 1) await sleep(150);
+    }
+    return { ok: ok, errs: errs };
+  }
+
+  // v4.6.174: pobierz liste ID produktow dla wartosci/parametru
+  async function _getProductIdsForNode(nodeId) {
+    try {
+      var occ = await fetchAjax('action=numberOfOccurrence&id=' + encodeURIComponent(nodeId));
+      var raw = occ && occ.data ? occ.data.products : null;
+      var out = [];
+      if (Array.isArray(raw)) raw.forEach(function (p) { out.push(String(typeof p === 'object' ? (p.id || p.product_id) : p)); });
+      else if (raw && typeof raw === 'object') Object.values(raw).forEach(function (p) { out.push(String(typeof p === 'object' ? (p.id || p.product_id) : p)); });
+      return out;
+    } catch (e) { return []; }
+  }
+
+  // v4.6.173: soft refresh wartosci parametru w drzewie (bez location.reload)
+  function refreshParamValuesInTree(doc, pid) {
+    return new Promise(function (resolve) {
+      var block = doc.getElementById('block_group' + pid);
+      var btn = doc.getElementById('showChildren_' + pid);
+      if (!btn || !block) return resolve();
+      var wasExpanded = !!block.querySelector(':scope > li[id^="m_"]');
+      if (!wasExpanded) return resolve();
+      btn.click(); // collapse — czyści DOM dzieci
+      setTimeout(function () {
+        btn.click(); // expand — IdoSell pobiera dzieci na nowo
+        var checks = 0;
+        var iv = setInterval(function () {
+          checks++;
+          var b = doc.getElementById('block_group' + pid);
+          if ((b && b.querySelector(':scope > li[id^="m_"]')) || checks > 100) {
+            clearInterval(iv);
+            resolve();
+          }
+        }, 30);
+      }, 150);
+    });
+  }
+
+  // v4.6.173: custom modal podsumowania bulk operacji (zastepuje natywny alert())
+  function _showBulkSummaryModal(doc, paramName, summary, errors, onClose) {
+    var overlay = doc.createElement('div'); overlay.className = 'tm-fe-overlay';
+    var modal = doc.createElement('div'); modal.className = 'tm-fe-modal' + (errors && errors.length ? ' tm-fe-modal--wide' : '');
+    var header = doc.createElement('div'); header.className = 'tm-fe-header';
+    var icon = doc.createElement('div'); icon.className = 'tm-fe-icon';
+    var iconOk = !errors || !errors.length;
+    icon.innerHTML = iconOk
+      ? '<svg viewBox="0 0 24 24" fill="none" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"/></svg>'
+      : '<svg viewBox="0 0 24 24" fill="none" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="13"/><line x1="12" y1="16" x2="12.01" y2="16"/></svg>';
+    if (!iconOk) {
+      icon.style.background = '#fef3c7';
+      icon.style.borderColor = '#fcd34d';
+      var svg = icon.querySelector('svg'); if (svg) svg.style.stroke = '#d97706';
+    }
+    var titleGroup = doc.createElement('div'); titleGroup.className = 'tm-fe-title-group';
+    var h2 = doc.createElement('h2'); h2.textContent = iconOk ? 'Operacja zakończona' : 'Operacja zakończona z błędami';
+    var pEl = doc.createElement('p'); pEl.textContent = 'Parametr „' + paramName + '"';
+    titleGroup.appendChild(h2); titleGroup.appendChild(pEl);
+    var closeBtn = doc.createElement('button'); closeBtn.type = 'button'; closeBtn.className = 'tm-fe-close';
+    closeBtn.innerHTML = '<svg viewBox="0 0 24 24" fill="none" stroke-linecap="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>';
+    header.appendChild(icon); header.appendChild(titleGroup); header.appendChild(closeBtn);
+    modal.appendChild(header);
+
+    var body = doc.createElement('div'); body.className = 'tm-fe-body';
+    var sumBlock = doc.createElement('div'); sumBlock.className = 'tm-fe-field-block';
+    sumBlock.style.padding = '18px 24px';
+    var sumText = doc.createElement('div');
+    sumText.style.cssText = 'font-size:14px;color:#1a202c;line-height:1.5;';
+    sumText.textContent = summary + '.';
+    sumBlock.appendChild(sumText);
+    body.appendChild(sumBlock);
+
+    if (errors && errors.length) {
+      var errBlock = doc.createElement('div'); errBlock.className = 'tm-fe-field-block';
+      var errLabel = doc.createElement('div'); errLabel.className = 'tm-fe-field-label';
+      errLabel.textContent = 'Błędy (' + errors.length + ')';
+      errBlock.appendChild(errLabel);
+      var errList = doc.createElement('div');
+      errList.style.cssText = 'max-height:300px;overflow-y:auto;background:#fafbfc;border:1px solid #e4e7ec;border-radius:8px;padding:8px 12px;';
+      for (var i = 0; i < errors.length; i++) {
+        var row = doc.createElement('div');
+        row.style.cssText = 'font-size:12.5px;color:#4a5568;padding:6px 0;border-bottom:1px solid #eef0f3;line-height:1.4;';
+        if (i === errors.length - 1) row.style.borderBottom = 'none';
+        var nm = doc.createElement('strong');
+        nm.style.cssText = 'color:#1a202c;font-weight:600;';
+        nm.textContent = errors[i].name || '?';
+        var msg = doc.createElement('span');
+        msg.style.cssText = 'color:#9aa3b0;margin-left:6px;';
+        msg.textContent = '— ' + (errors[i].msg || '');
+        row.appendChild(nm); row.appendChild(msg);
+        errList.appendChild(row);
+      }
+      errBlock.appendChild(errList);
+      body.appendChild(errBlock);
+    }
+    modal.appendChild(body);
+
+    var footer = doc.createElement('div'); footer.className = 'tm-fe-footer';
+    var okBtn = doc.createElement('button'); okBtn.type = 'button';
+    okBtn.className = 'tm-fe-btn tm-fe-btn-primary';
+    okBtn.textContent = 'OK';
+    footer.appendChild(okBtn);
+    modal.appendChild(footer);
+    overlay.appendChild(modal);
+
+    function _close() {
+      overlay.remove();
+      if (typeof onClose === 'function') try { onClose(); } catch (e) {}
+    }
+    closeBtn.addEventListener('click', _close);
+    okBtn.addEventListener('click', _close);
+    overlay.addEventListener('click', function (e) { if (e.target === overlay) _close(); });
+
+    doc.body.appendChild(overlay);
+    setTimeout(function () { try { okBtn.focus(); } catch (e) {} }, 50);
+  }
+
   function filterTree(doc, query) {
     clearTimeout(_filterTreeTimer);
     var q = (query || '').toLowerCase().trim();
@@ -5745,6 +5906,10 @@ li.tp-row--selected > div {
             }
           }
 
+          // v4.6.174: PRZED mergeParam zbierz produkty dotkniete (zeby po merge dopiac
+          // parameter→product w target, czego natywny mergeParam nie robi — sprawdzone live)
+          var affectedProducts = (sourceParamId !== selectedParamId) ? await _getProductIdsForNode(valId) : [];
+
           // Merge source → target (moves products automatically)
           var mergeResp = await fetchAjax(
             'action=mergeParam&id=' + valId + '&idExist=' + targetValueId
@@ -5755,6 +5920,12 @@ li.tp-row--selected > div {
           await fetchAjax(
             'action=removeParam&node=' + valId + '&tree=0&shop=2&parent=' + sourceParamId
           );
+
+          // v4.6.174: domknij relacje parameter→product w target dla produktow z source
+          if (affectedProducts.length) {
+            statusText.textContent = 'Dopinanie parametru docelowego do ' + affectedProducts.length + ' towar(ów)...';
+            await _attachParameterValueToProducts(affectedProducts, selectedParamId, targetValueId);
+          }
 
           // Remove from DOM
           var li = doc.getElementById('m_' + valId);
@@ -9673,7 +9844,7 @@ li.tp-row--selected > div {
       },
       pagination: { perPage: loadPerPagePref('Sec') },
       footer: {
-        version: 'v4.6.172',
+        version: 'v4.6.174',
         links: []
       }
     });
@@ -10692,13 +10863,14 @@ li.tp-row--selected > div {
       if (created) parts.push('utworzono ' + created);
       if (reused) parts.push('zaktualizowano ' + reused + ' istniej\u0105cych');
       if (redirsAdded) parts.push('dodano ' + redirsAdded + ' przekierowa\u0144');
-      var summary = parts.length ? parts.join(', ') : 'brak zmian';
-      if (errors.length) {
-        alert(summary.charAt(0).toUpperCase() + summary.slice(1) + '.\n\nB\u0142\u0119dy:\n' + errors.map(function (e) { return '\u2022 ' + e.name + ' \u2014 ' + e.msg; }).join('\n'));
-      } else if (_panel) {
-        _panel.showStatus(summary.charAt(0).toUpperCase() + summary.slice(1) + ' (parametr \u201e' + paramName + '")');
-      }
-      setTimeout(function () { (d.defaultView || window).location.reload(); }, 800);
+      var summaryText = parts.length ? (parts.join(', ').charAt(0).toUpperCase() + parts.join(', ').slice(1)) : 'Brak zmian';
+      // v4.6.173: custom modal podsumowania + soft refresh (bez location.reload)
+      _showBulkSummaryModal(d, paramName, summaryText, errors, function () {
+        close(); // zamknij glowny modal "Dodaj wartosc"
+        if (_panel) _panel.showStatus(summaryText + ' (parametr \u201e' + paramName + '")');
+        // Soft refresh drzewa wartosci tylko gdy stworzono nowe (jesli tylko redirecty \u2014 DOM bez zmian)
+        if (created > 0) refreshParamValuesInTree(d, paramId);
+      });
     }
 
     render();
@@ -14462,7 +14634,7 @@ li.tp-row--selected > div {
       ],
       pagination: { perPage: 50 },
       footer: {
-        version: 'v4.6.172',
+        version: 'v4.6.174',
         links: []
       }
     });
