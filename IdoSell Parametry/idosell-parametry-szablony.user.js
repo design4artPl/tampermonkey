@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Parametry PRO
 // @namespace    https://idosell.com/
-// @version      4.6.182
+// @version      4.6.183
 // @description  Toolbar do grupowej edycji parametrow: panel-pro v1.2.4 inline + new-panel support, checkboxy, zaznaczanie, rozwijanie/zwijanie, grupowe usuwanie/edycja, import CSV
 // @author       SyncOffer
 // @match        https://*.iai-shop.com/panel/app/parameters.php*
@@ -5158,27 +5158,12 @@ li.tp-row--selected > div {
     return { detached: detached, errs: errs };
   }
 
-  // v4.6.175: pobierz liste ID produktow dla wezla przez natywna strone products-list?trait=
-  // To jest source of truth dla parameter→product (relacja w bazie), w przeciwienstwie do
-  // numberOfOccurrence ktore bywa zawodne. Patrz [[mergeparam-shallow-parameter-product]].
+  // v4.6.183: alias do _getProductIdsForNode (v4.6.182 dataTable endpoint).
+  // Stary _getProductIdsViaProductsList uzywal /panel/products-list.php?trait= ktore
+  // w XHR zwraca tylko HTML shell BEZ idt=, wiec scan zawsze zwracal puste listy.
+  // Teraz aliasuje na sprawdzony endpoint view-manager.php dataTable AJAX.
   async function _getProductIdsViaProductsList(nodeId) {
-    var url = '/panel/products-list.php?trait=' + encodeURIComponent(nodeId);
-    var iWin = (typeof getIframeWin === 'function') ? getIframeWin() : null;
-    return new Promise(function (resolve) {
-      var xhr = iWin ? new iWin.XMLHttpRequest() : new XMLHttpRequest();
-      xhr.open('GET', url);
-      xhr.setRequestHeader('X-Requested-With', 'XMLHttpRequest');
-      xhr.onload = function () {
-        var txt = xhr.responseText || '';
-        var ids = [];
-        var seen = {};
-        var re = /idt=(\d+)/g, m;
-        while ((m = re.exec(txt)) !== null) { if (!seen[m[1]]) { seen[m[1]] = 1; ids.push(m[1]); } }
-        resolve(ids);
-      };
-      xhr.onerror = function () { resolve([]); };
-      xhr.send();
-    });
+    return await _getProductIdsForNode(nodeId);
   }
 
   // v4.6.177: globalna flaga abortu skanu (cancelBtn ustawia true → petle sie konczą)
@@ -10349,7 +10334,7 @@ li.tp-row--selected > div {
       },
       pagination: { perPage: loadPerPagePref('Sec') },
       footer: {
-        version: 'v4.6.182',
+        version: 'v4.6.183',
         links: []
       }
     });
@@ -15140,7 +15125,7 @@ li.tp-row--selected > div {
       ],
       pagination: { perPage: 50 },
       footer: {
-        version: 'v4.6.182',
+        version: 'v4.6.183',
         links: []
       }
     });
