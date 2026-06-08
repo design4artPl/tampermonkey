@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Parametry PRO
 // @namespace    https://idosell.com/
-// @version      4.6.174
+// @version      4.6.175
 // @description  Toolbar do grupowej edycji parametrow: panel-pro v1.2.4 inline + new-panel support, checkboxy, zaznaczanie, rozwijanie/zwijanie, grupowe usuwanie/edycja, import CSV
 // @author       SyncOffer
 // @match        https://*.iai-shop.com/panel/app/parameters.php*
@@ -4926,6 +4926,205 @@ li.tp-row--selected > div {
     } catch (e) { return []; }
   }
 
+  // v4.6.175: pobierz liste ID produktow dla wezla przez natywna strone products-list?trait=
+  // To jest source of truth dla parameter→product (relacja w bazie), w przeciwienstwie do
+  // numberOfOccurrence ktore bywa zawodne. Patrz [[mergeparam-shallow-parameter-product]].
+  async function _getProductIdsViaProductsList(nodeId) {
+    var url = '/panel/products-list.php?trait=' + encodeURIComponent(nodeId);
+    var iWin = (typeof getIframeWin === 'function') ? getIframeWin() : null;
+    return new Promise(function (resolve) {
+      var xhr = iWin ? new iWin.XMLHttpRequest() : new XMLHttpRequest();
+      xhr.open('GET', url);
+      xhr.setRequestHeader('X-Requested-With', 'XMLHttpRequest');
+      xhr.onload = function () {
+        var txt = xhr.responseText || '';
+        var ids = [];
+        var seen = {};
+        var re = /idt=(\d+)/g, m;
+        while ((m = re.exec(txt)) !== null) { if (!seen[m[1]]) { seen[m[1]] = 1; ids.push(m[1]); } }
+        resolve(ids);
+      };
+      xhr.onerror = function () { resolve([]); };
+      xhr.send();
+    });
+  }
+
+  // v4.6.175: skanuje cale drzewo szukajac rozjazdow parameter→product i naprawia.
+  // Dla kazdej wartosci V z parent P: produkty(V) - produkty(P) = sieroty → attach.
+  async function scanAndRepairParameterProductAssignments(doc, onProgress) {
+    var d = doc || getIframeDoc() || document;
+    var rootBlock = d.getElementById('block_group0');
+    if (!rootBlock) return { error: 'brak drzewa' };
+    // 1) lista wszystkich parametrow root (te ktore moga miec wartosci)
+    var rootLis = Array.from(rootBlock.querySelectorAll(':scope > li[id^="m_"]'));
+    var params = [];
+    rootLis.forEach(function (li) {
+      var pid = li.id.replace('m_', '');
+      var sub = d.getElementById('showMenuSub_' + pid);
+      var cls = sub ? sub.className : '';
+      if (/section/.test(cls)) return; // sekcje pomijamy
+      var name = sub ? sub.textContent.trim() : '';
+      params.push({ id: pid, name: name });
+    });
+    if (onProgress) try { onProgress({ stage: 'init', total: params.length }); } catch (e) {}
+
+    var fixed = 0, scanned = 0, errors = [], details = [];
+    for (var i = 0; i < params.length; i++) {
+      var p = params[i];
+      if (onProgress) try { onProgress({ stage: 'param', index: i + 1, total: params.length, name: p.name }); } catch (e) {}
+      try {
+        // 2) produkty parametru (parameter→product)
+        var paramProducts = await _getProductIdsViaProductsList(p.id);
+        var paramSet = {};
+        paramProducts.forEach(function (id) { paramSet[id] = 1; });
+        // 3) wartosci tego parametru (z drzewa — jesli rozwiniete) lub przez expand
+        await ensureNodeExpanded(d, p.id);
+        var block = d.getElementById('block_group' + p.id);
+        if (!block) continue;
+        var valueLis = block.querySelectorAll(':scope > li[id^="m_"]');
+        for (var v = 0; v < valueLis.length; v++) {
+          var vid = valueLis[v].id.replace('m_', '');
+          var vSub = d.getElementById('showMenuSub_' + vid);
+          var vname = vSub ? vSub.textContent.trim() : vid;
+          if (onProgress) try { onProgress({ stage: 'value', paramName: p.name, valueName: vname, valueIndex: v + 1, valueTotal: valueLis.length }); } catch (e) {}
+          // 4) produkty wartosci (value→product)
+          var valProducts = await _getProductIdsViaProductsList(vid);
+          scanned++;
+          // 5) sieroty = produkty wartosci ktore NIE sa w parametrze
+          var orphans = valProducts.filter(function (pid) { return !paramSet[pid]; });
+          if (orphans.length) {
+            details.push({ paramId: p.id, paramName: p.name, valueId: vid, valueName: vname, orphans: orphans.slice() });
+            // 6) napraw: attach per produkt
+            var res = await _attachParameterValueToProducts(orphans, p.id, vid);
+            fixed += res.ok;
+            if (res.errs && res.errs.length) res.errs.forEach(function (e) { errors.push({ vid: vid, vname: vname, pid: e.pid, msg: e.msg }); });
+            // dodaj naprawione do setu parametru, zeby nie powtarzac
+            orphans.forEach(function (pid) { paramSet[pid] = 1; });
+          }
+          await sleep(50);
+        }
+      } catch (e) {
+        errors.push({ paramId: p.id, paramName: p.name, msg: e.message || String(e) });
+      }
+    }
+    return { fixed: fixed, scanned: scanned, errors: errors, details: details, paramCount: params.length };
+  }
+
+  // v4.6.175: modal diagnostyczny "Napraw przypisania parametr↔towar"
+  function showRepairAssignmentsModal(doc) {
+    var d = doc || getIframeDoc() || document;
+    if (!d.getElementById('tpcd-dmsans-link')) {
+      var lnk = d.createElement('link'); lnk.id = 'tpcd-dmsans-link'; lnk.rel = 'stylesheet';
+      lnk.href = 'https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;600;700&display=swap';
+      d.head.appendChild(lnk);
+    }
+    var overlay = d.createElement('div'); overlay.className = 'tm-fe-overlay';
+    var modal = d.createElement('div'); modal.className = 'tm-fe-modal tm-fe-modal--wide';
+
+    var header = d.createElement('div'); header.className = 'tm-fe-header';
+    var icon = d.createElement('div'); icon.className = 'tm-fe-icon';
+    icon.innerHTML = '<svg viewBox="0 0 24 24" fill="none" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M12 2v4M12 18v4M4.93 4.93l2.83 2.83M16.24 16.24l2.83 2.83M2 12h4M18 12h4M4.93 19.07l2.83-2.83M16.24 7.76l2.83-2.83"/></svg>';
+    var titleGroup = d.createElement('div'); titleGroup.className = 'tm-fe-title-group';
+    var h2 = d.createElement('h2'); h2.textContent = 'Napraw przypisania parametr↔towar';
+    var pEl = d.createElement('p'); pEl.textContent = 'Skanuje drzewo i dopina brakujące relacje parameter→product';
+    titleGroup.appendChild(h2); titleGroup.appendChild(pEl);
+    var closeBtn = d.createElement('button'); closeBtn.type = 'button'; closeBtn.className = 'tm-fe-close';
+    closeBtn.innerHTML = '<svg viewBox="0 0 24 24" fill="none" stroke-linecap="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>';
+    header.appendChild(icon); header.appendChild(titleGroup); header.appendChild(closeBtn);
+    modal.appendChild(header);
+
+    var body = d.createElement('div'); body.className = 'tm-fe-body';
+    body.innerHTML =
+      '<div class="tm-fe-field-block" style="padding:18px 24px;">' +
+      '<div style="font-size:13.5px;color:#4a5568;line-height:1.55;">' +
+      'Operacja przeskanuje wszystkie parametry i ich wartości. Dla każdej wartości pobierze listę towarów, ' +
+      'porówna ze stanem parameter→product i automatycznie naprawi brakujące przypisania ' +
+      '(natywny payload <code>saveParametersChanges</code>).' +
+      '<br><br><b>Bezpieczeństwo:</b> operacja jest idempotentna — produkty już prawidłowo przypisane są pomijane.' +
+      '<br><b>Czas:</b> ~1-3 s na parametr × liczba parametrów.' +
+      '</div></div>' +
+      '<div class="tm-fe-field-block tpra-status" style="padding:16px 24px;display:none;">' +
+      '<div class="tm-fe-field-label">Postęp</div>' +
+      '<div class="tpra-progress-text" style="font-size:13px;color:#1a202c;margin-bottom:8px;">Inicjalizacja…</div>' +
+      '<div style="height:6px;background:#eef0f3;border-radius:3px;overflow:hidden;">' +
+      '<div class="tpra-progress-bar" style="height:100%;width:0%;background:#2563eb;transition:width .2s;"></div>' +
+      '</div>' +
+      '</div>' +
+      '<div class="tpra-result" style="display:none;"></div>';
+    modal.appendChild(body);
+
+    var footer = d.createElement('div'); footer.className = 'tm-fe-footer';
+    var cancelBtn = d.createElement('button'); cancelBtn.type = 'button'; cancelBtn.className = 'tm-fe-btn tm-fe-btn-ghost'; cancelBtn.textContent = 'Anuluj';
+    var startBtn = d.createElement('button'); startBtn.type = 'button'; startBtn.className = 'tm-fe-btn tm-fe-btn-primary'; startBtn.textContent = 'Skanuj i napraw';
+    footer.appendChild(cancelBtn); footer.appendChild(startBtn);
+    modal.appendChild(footer);
+    overlay.appendChild(modal);
+    d.body.appendChild(overlay);
+
+    function close() { overlay.remove(); }
+    closeBtn.addEventListener('click', close);
+    cancelBtn.addEventListener('click', close);
+    overlay.addEventListener('click', function (e) { if (e.target === overlay) close(); });
+
+    var statusBlock = body.querySelector('.tpra-status');
+    var progressText = body.querySelector('.tpra-progress-text');
+    var progressBar = body.querySelector('.tpra-progress-bar');
+    var resultBlock = body.querySelector('.tpra-result');
+
+    startBtn.addEventListener('click', async function () {
+      startBtn.disabled = true; cancelBtn.disabled = true;
+      statusBlock.style.display = '';
+      var lastTotal = 0;
+      var res = await scanAndRepairParameterProductAssignments(d, function (ev) {
+        if (ev.stage === 'init') {
+          progressText.textContent = 'Parametrów do sprawdzenia: ' + ev.total;
+          lastTotal = ev.total;
+        } else if (ev.stage === 'param') {
+          progressText.textContent = '[' + ev.index + '/' + ev.total + '] ' + ev.name;
+          progressBar.style.width = Math.round((ev.index / ev.total) * 100) + '%';
+        } else if (ev.stage === 'value') {
+          progressText.textContent = ev.paramName + ' → ' + ev.valueName + ' (' + ev.valueIndex + '/' + ev.valueTotal + ')';
+        }
+      });
+      progressBar.style.width = '100%';
+      progressText.textContent = 'Gotowe.';
+      // Render wynik
+      var html = '<div class="tm-fe-field-block" style="padding:16px 24px;">' +
+        '<div class="tm-fe-field-label">Wynik skanu</div>' +
+        '<div style="font-size:13.5px;color:#1a202c;line-height:1.6;">' +
+        'Parametry: <b>' + res.paramCount + '</b><br>' +
+        'Wartości sprawdzonych: <b>' + res.scanned + '</b><br>' +
+        'Naprawionych przypisań: <b style="color:' + (res.fixed ? '#16a34a' : '#9aa3b0') + ';">' + res.fixed + '</b>' +
+        '</div></div>';
+      if (res.details && res.details.length) {
+        html += '<div class="tm-fe-field-block" style="padding:16px 24px;"><div class="tm-fe-field-label">Naprawione wartości (' + res.details.length + ')</div>' +
+          '<div style="max-height:240px;overflow-y:auto;background:#fafbfc;border:1px solid #e4e7ec;border-radius:8px;padding:8px 12px;">';
+        res.details.forEach(function (de) {
+          html += '<div style="font-size:12.5px;color:#4a5568;padding:5px 0;border-bottom:1px solid #eef0f3;">' +
+            '<b style="color:#1a202c;">' + (de.paramName || de.paramId) + '</b> → ' + (de.valueName || de.valueId) +
+            ' <span style="color:#9aa3b0;">— dopięto do ' + de.orphans.length + ' towar(ów)</span>' +
+            '</div>';
+        });
+        html += '</div></div>';
+      }
+      if (res.errors && res.errors.length) {
+        html += '<div class="tm-fe-field-block" style="padding:16px 24px;"><div class="tm-fe-field-label">Błędy (' + res.errors.length + ')</div>' +
+          '<div style="max-height:200px;overflow-y:auto;background:#fafbfc;border:1px solid #e4e7ec;border-radius:8px;padding:8px 12px;">';
+        res.errors.forEach(function (er) {
+          html += '<div style="font-size:12.5px;color:#4a5568;padding:5px 0;border-bottom:1px solid #eef0f3;">' +
+            '<b>' + (er.vname || er.paramName || '?') + '</b> <span style="color:#9aa3b0;">— ' + (er.msg || '') + '</span>' +
+            '</div>';
+        });
+        html += '</div></div>';
+      }
+      resultBlock.innerHTML = html;
+      resultBlock.style.display = '';
+      cancelBtn.disabled = false;
+      cancelBtn.textContent = 'Zamknij';
+      startBtn.style.display = 'none';
+    });
+  }
+
   // v4.6.173: soft refresh wartosci parametru w drzewie (bez location.reload)
   function refreshParamValuesInTree(doc, pid) {
     return new Promise(function (resolve) {
@@ -9844,7 +10043,7 @@ li.tp-row--selected > div {
       },
       pagination: { perPage: loadPerPagePref('Sec') },
       footer: {
-        version: 'v4.6.174',
+        version: 'v4.6.175',
         links: []
       }
     });
@@ -14564,6 +14763,7 @@ li.tp-row--selected > div {
             ifFeat(FEATURES.SORT_BY_ID,           { icon: 'tag',           label: 'Sortuj po ID',        tooltip: 'Posortuj wg ID (rosnąco / malejąco)', variant: 'text', onClick: function () { sortById(doc); } }),
             ifFeat(FEATURES.TRANSLATIONS,         { icon: 'translate',     label: 'Tłumaczenia',          tooltip: 'Edytuj nazwy parametrów i wartości we wszystkich językach', variant: 'text', onClick: function () { showTranslationsPage(doc); } }),
             { icon: 'merge_type', label: 'Wykryj duplikaty', tooltip: 'Wykryj parametry o tej samej nazwie i zaproponuj ich połączenie', variant: 'text', onClick: function () { showFindDuplicatesModal(doc); } },
+            { icon: 'healing', label: 'Napraw przypisania', tooltip: 'Skanuje drzewo i dopina brakujące parameter→product (naprawia historyczne błędne przeniesienia)', variant: 'text', onClick: function () { showRepairAssignmentsModal(doc); } },
             ifFeat(FEATURES.CREATE_PARAMETER,     { icon: 'add',           label: 'Dodaj parametr',       tooltip: 'Dodaj nowy parametr', variant: 'primary', onClick: function () { createNewParameter(doc); } })
           ])
         }
@@ -14634,7 +14834,7 @@ li.tp-row--selected > div {
       ],
       pagination: { perPage: 50 },
       footer: {
-        version: 'v4.6.174',
+        version: 'v4.6.175',
         links: []
       }
     });
