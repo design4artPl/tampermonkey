@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Parametry PRO
 // @namespace    https://idosell.com/
-// @version      4.6.180
+// @version      4.6.181
 // @description  Toolbar do grupowej edycji parametrow: panel-pro v1.2.4 inline + new-panel support, checkboxy, zaznaczanie, rozwijanie/zwijanie, grupowe usuwanie/edycja, import CSV
 // @author       SyncOffer
 // @match        https://*.iai-shop.com/panel/app/parameters.php*
@@ -3529,7 +3529,8 @@ li.tp-row--selected > div {
       // v4.6.174: po merge — dopnij parameter→product w target dla produktow z source
       if (affectedProductsForFix.length) {
         showForceDeleteStatus(doc, 'Dopinanie parametru docelowego do ' + affectedProductsForFix.length + ' towar(ów)...');
-        var attachResMM = await _attachParameterValueToProducts(affectedProductsForFix, tgtParentForFix, targetId);
+        // v4.6.181: paramName + valueName wymagane dla endpoint checkEl
+        var attachResMM = await _attachParameterValueToProducts(affectedProductsForFix, tgtParentForFix, targetId, getNodeName(doc, tgtParentForFix), sourceName);
         // v4.6.180: guided manual repair gdy attach nie zadzialal
         if (attachResMM && attachResMM.missing && attachResMM.missing.length) {
           _showManualRepairModal(doc, tgtParentForFix, getNodeName(doc, tgtParentForFix), targetId, sourceName, attachResMM.missing);
@@ -3812,7 +3813,8 @@ li.tp-row--selected > div {
       // v4.6.174: dopnij parameter→product w target dla produktow z source
       if (affectedForMove.length) {
         showForceDeleteStatus(doc, 'Dopinanie parametru docelowego do ' + affectedForMove.length + ' towar(ów)...');
-        var attachResPM = await _attachParameterValueToProducts(affectedForMove, targetParamId, targetValueId);
+        // v4.6.181: paramName + valueName wymagane dla endpoint checkEl
+        var attachResPM = await _attachParameterValueToProducts(affectedForMove, targetParamId, targetValueId, targetParamName, sourceName);
         // v4.6.180: guided manual repair gdy attach nie zadzialal
         if (attachResPM && attachResPM.missing && attachResPM.missing.length) {
           _showManualRepairModal(doc, targetParamId, targetParamName, targetValueId, sourceName, attachResPM.missing);
@@ -4916,47 +4918,42 @@ li.tp-row--selected > div {
   // value wywolujemy saveParametersChanges z add (parametr) + changeParent (wartosc) — to
   // ten sam payload co natywna edycja towaru (sprawdzone live demo37 2026-06-08:
   // products-list.php?trait=<paramId> po naprawie zaczyna zwracac produkt).
-  async function _attachParameterValueToProducts(productIds, paramId, valueId, onStep) {
-    if (!productIds || !productIds.length) return { ok: 0, errs: [], verified: 0 };
-    var ok = 0, errs = [], verified = 0;
-    // v4.6.179: trzy operacje w jednym requeście — add parametr, setAsParent (tworzy
-    // value→product gdy nie istnieje), changeParent (przepina jesli inny rodzic).
-    // Tak dziala natywna edycja towaru gdy dodajesz nowa wartosc parametru.
-    var data = JSON.stringify([
-      { operation: 'add', parameter: String(paramId) },
-      { operation: 'setAsParent', parameter: String(paramId), value: String(valueId) },
-      { operation: 'changeParent', parameter: String(paramId), value: String(valueId) }
-    ]);
-    var body = 'data=' + encodeURIComponent(data) + '&columns=' + encodeURIComponent('[]');
+  // v4.6.181: WLASCIWY endpoint do tworzenia parameter→product + value→product.
+  // Zniffowane live z natywnego UI "Dodaj parametr" w edycji towaru. Wymaga NAZW
+  // parametru i wartosci (IdoSell sam mapuje na ID). errno:0 = nowy assignment,
+  // errno:30 ("juz przypisany") = OK juz jest. Patrz [[checkel-creates-assignments]].
+  // SIGNATURE CHANGE: paramName, valueName teraz wymagane (zamiast tylko ID).
+  async function _attachParameterValueToProducts(productIds, paramId, valueId, paramName, valueName, onStep) {
+    if (!productIds || !productIds.length) return { ok: 0, errs: [], verified: 0, missing: [] };
+    if (!paramName || !valueName) {
+      console.error('[Parametry PRO][_attachParameterValueToProducts] BRAK NAZW: paramName=', paramName, 'valueName=', valueName, '— attach nie zadziala bez nazw (nowy endpoint checkEl wymaga)');
+      return { ok: 0, errs: [{ msg: 'Brak nazwy parametru lub wartości — wymagane dla checkEl' }], verified: 0, missing: productIds.slice() };
+    }
+    var ok = 0, errs = [], verified = 0, missing = [];
     for (var i = 0; i < productIds.length; i++) {
       if (onStep) try { onStep(i + 1, productIds.length, productIds[i]); } catch (e) {}
       try {
-        var resp = await fetchAjaxRaw(AJAX_URL + '?action=saveParametersChanges&productId=' + encodeURIComponent(productIds[i]), body);
-        if (resp && resp.errno && Number(resp.errno) !== 0) {
-          errs.push({ pid: productIds[i], msg: resp.error || ('errno ' + resp.errno) });
+        // checkEl z product= tworzy assignment i parameter→product + value→product
+        var body = 'action=checkEl&type=parameter&name=' + encodeURIComponent(paramName) +
+                   '&lang=' + encodeURIComponent(LANG) +
+                   '&parameter_id=0' +
+                   '&product=' + encodeURIComponent(productIds[i]) +
+                   '&value[]=' + encodeURIComponent(valueName);
+        var resp = await fetchAjax(body);
+        var errno = resp && resp.errno != null ? Number(resp.errno) : -1;
+        if (errno === 0 || errno === 30) {
+          ok++; verified++;
         } else {
-          ok++;
+          errs.push({ pid: productIds[i], msg: resp.error || ('errno ' + errno) });
+          missing.push(productIds[i]);
         }
       } catch (e) {
         errs.push({ pid: productIds[i], msg: e.message || String(e) });
+        missing.push(productIds[i]);
       }
       if (i < productIds.length - 1) await sleep(150);
     }
-    // v4.6.179: weryfikacja — po wszystkich operacjach sprawdz czy parameter→product istnieje
-    // dla wszystkich produktow (przez products-list?trait=paramId). Logujmy diff.
-    var missing = [];
-    try {
-      var verifySet = await _getProductIdsForNode(paramId);
-      var verifyMap = {};
-      verifySet.forEach(function (p) { verifyMap[String(p)] = 1; });
-      verified = productIds.filter(function (p) { return verifyMap[String(p)]; }).length;
-      missing = productIds.filter(function (p) { return !verifyMap[String(p)]; });
-      if (missing.length) {
-        console.error('[Parametry PRO][_attachParameterValueToProducts] WERYFIKACJA: parametr ' + paramId + ' nadal NIE jest przypisany do', missing.length, 'towarow:', missing, '— IdoSell zignorowal payload, wymagana naprawa reczna');
-      } else {
-        console.log('[Parametry PRO][_attachParameterValueToProducts] WERYFIKACJA OK: parametr ' + paramId + ' przypisany do wszystkich ' + verified + ' towarow');
-      }
-    } catch (e) {}
+    try { console.log('[Parametry PRO][_attachParameterValueToProducts][v4.6.181] paramName=' + paramName + ' valueName=' + valueName + ' ok=' + ok + '/' + productIds.length + ' missing=', missing); } catch (e) {}
     return { ok: ok, errs: errs, verified: verified, missing: missing };
   }
 
@@ -5224,7 +5221,7 @@ li.tp-row--selected > div {
           if (orphans.length) {
             details.push({ paramId: p.id, paramName: p.name, valueId: val.id, valueName: val.name, orphans: orphans.slice() });
             // 6) napraw: attach per produkt
-            var res = await _attachParameterValueToProducts(orphans, p.id, val.id);
+            var res = await _attachParameterValueToProducts(orphans, p.id, val.id, p.name, val.name);
             fixed += res.ok;
             if (res.errs && res.errs.length) res.errs.forEach(function (e) { errors.push({ vid: val.id, vname: val.name, pid: e.pid, msg: e.msg }); });
             orphans.forEach(function (pid) { paramSet[pid] = 1; });
@@ -5361,7 +5358,7 @@ li.tp-row--selected > div {
           '<div style="font-size:12px;color:#4a5568;margin-bottom:8px;">Bug typu Congrats→BE: assignment value→product istnieje, ale parameter→product nie. Aby naprawić, wpisz ID towaru (z URL edycji towaru lub kolumny ID na liście):</div>' +
           '<div style="max-height:260px;overflow-y:auto;background:#fafbfc;border:1px solid #e4e7ec;border-radius:8px;padding:8px 12px;">';
         res.suspects.forEach(function (su, idx) {
-          html += '<div class="tpra-suspect" data-pid="' + su.paramId + '" data-vid="' + su.valueId + '" style="font-size:12.5px;color:#4a5568;padding:8px 0;border-bottom:1px solid #eef0f3;display:flex;align-items:center;gap:8px;flex-wrap:wrap;">' +
+          html += '<div class="tpra-suspect" data-pid="' + su.paramId + '" data-vid="' + su.valueId + '" data-pname="' + (su.paramName || '').replace(/"/g, '&quot;') + '" data-vname="' + (su.valueName || '').replace(/"/g, '&quot;') + '" style="font-size:12.5px;color:#4a5568;padding:8px 0;border-bottom:1px solid #eef0f3;display:flex;align-items:center;gap:8px;flex-wrap:wrap;">' +
             '<b style="color:#1a202c;min-width:120px;">' + (su.paramName || su.paramId) + '</b>' +
             '<span>→ ' + (su.valueName || su.valueId) + '</span>' +
             '<span style="color:#9aa3b0;">towary: ' + su.nativeCount + '</span>' +
@@ -5394,7 +5391,10 @@ li.tp-row--selected > div {
           if (!/^\d+$/.test(pid)) { status.textContent = 'Podaj numeryczne ID'; status.style.color = '#dc2626'; return; }
           btn.disabled = true; status.textContent = 'Naprawiam…'; status.style.color = '#9aa3b0';
           var paramId = row.dataset.pid, valueId = row.dataset.vid;
-          var r = await _attachParameterValueToProducts([pid], paramId, valueId);
+          // v4.6.181: nazwy z data-* attribs (potrzebne dla checkEl endpoint)
+          var paramName = row.dataset.pname || '';
+          var valueName = row.dataset.vname || '';
+          var r = await _attachParameterValueToProducts([pid], paramId, valueId, paramName, valueName);
           if (r.ok > 0 && (!r.errs || !r.errs.length)) {
             status.textContent = '✓ Naprawione'; status.style.color = '#16a34a';
             row.style.opacity = '0.55';
@@ -6414,7 +6414,8 @@ li.tp-row--selected > div {
           // v4.6.174: domknij relacje parameter→product w target dla produktow z source
           if (affectedProducts.length) {
             statusText.textContent = 'Dopinanie parametru docelowego do ' + affectedProducts.length + ' towar(ów)...';
-            var attachRes = await _attachParameterValueToProducts(affectedProducts, selectedParamId, targetValueId);
+            // v4.6.181: paramName + valueName wymagane dla endpoint checkEl
+            var attachRes = await _attachParameterValueToProducts(affectedProducts, selectedParamId, targetValueId, selectedParamName, valName);
             // v4.6.180: gdy IdoSell zignorowal payload, pokaz modal z guided manual repair
             if (attachRes && attachRes.missing && attachRes.missing.length) {
               _showManualRepairModal(doc, selectedParamId, selectedParamName, targetValueId, valName, attachRes.missing);
@@ -10341,7 +10342,7 @@ li.tp-row--selected > div {
       },
       pagination: { perPage: loadPerPagePref('Sec') },
       footer: {
-        version: 'v4.6.180',
+        version: 'v4.6.181',
         links: []
       }
     });
@@ -15132,7 +15133,7 @@ li.tp-row--selected > div {
       ],
       pagination: { perPage: 50 },
       footer: {
-        version: 'v4.6.180',
+        version: 'v4.6.181',
         links: []
       }
     });
