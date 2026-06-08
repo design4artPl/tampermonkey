@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Parametry PRO
 // @namespace    https://idosell.com/
-// @version      4.6.187
+// @version      4.6.188
 // @description  Toolbar do grupowej edycji parametrow: panel-pro v1.2.4 inline + new-panel support, checkboxy, zaznaczanie, rozwijanie/zwijanie, grupowe usuwanie/edycja, import CSV
 // @author       SyncOffer
 // @match        https://*.iai-shop.com/panel/app/parameters.php*
@@ -3506,8 +3506,12 @@ li.tp-row--selected > div {
       var shops = (win && win.IAI && win.IAI.shops_list) ? win.IAI.shops_list.map(function (sh) { return String(sh.id); }) : ['1'];
       var ldResp = await fetchAjax('action=getParameterLangData&id=' + sourceId);
       var langs = (ldResp && ldResp.data && ldResp.data.langData) ? Object.keys(ldResp.data.langData) : [LANG];
-      var oldUrls = await _collectValueUrls(sourceId, shops, langs);
-      var destUrls = await _collectValueUrls(targetId, shops, langs);
+      // v4.6.188: parallel zamiast sequential
+      var _bothUrls = await Promise.all([
+        _collectValueUrls(sourceId, shops, langs),
+        _collectValueUrls(targetId, shops, langs)
+      ]);
+      var oldUrls = _bothUrls[0], destUrls = _bothUrls[1];
 
       // v4.6.174: jesli to cross-parameter merge, zbierz produkty PRZED merge (mergeParam
       // nie zaklada parameter→product w target — sprawdzone live demo37 2026-06-08)
@@ -3583,17 +3587,20 @@ li.tp-row--selected > div {
       } catch (ec) {}
 
       // 5) przekierowania 301: adresy starej wartosci -> adresy docelowej (+ repoint, bez lancuchow)
+      // v4.6.188: rownolegle (Promise.all) per shop
       showForceDeleteStatus(doc, 'Zakładanie przekierowań 301...');
       var redirOk = 0, repointed = 0;
-      var keys = Object.keys(oldUrls);
-      for (var k = 0; k < keys.length; k++) {
-        var key = keys[k];
+      var redirResults = await Promise.all(Object.keys(oldUrls).map(function (key) {
         var fromP = oldUrls[key], toP = destUrls[key];
-        if (!toP || toP === fromP) continue;
+        if (!toP || toP === fromP) return Promise.resolve({ repointed: 0, ok: 0 });
         var shopId = key.split('|')[0];
-        repointed += await _repointRedirects(shopId, fromP, toP);
-        if (await _addRedirect(shopId, fromP, toP)) redirOk++;
-      }
+        return _repointRedirects(shopId, fromP, toP).then(function (rp) {
+          return _addRedirect(shopId, fromP, toP).then(function (ok) {
+            return { repointed: rp, ok: ok ? 1 : 0 };
+          });
+        }).catch(function () { return { repointed: 0, ok: 0 }; });
+      }));
+      redirResults.forEach(function (r) { redirOk += r.ok; repointed += r.repointed; });
       try { tpCacheClearAll(); } catch (ex) {}
       showForceDeleteStatus(doc, 'Połączono „' + sourceName + '” → „' + targetName +
         '” — przekierowań 301: ' + redirOk + (repointed ? (', przepięto: ' + repointed) : ''));
@@ -3667,22 +3674,29 @@ li.tp-row--selected > div {
   }
 
   // Zbiera sciezki URL wartosci per sklep x jezyk (getNode -> seolink[0]). Pomija puste.
+  // v4.6.188: rownolegle wywolania (Promise.all) zamiast sekwencyjnych. Dla 7 sklepow
+  // × 5 jezykow = 35 requestow rownoczesnie zamiast jeden po drugim. Skraca czas
+  // operacji przeniesienia z ~15s do ~2s.
   async function _collectValueUrls(valueId, shops, langs) {
-    var map = {};
+    var pairs = [];
     for (var si = 0; si < shops.length; si++) {
       for (var li = 0; li < langs.length; li++) {
-        var sh = shops[si], lg = langs[li];
-        try {
-          var r = await fetchAjax('action=getNode&node_id=' + valueId + '&lang=' + lg + '&shop=' + sh + '&tree=parameters&parent=0');
-          var seo = r && r.data && r.data.seolink && r.data.seolink[0];
-          if (seo) {
-            var path;
-            try { path = new URL(seo).pathname; } catch (e) { path = seo; }
-            map[sh + '|' + lg] = path;
-          }
-        } catch (e) {}
+        pairs.push({ sh: shops[si], lg: langs[li] });
       }
     }
+    var results = await Promise.all(pairs.map(function (p) {
+      return fetchAjax('action=getNode&node_id=' + valueId + '&lang=' + p.lg + '&shop=' + p.sh + '&tree=parameters&parent=0')
+        .then(function (r) {
+          var seo = r && r.data && r.data.seolink && r.data.seolink[0];
+          if (!seo) return null;
+          var path;
+          try { path = new URL(seo).pathname; } catch (e) { path = seo; }
+          return { key: p.sh + '|' + p.lg, path: path };
+        })
+        .catch(function () { return null; });
+    }));
+    var map = {};
+    results.forEach(function (r) { if (r) map[r.key] = r.path; });
     return map;
   }
 
@@ -3825,21 +3839,21 @@ li.tp-row--selected > div {
       }
 
       // 4) nowe adresy URL + przekierowania 301
+      // v4.6.188: rownolegle Promise.all
       showForceDeleteStatus(doc, 'Zakladanie przekierowan 301...');
       var newUrls = await _collectValueUrls(targetValueId, shops, langs);
       var redirOk = 0, redirFail = 0, repointed = 0;
-      var keys = Object.keys(oldUrls);
-      for (var k = 0; k < keys.length; k++) {
-        var key = keys[k];
+      var redirResultsPM = await Promise.all(Object.keys(oldUrls).map(function (key) {
         var fromP = oldUrls[key], toP = newUrls[key];
-        if (!toP || toP === fromP) continue;
+        if (!toP || toP === fromP) return Promise.resolve({ ok: 0, fail: 0, rp: 0 });
         var shopId = key.split('|')[0];
-        // przepnij istniejace przekierowania wskazujace na stary URL -> nowy (bez lancuchow)
-        repointed += await _repointRedirects(shopId, fromP, toP);
-        // dodaj nowe przekierowanie stary -> nowy
-        var ok = await _addRedirect(shopId, fromP, toP);
-        if (ok) redirOk++; else redirFail++;
-      }
+        return _repointRedirects(shopId, fromP, toP).then(function (rp) {
+          return _addRedirect(shopId, fromP, toP).then(function (ok) {
+            return { ok: ok ? 1 : 0, fail: ok ? 0 : 1, rp: rp };
+          });
+        }).catch(function () { return { ok: 0, fail: 1, rp: 0 }; });
+      }));
+      redirResultsPM.forEach(function (r) { redirOk += r.ok; redirFail += r.fail; repointed += r.rp; });
 
       // 5) DOM + cache
       var srcLi = doc.getElementById('m_' + sourceId);
@@ -10397,7 +10411,7 @@ li.tp-row--selected > div {
       },
       pagination: { perPage: loadPerPagePref('Sec') },
       footer: {
-        version: 'v4.6.187',
+        version: 'v4.6.188',
         links: []
       }
     });
@@ -15188,7 +15202,7 @@ li.tp-row--selected > div {
       ],
       pagination: { perPage: 50 },
       footer: {
-        version: 'v4.6.187',
+        version: 'v4.6.188',
         links: []
       }
     });
