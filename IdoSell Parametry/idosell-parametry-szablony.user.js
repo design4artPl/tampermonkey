@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Parametry PRO
 // @namespace    https://idosell.com/
-// @version      4.6.188
+// @version      4.6.189
 // @description  Toolbar do grupowej edycji parametrow: panel-pro v1.2.4 inline + new-panel support, checkboxy, zaznaczanie, rozwijanie/zwijanie, grupowe usuwanie/edycja, import CSV
 // @author       SyncOffer
 // @match        https://*.iai-shop.com/panel/app/parameters.php*
@@ -3674,29 +3674,45 @@ li.tp-row--selected > div {
   }
 
   // Zbiera sciezki URL wartosci per sklep x jezyk (getNode -> seolink[0]). Pomija puste.
-  // v4.6.188: rownolegle wywolania (Promise.all) zamiast sekwencyjnych. Dla 7 sklepow
-  // × 5 jezykow = 35 requestow rownoczesnie zamiast jeden po drugim. Skraca czas
-  // operacji przeniesienia z ~15s do ~2s.
+  // v4.6.189: batched parallel (10 na raz) — pelny Promise.all powoduje throttling IdoSell.
+  // Plus early-exit gdy native count value = 0 (brak produktow = brak URLi do redirectu).
   async function _collectValueUrls(valueId, shops, langs) {
+    // EARLY EXIT: jesli wartosc nie ma zadnych produktow (native count 0), pomin całe collectowanie
+    try {
+      var d = (typeof getIframeDoc === 'function') ? getIframeDoc() : document;
+      var nativeBadge = d && d.getElementById('products_' + valueId);
+      if (nativeBadge) {
+        var nm = (nativeBadge.textContent || '').match(/(\d+)/);
+        if (nm && Number(nm[1]) === 0) {
+          try { console.log('[Parametry PRO][_collectValueUrls] valueId=' + valueId + ' native count=0, skip'); } catch (e) {}
+          return {};
+        }
+      }
+    } catch (e) {}
     var pairs = [];
     for (var si = 0; si < shops.length; si++) {
       for (var li = 0; li < langs.length; li++) {
         pairs.push({ sh: shops[si], lg: langs[li] });
       }
     }
-    var results = await Promise.all(pairs.map(function (p) {
-      return fetchAjax('action=getNode&node_id=' + valueId + '&lang=' + p.lg + '&shop=' + p.sh + '&tree=parameters&parent=0')
-        .then(function (r) {
-          var seo = r && r.data && r.data.seolink && r.data.seolink[0];
-          if (!seo) return null;
-          var path;
-          try { path = new URL(seo).pathname; } catch (e) { path = seo; }
-          return { key: p.sh + '|' + p.lg, path: path };
-        })
-        .catch(function () { return null; });
-    }));
+    // Batchowanie po 10 — IdoSell nie throttluje, ale 35+ rownoczesnych wieszalo
+    var BATCH = 10;
     var map = {};
-    results.forEach(function (r) { if (r) map[r.key] = r.path; });
+    for (var bi = 0; bi < pairs.length; bi += BATCH) {
+      var slice = pairs.slice(bi, bi + BATCH);
+      var results = await Promise.all(slice.map(function (p) {
+        return fetchAjax('action=getNode&node_id=' + valueId + '&lang=' + p.lg + '&shop=' + p.sh + '&tree=parameters&parent=0')
+          .then(function (r) {
+            var seo = r && r.data && r.data.seolink && r.data.seolink[0];
+            if (!seo) return null;
+            var path;
+            try { path = new URL(seo).pathname; } catch (e) { path = seo; }
+            return { key: p.sh + '|' + p.lg, path: path };
+          })
+          .catch(function () { return null; });
+      }));
+      results.forEach(function (r) { if (r) map[r.key] = r.path; });
+    }
     return map;
   }
 
@@ -10411,7 +10427,7 @@ li.tp-row--selected > div {
       },
       pagination: { perPage: loadPerPagePref('Sec') },
       footer: {
-        version: 'v4.6.188',
+        version: 'v4.6.189',
         links: []
       }
     });
@@ -15202,7 +15218,7 @@ li.tp-row--selected > div {
       ],
       pagination: { perPage: 50 },
       footer: {
-        version: 'v4.6.188',
+        version: 'v4.6.189',
         links: []
       }
     });
