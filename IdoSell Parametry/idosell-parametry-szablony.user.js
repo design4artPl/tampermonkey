@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Parametry PRO
 // @namespace    https://idosell.com/
-// @version      4.6.186
+// @version      4.6.187
 // @description  Toolbar do grupowej edycji parametrow: panel-pro v1.2.4 inline + new-panel support, checkboxy, zaznaczanie, rozwijanie/zwijanie, grupowe usuwanie/edycja, import CSV
 // @author       SyncOffer
 // @match        https://*.iai-shop.com/panel/app/parameters.php*
@@ -4923,58 +4923,65 @@ li.tp-row--selected > div {
   // parametru i wartosci (IdoSell sam mapuje na ID). errno:0 = nowy assignment,
   // errno:30 ("juz przypisany") = OK juz jest. Patrz [[checkel-creates-assignments]].
   // SIGNATURE CHANGE: paramName, valueName teraz wymagane (zamiast tylko ID).
-  // v4.6.186: pobierz liste istniejacych parametrow towaru przez fetch product-edit.php
-  // KLUCZOWE dla checkEl: bez elements[]= IdoSell zwraca errno:0 ale NIE tworzy assignmentu.
-  // Z elements[]= zawierajacymi ID istniejacych parametrow — assignment powstaje.
-  // Zniffowane z natywnego "Dodaj parametr" submit (user na demo37, 2026-06-09).
-  async function _getProductExistingParamIds(productId) {
-    var iWin = (typeof getIframeWin === 'function') ? getIframeWin() : null;
-    return new Promise(function (resolve) {
-      var xhr = iWin ? new iWin.XMLHttpRequest() : new XMLHttpRequest();
-      xhr.open('GET', '/panel/product-edit.php?idt=' + encodeURIComponent(productId));
-      xhr.setRequestHeader('X-Requested-With', 'XMLHttpRequest');
-      xhr.onload = function () {
-        var txt = xhr.responseText || '';
-        var ids = [];
-        var seen = {};
-        // parametry root produktu: name="parameters[paramsPrio][0][]" value="<id>"
-        var re = /name=["']parameters\[paramsPrio\]\[0\]\[\]["']\s+value=["'](\d+)["']/g;
-        var m;
-        while ((m = re.exec(txt)) !== null) { if (!seen[m[1]]) { seen[m[1]] = 1; ids.push(m[1]); } }
-        resolve(ids);
-      };
-      xhr.onerror = function () { resolve([]); };
-      xhr.send();
-    });
-  }
-
+  // v4.6.187: PRAWDZIWE 2-stage flow zniffowane live na demo37 (2026-06-09):
+  //   KROK 1: checkEl z product= → response data.id (param) + data.children[i].id (value)
+  //   KROK 2: saveParametersChanges z data=[{add,paramId},{add,valueId}]&columns=[]
+  // BEZ KROKU 2 assignment nie powstaje. checkEl tylko rozpoznaje/tworzy elementy w drzewie.
+  // saveParametersChanges add zapisuje assignment value→product i parameter→product.
+  // Zweryfikowane: TM_TEST_P na produkcie 100001413 po obu krokach → widoczny w parametersTable.
   async function _attachParameterValueToProducts(productIds, paramId, valueId, paramName, valueName, onStep) {
     if (!productIds || !productIds.length) return { ok: 0, errs: [], verified: 0, missing: [] };
     if (!paramName || !valueName) {
       console.error('[Parametry PRO][_attachParameterValueToProducts] BRAK NAZW: paramName=', paramName, 'valueName=', valueName);
-      return { ok: 0, errs: [{ msg: 'Brak nazwy parametru lub wartości — wymagane dla checkEl' }], verified: 0, missing: productIds.slice() };
+      return { ok: 0, errs: [{ msg: 'Brak nazwy parametru lub wartości' }], verified: 0, missing: productIds.slice() };
     }
     var ok = 0, errs = [], verified = 0, missing = [];
     for (var i = 0; i < productIds.length; i++) {
       if (onStep) try { onStep(i + 1, productIds.length, productIds[i]); } catch (e) {}
       try {
-        // v4.6.186: KROK 1 — pobierz liste istniejacych parametrow towaru
-        var existingParams = await _getProductExistingParamIds(productIds[i]);
-        // KROK 2 — checkEl z elements[] = lista
-        var body = 'action=checkEl&type=parameter&name=' + encodeURIComponent(paramName) +
-                   '&lang=' + encodeURIComponent(LANG) +
-                   '&parameter_id=0' +
-                   '&product=' + encodeURIComponent(productIds[i]);
-        existingParams.forEach(function (epid) {
-          body += '&elements[]=' + encodeURIComponent(epid);
-        });
-        body += '&value[]=' + encodeURIComponent(valueName);
-        var resp = await fetchAjax(body);
-        var errno = resp && resp.errno != null ? Number(resp.errno) : -1;
-        if (errno === 0 || errno === 30) {
+        // KROK 1: checkEl — rozpoznaje param/wartosc w drzewie, zwraca ich ID
+        var body1 = 'action=checkEl&type=parameter&name=' + encodeURIComponent(paramName) +
+                    '&lang=' + encodeURIComponent(LANG) +
+                    '&parameter_id=0' +
+                    '&product=' + encodeURIComponent(productIds[i]) +
+                    '&value[]=' + encodeURIComponent(valueName);
+        var resp1 = await fetchAjax(body1);
+        var errno1 = resp1 && resp1.errno != null ? Number(resp1.errno) : -1;
+        // errno:0 = utworzono, errno:30 = "juz przypisany" (ale ID jest w response)
+        if (errno1 !== 0 && errno1 !== 30) {
+          errs.push({ pid: productIds[i], msg: 'checkEl: ' + (resp1.error || 'errno ' + errno1) });
+          missing.push(productIds[i]);
+          continue;
+        }
+        // Wyciagnij ID z response (zwracane przez checkEl niezaleznie od errno)
+        var resolvedParamId = resp1.data && resp1.data.id;
+        var resolvedValueId = null;
+        if (resp1.data && Array.isArray(resp1.data.children)) {
+          // znajdz dziecko po pol-name
+          for (var c = 0; c < resp1.data.children.length; c++) {
+            var ch = resp1.data.children[c];
+            var nm = ch && ch.data && ch.data.pol && ch.data.pol.name;
+            if (nm === valueName) { resolvedValueId = ch.id; break; }
+          }
+          if (!resolvedValueId && resp1.data.children.length) resolvedValueId = resp1.data.children[resp1.data.children.length - 1].id;
+        }
+        if (!resolvedParamId || !resolvedValueId) {
+          errs.push({ pid: productIds[i], msg: 'checkEl brak ID w response' });
+          missing.push(productIds[i]);
+          continue;
+        }
+        // KROK 2: saveParametersChanges — faktyczny zapis assignment
+        var changes = JSON.stringify([
+          { operation: 'add', parameter: String(resolvedParamId) },
+          { operation: 'add', parameter: String(resolvedValueId) }
+        ]);
+        var body2 = 'data=' + encodeURIComponent(changes) + '&columns=' + encodeURIComponent('[]');
+        var resp2 = await fetchAjaxRaw(AJAX_URL + '?action=saveParametersChanges&productId=' + encodeURIComponent(productIds[i]), body2);
+        var errno2 = resp2 && resp2.errno != null ? Number(resp2.errno) : -1;
+        if (errno2 === 0) {
           ok++; verified++;
         } else {
-          errs.push({ pid: productIds[i], msg: resp.error || ('errno ' + errno) });
+          errs.push({ pid: productIds[i], msg: 'saveParametersChanges: ' + (resp2.error || 'errno ' + errno2) });
           missing.push(productIds[i]);
         }
       } catch (e) {
@@ -4983,7 +4990,7 @@ li.tp-row--selected > div {
       }
       if (i < productIds.length - 1) await sleep(150);
     }
-    try { console.log('[Parametry PRO][_attachParameterValueToProducts][v4.6.186] paramName=' + paramName + ' valueName=' + valueName + ' ok=' + ok + '/' + productIds.length + ' missing=', missing); } catch (e) {}
+    try { console.log('[Parametry PRO][_attachParameterValueToProducts][v4.6.187] paramName=' + paramName + ' valueName=' + valueName + ' ok=' + ok + '/' + productIds.length + ' missing=', missing); } catch (e) {}
     return { ok: ok, errs: errs, verified: verified, missing: missing };
   }
 
@@ -10390,7 +10397,7 @@ li.tp-row--selected > div {
       },
       pagination: { perPage: loadPerPagePref('Sec') },
       footer: {
-        version: 'v4.6.186',
+        version: 'v4.6.187',
         links: []
       }
     });
@@ -15181,7 +15188,7 @@ li.tp-row--selected > div {
       ],
       pagination: { perPage: 50 },
       footer: {
-        version: 'v4.6.186',
+        version: 'v4.6.187',
         links: []
       }
     });
