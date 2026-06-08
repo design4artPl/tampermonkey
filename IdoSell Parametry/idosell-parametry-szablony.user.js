@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Parametry PRO
 // @namespace    https://idosell.com/
-// @version      4.6.189
+// @version      4.6.190
 // @description  Toolbar do grupowej edycji parametrow: panel-pro v1.2.4 inline + new-panel support, checkboxy, zaznaczanie, rozwijanie/zwijanie, grupowe usuwanie/edycja, import CSV
 // @author       SyncOffer
 // @match        https://*.iai-shop.com/panel/app/parameters.php*
@@ -3604,6 +3604,13 @@ li.tp-row--selected > div {
       try { tpCacheClearAll(); } catch (ex) {}
       showForceDeleteStatus(doc, 'Połączono „' + sourceName + '” → „' + targetName +
         '” — przekierowań 301: ' + redirOk + (repointed ? (', przepięto: ' + repointed) : ''));
+      // v4.6.190: odswiez drzewo dla obu parametrow (source + target jesli rozne)
+      try {
+        var srcP = sourceParentId;
+        var tgtP = getParentId(doc, targetId);
+        if (srcP) await refreshParamValuesInTree(doc, srcP);
+        if (tgtP && tgtP !== srcP) await refreshParamValuesInTree(doc, tgtP);
+      } catch (e) {}
     } catch (err) {
       showForceDeleteStatus(doc, 'Błąd łączenia: ' + (err && err.message || err), true);
     }
@@ -3856,8 +3863,12 @@ li.tp-row--selected > div {
 
       // 4) nowe adresy URL + przekierowania 301
       // v4.6.188: rownolegle Promise.all
+      // v4.6.190: sleep przed collectowaniem URLi swiezo utworzonej target value
+      // (getNode moze nie miec jeszcze seolinkow indeksowanych w sesji)
+      await sleep(500);
       showForceDeleteStatus(doc, 'Zakladanie przekierowan 301...');
       var newUrls = await _collectValueUrls(targetValueId, shops, langs);
+      try { console.log('[Parametry PRO][redirect] oldUrls=', oldUrls, 'newUrls=', newUrls); } catch (e) {}
       var redirOk = 0, redirFail = 0, repointed = 0;
       var redirResultsPM = await Promise.all(Object.keys(oldUrls).map(function (key) {
         var fromP = oldUrls[key], toP = newUrls[key];
@@ -3883,6 +3894,9 @@ li.tp-row--selected > div {
       var msg = 'Przeniesiono \u201e' + sourceName + '\u201d do \u201e' + targetParamName +
         '\u201d \u2014 przekierowan 301: ' + redirOk + (repointed ? (', przepieto: ' + repointed) : '') + (redirFail ? (', nieudanych: ' + redirFail) : '');
       showForceDeleteStatus(doc, msg, !!redirFail);
+      // v4.6.190: odswiez drzewo dla obu parametrow (source + target)
+      try { await refreshParamValuesInTree(doc, sourceParamId); } catch (e) {}
+      try { await refreshParamValuesInTree(doc, targetParamId); } catch (e) {}
     } catch (e) {
       showForceDeleteStatus(doc, 'Blad przenoszenia: ' + (e && e.message || e), true);
     }
@@ -6529,6 +6543,21 @@ li.tp-row--selected > div {
 
       bulkAbortController = null;
       updateCounter(doc);
+
+      // v4.6.190: odswiez drzewo dla zmienionych parametrow (source + target)
+      try {
+        var srcParamsToRefresh = {};
+        for (var sf = 0; sf < valueIds.length; sf++) {
+          var li2 = doc.getElementById('m_' + valueIds[sf]);
+          var ul2 = li2 ? li2.closest('ul[id^="block_group"]') : null;
+          var sp = ul2 ? ul2.id.replace('block_group', '') : null;
+          if (sp && sp !== '0') srcParamsToRefresh[sp] = 1;
+        }
+        srcParamsToRefresh[selectedParamId] = 1;
+        for (var rp in srcParamsToRefresh) {
+          try { await refreshParamValuesInTree(doc, rp); } catch (e) {}
+        }
+      } catch (e) {}
 
       // Show results
       body.innerHTML = '';
@@ -10427,7 +10456,7 @@ li.tp-row--selected > div {
       },
       pagination: { perPage: loadPerPagePref('Sec') },
       footer: {
-        version: 'v4.6.189',
+        version: 'v4.6.190',
         links: []
       }
     });
@@ -15218,7 +15247,7 @@ li.tp-row--selected > div {
       ],
       pagination: { perPage: 50 },
       footer: {
-        version: 'v4.6.189',
+        version: 'v4.6.190',
         links: []
       }
     });
