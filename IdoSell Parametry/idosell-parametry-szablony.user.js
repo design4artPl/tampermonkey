@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Parametry PRO
 // @namespace    https://idosell.com/
-// @version      4.6.192
+// @version      4.6.193
 // @description  Toolbar do grupowej edycji parametrow: panel-pro v1.2.4 inline + new-panel support, checkboxy, zaznaczanie, rozwijanie/zwijanie, grupowe usuwanie/edycja, import CSV
 // @author       SyncOffer
 // @match        https://*.iai-shop.com/panel/app/parameters.php*
@@ -5510,17 +5510,16 @@ li.tp-row--selected > div {
     });
   }
 
-  // v4.6.173: soft refresh wartosci parametru w drzewie (bez location.reload)
+  // v4.6.193: WLASCIWY selektor — natywny element ma id="show_group<pid>", nie
+  // "showChildren_<pid>". Wcześniej refresh nigdy nie działał bo getElementById zwracał null.
+  // Forsowany refresh — niezaleznie czy parametr jest rozwiniety.
   function refreshParamValuesInTree(doc, pid) {
     return new Promise(function (resolve) {
+      var btn = doc.getElementById('show_group' + pid) || doc.getElementById('showChildren_' + pid);
+      if (!btn) return resolve();
       var block = doc.getElementById('block_group' + pid);
-      var btn = doc.getElementById('showChildren_' + pid);
-      if (!btn || !block) return resolve();
-      var wasExpanded = !!block.querySelector(':scope > li[id^="m_"]');
-      if (!wasExpanded) return resolve();
-      btn.click(); // collapse — czyści DOM dzieci
-      setTimeout(function () {
-        btn.click(); // expand — IdoSell pobiera dzieci na nowo
+      var wasExpanded = block && !!block.querySelector(':scope > li[id^="m_"]');
+      function waitForChildren() {
         var checks = 0;
         var iv = setInterval(function () {
           checks++;
@@ -5530,7 +5529,14 @@ li.tp-row--selected > div {
             resolve();
           }
         }, 30);
-      }, 150);
+      }
+      if (wasExpanded) {
+        btn.click(); // collapse
+        setTimeout(function () { btn.click(); waitForChildren(); }, 150);
+      } else {
+        btn.click(); // wymuszony expand
+        waitForChildren();
+      }
     });
   }
 
@@ -10446,7 +10452,7 @@ li.tp-row--selected > div {
       },
       pagination: { perPage: loadPerPagePref('Sec') },
       footer: {
-        version: 'v4.6.192',
+        version: 'v4.6.193',
         links: []
       }
     });
@@ -15237,7 +15243,7 @@ li.tp-row--selected > div {
       ],
       pagination: { perPage: 50 },
       footer: {
-        version: 'v4.6.192',
+        version: 'v4.6.193',
         links: []
       }
     });
