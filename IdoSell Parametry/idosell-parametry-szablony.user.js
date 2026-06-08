@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Parametry PRO
 // @namespace    https://idosell.com/
-// @version      4.6.191
+// @version      4.6.192
 // @description  Toolbar do grupowej edycji parametrow: panel-pro v1.2.4 inline + new-panel support, checkboxy, zaznaczanie, rozwijanie/zwijanie, grupowe usuwanie/edycja, import CSV
 // @author       SyncOffer
 // @match        https://*.iai-shop.com/panel/app/parameters.php*
@@ -3807,6 +3807,8 @@ li.tp-row--selected > div {
       var oldUrls = await _collectValueUrls(sourceId, shops, langs);
 
       // 2) kolizja nazw w parametrze docelowym
+      // v4.6.192: invalidate cache PRZED loadChildValues (cache TTL 1h mogl trzymac stare dane)
+      try { tpCacheDel('ch2', targetParamId + '_' + LANG); } catch (e) {}
       var targetChildren = [];
       try { targetChildren = await loadChildValues(targetParamId); } catch (e) {}
       var existing = null;
@@ -6437,6 +6439,8 @@ li.tp-row--selected > div {
       var results = { success: 0, errors: [], total: valueIds.length, aborted: false };
 
       // Step 1: Load existing values in target parameter
+      // v4.6.192: invalidate cache PRZED loadChildValues (cache TTL 1h mogl trzymac stale)
+      try { tpCacheDel('ch2', selectedParamId + '_' + LANG); } catch (e) {}
       statusText.textContent = 'Ladowanie wartosci parametru docelowego...';
       var targetValues = [];
       try {
@@ -10442,7 +10446,7 @@ li.tp-row--selected > div {
       },
       pagination: { perPage: loadPerPagePref('Sec') },
       footer: {
-        version: 'v4.6.191',
+        version: 'v4.6.192',
         links: []
       }
     });
@@ -15233,7 +15237,7 @@ li.tp-row--selected > div {
       ],
       pagination: { perPage: 50 },
       footer: {
-        version: 'v4.6.191',
+        version: 'v4.6.192',
         links: []
       }
     });
