@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Parametry PRO
 // @namespace    https://idosell.com/
-// @version      4.6.193
+// @version      4.6.194
 // @description  Toolbar do grupowej edycji parametrow: panel-pro v1.2.4 inline + new-panel support, checkboxy, zaznaczanie, rozwijanie/zwijanie, grupowe usuwanie/edycja, import CSV
 // @author       SyncOffer
 // @match        https://*.iai-shop.com/panel/app/parameters.php*
@@ -5510,34 +5510,11 @@ li.tp-row--selected > div {
     });
   }
 
-  // v4.6.193: WLASCIWY selektor — natywny element ma id="show_group<pid>", nie
-  // "showChildren_<pid>". Wcześniej refresh nigdy nie działał bo getElementById zwracał null.
-  // Forsowany refresh — niezaleznie czy parametr jest rozwiniety.
+  // v4.6.194: rollback v4.6.193 — natywny show_group click ma side effects ktore
+  // psuły operacje (user: "teraz znowu nie przenosi"). Wracamy do no-op refresh
+  // (priorytet: operacja > odświeżanie widoku). Odświeżenie poprzez F5.
   function refreshParamValuesInTree(doc, pid) {
-    return new Promise(function (resolve) {
-      var btn = doc.getElementById('show_group' + pid) || doc.getElementById('showChildren_' + pid);
-      if (!btn) return resolve();
-      var block = doc.getElementById('block_group' + pid);
-      var wasExpanded = block && !!block.querySelector(':scope > li[id^="m_"]');
-      function waitForChildren() {
-        var checks = 0;
-        var iv = setInterval(function () {
-          checks++;
-          var b = doc.getElementById('block_group' + pid);
-          if ((b && b.querySelector(':scope > li[id^="m_"]')) || checks > 100) {
-            clearInterval(iv);
-            resolve();
-          }
-        }, 30);
-      }
-      if (wasExpanded) {
-        btn.click(); // collapse
-        setTimeout(function () { btn.click(); waitForChildren(); }, 150);
-      } else {
-        btn.click(); // wymuszony expand
-        waitForChildren();
-      }
-    });
+    return Promise.resolve();
   }
 
   // v4.6.173: custom modal podsumowania bulk operacji (zastepuje natywny alert())
@@ -10452,7 +10429,7 @@ li.tp-row--selected > div {
       },
       pagination: { perPage: loadPerPagePref('Sec') },
       footer: {
-        version: 'v4.6.193',
+        version: 'v4.6.194',
         links: []
       }
     });
@@ -15243,7 +15220,7 @@ li.tp-row--selected > div {
       ],
       pagination: { perPage: 50 },
       footer: {
-        version: 'v4.6.193',
+        version: 'v4.6.194',
         links: []
       }
     });
