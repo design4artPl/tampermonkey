@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Parametry PRO
 // @namespace    https://idosell.com/
-// @version      4.6.183
+// @version      4.6.184
 // @description  Toolbar do grupowej edycji parametrow: panel-pro v1.2.4 inline + new-panel support, checkboxy, zaznaczanie, rozwijanie/zwijanie, grupowe usuwanie/edycja, import CSV
 // @author       SyncOffer
 // @match        https://*.iai-shop.com/panel/app/parameters.php*
@@ -4969,6 +4969,16 @@ li.tp-row--selected > div {
     var seen = {};
     function add(id) { var s = String(id); if (!seen[s] && /^\d+$/.test(s)) { seen[s] = 1; ids.push(s); } }
     var iWin = (typeof getIframeWin === 'function') ? getIframeWin() : null;
+    function xhrGet(url) {
+      return new Promise(function (resolve) {
+        var xhr = iWin ? new iWin.XMLHttpRequest() : new XMLHttpRequest();
+        xhr.open('GET', url);
+        xhr.setRequestHeader('X-Requested-With', 'XMLHttpRequest');
+        xhr.onload = function () { resolve(xhr.responseText || ''); };
+        xhr.onerror = function () { resolve(''); };
+        xhr.send();
+      });
+    }
     function xhrPost(url, body) {
       return new Promise(function (resolve) {
         var xhr = iWin ? new iWin.XMLHttpRequest() : new XMLHttpRequest();
@@ -4980,6 +4990,10 @@ li.tp-row--selected > div {
         xhr.send(body);
       });
     }
+    // v4.6.184: KROK 0 — GET na products-list.php?trait= ustawia criteriaId w sesji
+    // (302 redirect → criteriaId=N w URL). BEZ TEGO SETUP dataTable POST zwraca
+    // "Nie znaleziono produktow" niezaleznie od trait w body!
+    try { await xhrGet('/panel/products-list.php?trait=' + encodeURIComponent(nodeId)); } catch (e) {}
     // 1) view-manager.php dataTable AJAX z paginacja
     var url = '/panel/ajax/view-manager.php?type=products&view=ajax_content';
     var baseBody = '__iai_shop_panel[__encoding]=utf-8&trait=' + encodeURIComponent(nodeId) +
@@ -10334,7 +10348,7 @@ li.tp-row--selected > div {
       },
       pagination: { perPage: loadPerPagePref('Sec') },
       footer: {
-        version: 'v4.6.183',
+        version: 'v4.6.184',
         links: []
       }
     });
@@ -15125,7 +15139,7 @@ li.tp-row--selected > div {
       ],
       pagination: { perPage: 50 },
       footer: {
-        version: 'v4.6.183',
+        version: 'v4.6.184',
         links: []
       }
     });
