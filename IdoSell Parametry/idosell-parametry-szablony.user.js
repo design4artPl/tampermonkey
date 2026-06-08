@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Parametry PRO
 // @namespace    https://idosell.com/
-// @version      4.6.175
+// @version      4.6.176
 // @description  Toolbar do grupowej edycji parametrow: panel-pro v1.2.4 inline + new-panel support, checkboxy, zaznaczanie, rozwijanie/zwijanie, grupowe usuwanie/edycja, import CSV
 // @author       SyncOffer
 // @match        https://*.iai-shop.com/panel/app/parameters.php*
@@ -4973,31 +4973,30 @@ li.tp-row--selected > div {
       var p = params[i];
       if (onProgress) try { onProgress({ stage: 'param', index: i + 1, total: params.length, name: p.name }); } catch (e) {}
       try {
-        // 2) produkty parametru (parameter→product)
+        // 2) wartosci tego parametru — przez AJAX (loadChildValues), nie DOM
+        var values = [];
+        try { values = await loadChildValues(p.id); } catch (e) { values = []; }
+        if (!values.length) continue;
+        // 3) produkty parametru (parameter→product) — pobierz tylko gdy sa wartosci
         var paramProducts = await _getProductIdsViaProductsList(p.id);
         var paramSet = {};
         paramProducts.forEach(function (id) { paramSet[id] = 1; });
-        // 3) wartosci tego parametru (z drzewa — jesli rozwiniete) lub przez expand
-        await ensureNodeExpanded(d, p.id);
-        var block = d.getElementById('block_group' + p.id);
-        if (!block) continue;
-        var valueLis = block.querySelectorAll(':scope > li[id^="m_"]');
-        for (var v = 0; v < valueLis.length; v++) {
-          var vid = valueLis[v].id.replace('m_', '');
-          var vSub = d.getElementById('showMenuSub_' + vid);
-          var vname = vSub ? vSub.textContent.trim() : vid;
-          if (onProgress) try { onProgress({ stage: 'value', paramName: p.name, valueName: vname, valueIndex: v + 1, valueTotal: valueLis.length }); } catch (e) {}
+        for (var v = 0; v < values.length; v++) {
+          var val = values[v];
+          if (onProgress) try { onProgress({ stage: 'value', paramName: p.name, valueName: val.name, valueIndex: v + 1, valueTotal: values.length }); } catch (e) {}
+          // wartosci bez produktow (natywny licznik) — pominiete dla wydajnosci
+          if (val.productCount === 0) { scanned++; continue; }
           // 4) produkty wartosci (value→product)
-          var valProducts = await _getProductIdsViaProductsList(vid);
+          var valProducts = await _getProductIdsViaProductsList(val.id);
           scanned++;
           // 5) sieroty = produkty wartosci ktore NIE sa w parametrze
           var orphans = valProducts.filter(function (pid) { return !paramSet[pid]; });
           if (orphans.length) {
-            details.push({ paramId: p.id, paramName: p.name, valueId: vid, valueName: vname, orphans: orphans.slice() });
+            details.push({ paramId: p.id, paramName: p.name, valueId: val.id, valueName: val.name, orphans: orphans.slice() });
             // 6) napraw: attach per produkt
-            var res = await _attachParameterValueToProducts(orphans, p.id, vid);
+            var res = await _attachParameterValueToProducts(orphans, p.id, val.id);
             fixed += res.ok;
-            if (res.errs && res.errs.length) res.errs.forEach(function (e) { errors.push({ vid: vid, vname: vname, pid: e.pid, msg: e.msg }); });
+            if (res.errs && res.errs.length) res.errs.forEach(function (e) { errors.push({ vid: val.id, vname: val.name, pid: e.pid, msg: e.msg }); });
             // dodaj naprawione do setu parametru, zeby nie powtarzac
             orphans.forEach(function (pid) { paramSet[pid] = 1; });
           }
@@ -10043,7 +10042,7 @@ li.tp-row--selected > div {
       },
       pagination: { perPage: loadPerPagePref('Sec') },
       footer: {
-        version: 'v4.6.175',
+        version: 'v4.6.176',
         links: []
       }
     });
@@ -14834,7 +14833,7 @@ li.tp-row--selected > div {
       ],
       pagination: { perPage: 50 },
       footer: {
-        version: 'v4.6.175',
+        version: 'v4.6.176',
         links: []
       }
     });
