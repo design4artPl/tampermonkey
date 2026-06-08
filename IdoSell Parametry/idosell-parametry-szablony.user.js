@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Parametry PRO
 // @namespace    https://idosell.com/
-// @version      4.6.177
+// @version      4.6.178
 // @description  Toolbar do grupowej edycji parametrow: panel-pro v1.2.4 inline + new-panel support, checkboxy, zaznaczanie, rozwijanie/zwijanie, grupowe usuwanie/edycja, import CSV
 // @author       SyncOffer
 // @match        https://*.iai-shop.com/panel/app/parameters.php*
@@ -3525,6 +3525,9 @@ li.tp-row--selected > div {
       if (affectedProductsForFix.length) {
         showForceDeleteStatus(doc, 'Dopinanie parametru docelowego do ' + affectedProductsForFix.length + ' towar(ów)...');
         await _attachParameterValueToProducts(affectedProductsForFix, tgtParentForFix, targetId);
+        // v4.6.178: odepnij source parametr z towarow ktore stracily ostatnia jego wartosc
+        showForceDeleteStatus(doc, 'Sprawdzanie i odpinanie pustego parametru źródłowego...');
+        await _detachOrphanSourceParam(srcParentForFix, affectedProductsForFix);
       }
 
       // 3) DOM: usun zrodlo, ewentualnie pusty parametr-rodzic
@@ -3796,6 +3799,9 @@ li.tp-row--selected > div {
       if (affectedForMove.length) {
         showForceDeleteStatus(doc, 'Dopinanie parametru docelowego do ' + affectedForMove.length + ' towar(ów)...');
         await _attachParameterValueToProducts(affectedForMove, targetParamId, targetValueId);
+        // v4.6.178: odepnij source parametr z towarow ktore stracily ostatnia jego wartosc
+        showForceDeleteStatus(doc, 'Sprawdzanie i odpinanie pustego parametru źródłowego...');
+        await _detachOrphanSourceParam(sourceParamId, affectedForMove);
       }
 
       // 4) nowe adresy URL + przekierowania 301
@@ -4914,37 +4920,97 @@ li.tp-row--selected > div {
     return { ok: ok, errs: errs };
   }
 
-  // v4.6.177: pobierz liste ID produktow dla wezla — primary: products-list?trait=
-  // (zweryfikowane na demo37 — dziala dla value→product gdy parameter→product istnieje);
-  // fallback: numberOfOccurrence (zawodne, ale czasem dziala). Po v4.6.174 bug: uzywalem
-  // tylko numberOfOccurrence ktore zwracalo [] → fix mergeParam→attach nie wywolany.
+  // v4.6.178: robust scrape ID produktow z wielu zrodel + paginacja products-list.
+  // - products-list.php?trait= filtruje przez JOIN parameter→product AND value→product,
+  //   wiec dziala dla wartosci tylko gdy oba assignmenty istnieja (czyli PRZED merge).
+  // - numberOfOccurrence bywa zawodne (na demo37 zwraca [] mimo assignmentow).
+  // - natywny iteminfo daje LICZBE produktow (do walidacji ostrzezenia).
+  // Pobiera unie ze wszystkich zrodel + paginacja po liscie products.
   async function _getProductIdsForNode(nodeId) {
     var ids = [];
     var seen = {};
-    function add(id) { var s = String(id); if (!seen[s]) { seen[s] = 1; ids.push(s); } }
-    // 1) products-list.php?trait= (primary, najwiarygodniejsze)
-    try {
-      var iWin = (typeof getIframeWin === 'function') ? getIframeWin() : null;
-      var txt = await new Promise(function (resolve) {
+    function add(id) { var s = String(id); if (!seen[s] && /^\d+$/.test(s)) { seen[s] = 1; ids.push(s); } }
+    var iWin = (typeof getIframeWin === 'function') ? getIframeWin() : null;
+    function xhrGet(url) {
+      return new Promise(function (resolve) {
         var xhr = iWin ? new iWin.XMLHttpRequest() : new XMLHttpRequest();
-        xhr.open('GET', '/panel/products-list.php?trait=' + encodeURIComponent(nodeId));
+        xhr.open('GET', url);
         xhr.setRequestHeader('X-Requested-With', 'XMLHttpRequest');
         xhr.onload = function () { resolve(xhr.responseText || ''); };
         xhr.onerror = function () { resolve(''); };
         xhr.send();
       });
+    }
+    // 1) products-list.php?trait= primary + paginacja jesli > 50 produktow
+    try {
+      var page1 = await xhrGet('/panel/products-list.php?trait=' + encodeURIComponent(nodeId));
       var re = /idt=(\d+)/g, m;
-      while ((m = re.exec(txt)) !== null) add(m[1]);
+      while ((m = re.exec(page1)) !== null) add(m[1]);
+      // Paginacja: szukaj 'Łącznie: N' lub 'paginacja' z totalCount
+      var totalM = page1.match(/Ł[aą]cznie[:\s]+(\d+)/i) || page1.match(/total[^\d]+(\d+)/i);
+      var totalCnt = totalM ? Number(totalM[1]) : 0;
+      var perPage = 50;
+      if (totalCnt > perPage && ids.length < totalCnt) {
+        var pages = Math.ceil(totalCnt / perPage);
+        for (var p = 2; p <= Math.min(pages, 20); p++) {
+          var pageN = await xhrGet('/panel/products-list.php?trait=' + encodeURIComponent(nodeId) + '&page=' + p);
+          var re2 = /idt=(\d+)/g, m2;
+          while ((m2 = re2.exec(pageN)) !== null) add(m2[1]);
+        }
+      }
     } catch (e) {}
-    // 2) numberOfOccurrence fallback — czesto puste ale czasem zwraca cos czego nie ma w products-list
+    // 2) numberOfOccurrence fallback
     try {
       var occ = await fetchAjax('action=numberOfOccurrence&id=' + encodeURIComponent(nodeId));
       var raw = occ && occ.data ? occ.data.products : null;
       if (Array.isArray(raw)) raw.forEach(function (p) { add(typeof p === 'object' ? (p.id || p.product_id) : p); });
       else if (raw && typeof raw === 'object') Object.values(raw).forEach(function (p) { add(typeof p === 'object' ? (p.id || p.product_id) : p); });
     } catch (e) {}
-    try { console.log('[Parametry PRO][_getProductIdsForNode]', nodeId, '→', ids); } catch (e) {}
+    // 3) ostrzezenie gdy natywny licznik > zebranych
+    try {
+      var d = (typeof getIframeDoc === 'function') ? getIframeDoc() : document;
+      var nativeBadge = d.getElementById('products_' + nodeId);
+      if (nativeBadge) {
+        var nm = (nativeBadge.textContent || '').match(/(\d+)/);
+        var nativeCnt = nm ? Number(nm[1]) : 0;
+        if (nativeCnt > ids.length) {
+          console.warn('[Parametry PRO][_getProductIdsForNode]', nodeId, 'natywny licznik=' + nativeCnt, 'ale zebrano tylko', ids.length, '— mozliwy zawodny endpoint IdoSell');
+        }
+      }
+    } catch (e) {}
+    try { console.log('[Parametry PRO][_getProductIdsForNode]', nodeId, '→', ids.length, ids); } catch (e) {}
     return ids;
+  }
+
+  // v4.6.178: po remove source value, dla kazdego produktu z affectedProducts sprawdz
+  // czy nadal ma jakas wartosc srcParamId. Jesli nie — odepnij parametr od towaru
+  // (zeby parametr-rodzic nie wisial pusty w towarze). Uzywa swiezo pobranych produktow
+  // srcParam (po remove), wiec dziala niezaleznie od cache.
+  async function _detachOrphanSourceParam(srcParamId, affectedProductIds, onStatus) {
+    if (!srcParamId || !affectedProductIds || !affectedProductIds.length) return { detached: 0, errs: [] };
+    var stillHasParam = {};
+    try {
+      var nowList = await _getProductIdsForNode(srcParamId);
+      nowList.forEach(function (id) { stillHasParam[String(id)] = 1; });
+    } catch (e) { return { detached: 0, errs: [{ msg: 'cannot refresh ' + srcParamId }] }; }
+    var orphans = affectedProductIds.filter(function (pid) { return !stillHasParam[String(pid)]; });
+    if (!orphans.length) return { detached: 0, errs: [] };
+    var data = JSON.stringify([{ operation: 'remove', parameter: String(srcParamId) }]);
+    var body = 'data=' + encodeURIComponent(data) + '&columns=' + encodeURIComponent('[]');
+    var detached = 0, errs = [];
+    for (var i = 0; i < orphans.length; i++) {
+      if (onStatus) try { onStatus(i + 1, orphans.length, orphans[i]); } catch (e) {}
+      try {
+        var resp = await fetchAjaxRaw(AJAX_URL + '?action=saveParametersChanges&productId=' + encodeURIComponent(orphans[i]), body);
+        if (resp && resp.errno && Number(resp.errno) !== 0) errs.push({ pid: orphans[i], msg: resp.error || ('errno ' + resp.errno) });
+        else detached++;
+      } catch (e) {
+        errs.push({ pid: orphans[i], msg: e.message || String(e) });
+      }
+      if (i < orphans.length - 1) await sleep(120);
+    }
+    try { console.log('[Parametry PRO][_detachOrphanSourceParam] srcParam=' + srcParamId + ' detached=' + detached + ' affected=' + affectedProductIds.length + ' orphans=' + orphans.length); } catch (e) {}
+    return { detached: detached, errs: errs };
   }
 
   // v4.6.175: pobierz liste ID produktow dla wezla przez natywna strone products-list?trait=
@@ -6203,6 +6269,9 @@ li.tp-row--selected > div {
           if (affectedProducts.length) {
             statusText.textContent = 'Dopinanie parametru docelowego do ' + affectedProducts.length + ' towar(ów)...';
             await _attachParameterValueToProducts(affectedProducts, selectedParamId, targetValueId);
+            // v4.6.178: odepnij source parametr od towarow ktore stracily wszystkie jego wartosci
+            statusText.textContent = 'Sprawdzanie i odpinanie pustego parametru źródłowego...';
+            await _detachOrphanSourceParam(sourceParamId, affectedProducts);
           }
 
           // Remove from DOM
@@ -10122,7 +10191,7 @@ li.tp-row--selected > div {
       },
       pagination: { perPage: loadPerPagePref('Sec') },
       footer: {
-        version: 'v4.6.177',
+        version: 'v4.6.178',
         links: []
       }
     });
@@ -14913,7 +14982,7 @@ li.tp-row--selected > div {
       ],
       pagination: { perPage: 50 },
       footer: {
-        version: 'v4.6.177',
+        version: 'v4.6.178',
         links: []
       }
     });
