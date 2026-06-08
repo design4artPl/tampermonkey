@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Parametry PRO
 // @namespace    https://idosell.com/
-// @version      4.6.178
+// @version      4.6.179
 // @description  Toolbar do grupowej edycji parametrow: panel-pro v1.2.4 inline + new-panel support, checkboxy, zaznaczanie, rozwijanie/zwijanie, grupowe usuwanie/edycja, import CSV
 // @author       SyncOffer
 // @match        https://*.iai-shop.com/panel/app/parameters.php*
@@ -3515,6 +3515,11 @@ li.tp-row--selected > div {
       var tgtParentForFix = getParentId(doc, targetId);
       var crossParamMerge = srcParentForFix && tgtParentForFix && srcParentForFix !== tgtParentForFix;
       var affectedProductsForFix = crossParamMerge ? await _getProductIdsForNode(sourceId) : [];
+      // v4.6.179: ostrzeżenie gdy native > 0 a zebrano 0
+      if (crossParamMerge && !_confirmIfRiskyMerge(affectedProductsForFix, sourceName, doc)) {
+        showForceDeleteStatus(doc, 'Przerwano — ryzyko sieroty', true);
+        return;
+      }
 
       // 2) polaczenie
       showForceDeleteStatus(doc, 'Łączenie wartości...');
@@ -3791,6 +3796,11 @@ li.tp-row--selected > div {
       // 3) przepisanie towarow + usuniecie zrodla
       // v4.6.174: PRZED merge zbierz produkty — mergeParam nie zaklada parameter→product w target
       var affectedForMove = await _getProductIdsForNode(sourceId);
+      // v4.6.179: ostrzezenie gdy native > 0 a zebrano 0
+      if (!_confirmIfRiskyMerge(affectedForMove, sourceName, doc)) {
+        showForceDeleteStatus(doc, 'Przerwano — ryzyko sieroty', true);
+        return;
+      }
       showForceDeleteStatus(doc, 'Przepisywanie towarow...');
       var mergeResp = await fetchAjax('action=mergeParam&id=' + sourceId + '&idExist=' + targetValueId);
       if (mergeResp && mergeResp.error && mergeResp.error !== '') throw new Error(mergeResp.error);
@@ -4899,10 +4909,14 @@ li.tp-row--selected > div {
   // ten sam payload co natywna edycja towaru (sprawdzone live demo37 2026-06-08:
   // products-list.php?trait=<paramId> po naprawie zaczyna zwracac produkt).
   async function _attachParameterValueToProducts(productIds, paramId, valueId, onStep) {
-    if (!productIds || !productIds.length) return { ok: 0, errs: [] };
-    var ok = 0, errs = [];
+    if (!productIds || !productIds.length) return { ok: 0, errs: [], verified: 0 };
+    var ok = 0, errs = [], verified = 0;
+    // v4.6.179: trzy operacje w jednym requeście — add parametr, setAsParent (tworzy
+    // value→product gdy nie istnieje), changeParent (przepina jesli inny rodzic).
+    // Tak dziala natywna edycja towaru gdy dodajesz nowa wartosc parametru.
     var data = JSON.stringify([
       { operation: 'add', parameter: String(paramId) },
+      { operation: 'setAsParent', parameter: String(paramId), value: String(valueId) },
       { operation: 'changeParent', parameter: String(paramId), value: String(valueId) }
     ]);
     var body = 'data=' + encodeURIComponent(data) + '&columns=' + encodeURIComponent('[]');
@@ -4910,14 +4924,31 @@ li.tp-row--selected > div {
       if (onStep) try { onStep(i + 1, productIds.length, productIds[i]); } catch (e) {}
       try {
         var resp = await fetchAjaxRaw(AJAX_URL + '?action=saveParametersChanges&productId=' + encodeURIComponent(productIds[i]), body);
-        if (resp && resp.errno && Number(resp.errno) !== 0) errs.push({ pid: productIds[i], msg: resp.error || ('errno ' + resp.errno) });
-        else ok++;
+        if (resp && resp.errno && Number(resp.errno) !== 0) {
+          errs.push({ pid: productIds[i], msg: resp.error || ('errno ' + resp.errno) });
+        } else {
+          ok++;
+        }
       } catch (e) {
         errs.push({ pid: productIds[i], msg: e.message || String(e) });
       }
       if (i < productIds.length - 1) await sleep(150);
     }
-    return { ok: ok, errs: errs };
+    // v4.6.179: weryfikacja — po wszystkich operacjach sprawdz czy parameter→product istnieje
+    // dla wszystkich produktow (przez products-list?trait=paramId). Logujmy diff.
+    try {
+      var verifySet = await _getProductIdsForNode(paramId);
+      var verifyMap = {};
+      verifySet.forEach(function (p) { verifyMap[String(p)] = 1; });
+      verified = productIds.filter(function (p) { return verifyMap[String(p)]; }).length;
+      var missing = productIds.filter(function (p) { return !verifyMap[String(p)]; });
+      if (missing.length) {
+        console.error('[Parametry PRO][_attachParameterValueToProducts] WERYFIKACJA: parametr ' + paramId + ' nadal NIE jest przypisany do', missing.length, 'towarow:', missing, '— mozliwe ze IdoSell ignoruje payload');
+      } else {
+        console.log('[Parametry PRO][_attachParameterValueToProducts] WERYFIKACJA OK: parametr ' + paramId + ' przypisany do wszystkich ' + verified + ' towarow');
+      }
+    } catch (e) {}
+    return { ok: ok, errs: errs, verified: verified };
   }
 
   // v4.6.178: robust scrape ID produktow z wielu zrodel + paginacja products-list.
@@ -4966,20 +4997,39 @@ li.tp-row--selected > div {
       if (Array.isArray(raw)) raw.forEach(function (p) { add(typeof p === 'object' ? (p.id || p.product_id) : p); });
       else if (raw && typeof raw === 'object') Object.values(raw).forEach(function (p) { add(typeof p === 'object' ? (p.id || p.product_id) : p); });
     } catch (e) {}
-    // 3) ostrzezenie gdy natywny licznik > zebranych
+    // 3) natywny licznik z DOM iteminfo (do porownania z zebrana lista)
+    var nativeCnt = 0;
     try {
       var d = (typeof getIframeDoc === 'function') ? getIframeDoc() : document;
       var nativeBadge = d.getElementById('products_' + nodeId);
       if (nativeBadge) {
         var nm = (nativeBadge.textContent || '').match(/(\d+)/);
-        var nativeCnt = nm ? Number(nm[1]) : 0;
+        nativeCnt = nm ? Number(nm[1]) : 0;
         if (nativeCnt > ids.length) {
-          console.warn('[Parametry PRO][_getProductIdsForNode]', nodeId, 'natywny licznik=' + nativeCnt, 'ale zebrano tylko', ids.length, '— mozliwy zawodny endpoint IdoSell');
+          console.warn('[Parametry PRO][_getProductIdsForNode]', nodeId, 'natywny licznik=' + nativeCnt, 'ale zebrano tylko', ids.length, '— zawodny endpoint IdoSell, ryzyko sieroty');
         }
       }
     } catch (e) {}
-    try { console.log('[Parametry PRO][_getProductIdsForNode]', nodeId, '→', ids.length, ids); } catch (e) {}
+    try { console.log('[Parametry PRO][_getProductIdsForNode]', nodeId, '→', ids.length, 'zebrane (native=' + nativeCnt + ')', ids); } catch (e) {}
+    // BACKWARD COMPAT: zwraca Array, ale ma .nativeCount property dla nowych callerow
+    ids.nativeCount = nativeCnt;
     return ids;
+  }
+
+  // v4.6.179: assert dla mergeParam — gdy native > 0 a zebrano 0, prawdopodobnie operacja
+  // utworzy SIEROTE (value→product zostanie, parameter→product nie powstanie). Pyta usera
+  // czy kontynuowac mimo to. Zwraca true = kontynuuj, false = przerwij.
+  function _confirmIfRiskyMerge(productsIds, sourceValueName, doc) {
+    var nc = productsIds && productsIds.nativeCount ? productsIds.nativeCount : 0;
+    if (productsIds && productsIds.length === 0 && nc > 0) {
+      var msg = '⚠️ OSTRZEŻENIE: wartość „' + sourceValueName + '" ma w drzewie ' + nc +
+        ' towar(ów), ale API IdoSell nie zwróciło żadnego ID.\n\n' +
+        'Jeśli wykonasz teraz przeniesienie, parametr docelowy NIE zostanie dodany do ' +
+        'tych towarów (klasyczny bug parameter→product). Powstaną SIEROTY.\n\n' +
+        'Czy mimo to kontynuować? (Anuluj = przerwij i zachowaj integralność)';
+      return confirm(msg);
+    }
+    return true;
   }
 
   // v4.6.178: po remove source value, dla kazdego produktu z affectedProducts sprawdz
@@ -6253,6 +6303,11 @@ li.tp-row--selected > div {
           // v4.6.174: PRZED mergeParam zbierz produkty dotkniete (zeby po merge dopiac
           // parameter→product w target, czego natywny mergeParam nie robi — sprawdzone live)
           var affectedProducts = (sourceParamId !== selectedParamId) ? await _getProductIdsForNode(valId) : [];
+          // v4.6.179: jesli native > 0 a zebrano 0, ostrzez i pozwol abortowac
+          if (sourceParamId !== selectedParamId && !_confirmIfRiskyMerge(affectedProducts, valName, doc)) {
+            results.errors.push({ nodeId: valId, name: valName, error: 'Przerwano — ryzyko sieroty (native count > 0 ale brak ID z API)' });
+            continue;
+          }
 
           // Merge source → target (moves products automatically)
           var mergeResp = await fetchAjax(
@@ -10191,7 +10246,7 @@ li.tp-row--selected > div {
       },
       pagination: { perPage: loadPerPagePref('Sec') },
       footer: {
-        version: 'v4.6.178',
+        version: 'v4.6.179',
         links: []
       }
     });
@@ -14982,7 +15037,7 @@ li.tp-row--selected > div {
       ],
       pagination: { perPage: 50 },
       footer: {
-        version: 'v4.6.178',
+        version: 'v4.6.179',
         links: []
       }
     });
