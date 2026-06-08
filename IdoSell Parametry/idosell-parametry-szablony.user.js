@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Parametry PRO
 // @namespace    https://idosell.com/
-// @version      4.6.185
+// @version      4.6.186
 // @description  Toolbar do grupowej edycji parametrow: panel-pro v1.2.4 inline + new-panel support, checkboxy, zaznaczanie, rozwijanie/zwijanie, grupowe usuwanie/edycja, import CSV
 // @author       SyncOffer
 // @match        https://*.iai-shop.com/panel/app/parameters.php*
@@ -4923,22 +4923,52 @@ li.tp-row--selected > div {
   // parametru i wartosci (IdoSell sam mapuje na ID). errno:0 = nowy assignment,
   // errno:30 ("juz przypisany") = OK juz jest. Patrz [[checkel-creates-assignments]].
   // SIGNATURE CHANGE: paramName, valueName teraz wymagane (zamiast tylko ID).
+  // v4.6.186: pobierz liste istniejacych parametrow towaru przez fetch product-edit.php
+  // KLUCZOWE dla checkEl: bez elements[]= IdoSell zwraca errno:0 ale NIE tworzy assignmentu.
+  // Z elements[]= zawierajacymi ID istniejacych parametrow — assignment powstaje.
+  // Zniffowane z natywnego "Dodaj parametr" submit (user na demo37, 2026-06-09).
+  async function _getProductExistingParamIds(productId) {
+    var iWin = (typeof getIframeWin === 'function') ? getIframeWin() : null;
+    return new Promise(function (resolve) {
+      var xhr = iWin ? new iWin.XMLHttpRequest() : new XMLHttpRequest();
+      xhr.open('GET', '/panel/product-edit.php?idt=' + encodeURIComponent(productId));
+      xhr.setRequestHeader('X-Requested-With', 'XMLHttpRequest');
+      xhr.onload = function () {
+        var txt = xhr.responseText || '';
+        var ids = [];
+        var seen = {};
+        // parametry root produktu: name="parameters[paramsPrio][0][]" value="<id>"
+        var re = /name=["']parameters\[paramsPrio\]\[0\]\[\]["']\s+value=["'](\d+)["']/g;
+        var m;
+        while ((m = re.exec(txt)) !== null) { if (!seen[m[1]]) { seen[m[1]] = 1; ids.push(m[1]); } }
+        resolve(ids);
+      };
+      xhr.onerror = function () { resolve([]); };
+      xhr.send();
+    });
+  }
+
   async function _attachParameterValueToProducts(productIds, paramId, valueId, paramName, valueName, onStep) {
     if (!productIds || !productIds.length) return { ok: 0, errs: [], verified: 0, missing: [] };
     if (!paramName || !valueName) {
-      console.error('[Parametry PRO][_attachParameterValueToProducts] BRAK NAZW: paramName=', paramName, 'valueName=', valueName, '— attach nie zadziala bez nazw (nowy endpoint checkEl wymaga)');
+      console.error('[Parametry PRO][_attachParameterValueToProducts] BRAK NAZW: paramName=', paramName, 'valueName=', valueName);
       return { ok: 0, errs: [{ msg: 'Brak nazwy parametru lub wartości — wymagane dla checkEl' }], verified: 0, missing: productIds.slice() };
     }
     var ok = 0, errs = [], verified = 0, missing = [];
     for (var i = 0; i < productIds.length; i++) {
       if (onStep) try { onStep(i + 1, productIds.length, productIds[i]); } catch (e) {}
       try {
-        // checkEl z product= tworzy assignment i parameter→product + value→product
+        // v4.6.186: KROK 1 — pobierz liste istniejacych parametrow towaru
+        var existingParams = await _getProductExistingParamIds(productIds[i]);
+        // KROK 2 — checkEl z elements[] = lista
         var body = 'action=checkEl&type=parameter&name=' + encodeURIComponent(paramName) +
                    '&lang=' + encodeURIComponent(LANG) +
                    '&parameter_id=0' +
-                   '&product=' + encodeURIComponent(productIds[i]) +
-                   '&value[]=' + encodeURIComponent(valueName);
+                   '&product=' + encodeURIComponent(productIds[i]);
+        existingParams.forEach(function (epid) {
+          body += '&elements[]=' + encodeURIComponent(epid);
+        });
+        body += '&value[]=' + encodeURIComponent(valueName);
         var resp = await fetchAjax(body);
         var errno = resp && resp.errno != null ? Number(resp.errno) : -1;
         if (errno === 0 || errno === 30) {
@@ -4953,7 +4983,7 @@ li.tp-row--selected > div {
       }
       if (i < productIds.length - 1) await sleep(150);
     }
-    try { console.log('[Parametry PRO][_attachParameterValueToProducts][v4.6.181] paramName=' + paramName + ' valueName=' + valueName + ' ok=' + ok + '/' + productIds.length + ' missing=', missing); } catch (e) {}
+    try { console.log('[Parametry PRO][_attachParameterValueToProducts][v4.6.186] paramName=' + paramName + ' valueName=' + valueName + ' ok=' + ok + '/' + productIds.length + ' missing=', missing); } catch (e) {}
     return { ok: ok, errs: errs, verified: verified, missing: missing };
   }
 
@@ -10360,7 +10390,7 @@ li.tp-row--selected > div {
       },
       pagination: { perPage: loadPerPagePref('Sec') },
       footer: {
-        version: 'v4.6.185',
+        version: 'v4.6.186',
         links: []
       }
     });
@@ -15151,7 +15181,7 @@ li.tp-row--selected > div {
       ],
       pagination: { perPage: 50 },
       footer: {
-        version: 'v4.6.185',
+        version: 'v4.6.186',
         links: []
       }
     });
