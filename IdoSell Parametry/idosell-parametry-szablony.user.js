@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Parametry PRO
 // @namespace    https://idosell.com/
-// @version      4.6.194
+// @version      4.6.195
 // @description  Toolbar do grupowej edycji parametrow: panel-pro v1.2.4 inline + new-panel support, checkboxy, zaznaczanie, rozwijanie/zwijanie, grupowe usuwanie/edycja, import CSV
 // @author       SyncOffer
 // @match        https://*.iai-shop.com/panel/app/parameters.php*
@@ -3506,12 +3506,8 @@ li.tp-row--selected > div {
       var shops = (win && win.IAI && win.IAI.shops_list) ? win.IAI.shops_list.map(function (sh) { return String(sh.id); }) : ['1'];
       var ldResp = await fetchAjax('action=getParameterLangData&id=' + sourceId);
       var langs = (ldResp && ldResp.data && ldResp.data.langData) ? Object.keys(ldResp.data.langData) : [LANG];
-      // v4.6.188: parallel zamiast sequential
-      var _bothUrls = await Promise.all([
-        _collectValueUrls(sourceId, shops, langs),
-        _collectValueUrls(targetId, shops, langs)
-      ]);
-      var oldUrls = _bothUrls[0], destUrls = _bothUrls[1];
+      var oldUrls = await _collectValueUrls(sourceId, shops, langs);
+      var destUrls = await _collectValueUrls(targetId, shops, langs);
 
       // v4.6.174: jesli to cross-parameter merge, zbierz produkty PRZED merge (mergeParam
       // nie zaklada parameter→product w target — sprawdzone live demo37 2026-06-08)
@@ -3587,28 +3583,20 @@ li.tp-row--selected > div {
       } catch (ec) {}
 
       // 5) przekierowania 301: adresy starej wartosci -> adresy docelowej (+ repoint, bez lancuchow)
-      // v4.6.188: rownolegle (Promise.all) per shop
       showForceDeleteStatus(doc, 'Zakładanie przekierowań 301...');
       var redirOk = 0, repointed = 0;
-      var redirResults = await Promise.all(Object.keys(oldUrls).map(function (key) {
+      var keys = Object.keys(oldUrls);
+      for (var k = 0; k < keys.length; k++) {
+        var key = keys[k];
         var fromP = oldUrls[key], toP = destUrls[key];
-        if (!toP || toP === fromP) return Promise.resolve({ repointed: 0, ok: 0 });
+        if (!toP || toP === fromP) continue;
         var shopId = key.split('|')[0];
-        return _repointRedirects(shopId, fromP, toP).then(function (rp) {
-          return _addRedirect(shopId, fromP, toP).then(function (ok) {
-            return { repointed: rp, ok: ok ? 1 : 0 };
-          });
-        }).catch(function () { return { repointed: 0, ok: 0 }; });
-      }));
-      redirResults.forEach(function (r) { redirOk += r.ok; repointed += r.repointed; });
+        repointed += await _repointRedirects(shopId, fromP, toP);
+        if (await _addRedirect(shopId, fromP, toP)) redirOk++;
+      }
       try { tpCacheClearAll(); } catch (ex) {}
       showForceDeleteStatus(doc, 'Połączono „' + sourceName + '” → „' + targetName +
         '” — przekierowań 301: ' + redirOk + (repointed ? (', przepięto: ' + repointed) : ''));
-      // v4.6.191: fire-and-forget refresh
-      var _srcP = sourceParentId;
-      var _tgtP = getParentId(doc, targetId);
-      setTimeout(function () { if (_srcP) try { refreshParamValuesInTree(doc, _srcP); } catch (e) {} }, 100);
-      if (_tgtP && _tgtP !== _srcP) setTimeout(function () { try { refreshParamValuesInTree(doc, _tgtP); } catch (e) {} }, 200);
     } catch (err) {
       showForceDeleteStatus(doc, 'Błąd łączenia: ' + (err && err.message || err), true);
     }
@@ -3679,44 +3667,21 @@ li.tp-row--selected > div {
   }
 
   // Zbiera sciezki URL wartosci per sklep x jezyk (getNode -> seolink[0]). Pomija puste.
-  // v4.6.189: batched parallel (10 na raz) — pelny Promise.all powoduje throttling IdoSell.
-  // Plus early-exit gdy native count value = 0 (brak produktow = brak URLi do redirectu).
   async function _collectValueUrls(valueId, shops, langs) {
-    // EARLY EXIT: jesli wartosc nie ma zadnych produktow (native count 0), pomin całe collectowanie
-    try {
-      var d = (typeof getIframeDoc === 'function') ? getIframeDoc() : document;
-      var nativeBadge = d && d.getElementById('products_' + valueId);
-      if (nativeBadge) {
-        var nm = (nativeBadge.textContent || '').match(/(\d+)/);
-        if (nm && Number(nm[1]) === 0) {
-          try { console.log('[Parametry PRO][_collectValueUrls] valueId=' + valueId + ' native count=0, skip'); } catch (e) {}
-          return {};
-        }
-      }
-    } catch (e) {}
-    var pairs = [];
+    var map = {};
     for (var si = 0; si < shops.length; si++) {
       for (var li = 0; li < langs.length; li++) {
-        pairs.push({ sh: shops[si], lg: langs[li] });
-      }
-    }
-    // Batchowanie po 10 — IdoSell nie throttluje, ale 35+ rownoczesnych wieszalo
-    var BATCH = 10;
-    var map = {};
-    for (var bi = 0; bi < pairs.length; bi += BATCH) {
-      var slice = pairs.slice(bi, bi + BATCH);
-      var results = await Promise.all(slice.map(function (p) {
-        return fetchAjax('action=getNode&node_id=' + valueId + '&lang=' + p.lg + '&shop=' + p.sh + '&tree=parameters&parent=0')
-          .then(function (r) {
-            var seo = r && r.data && r.data.seolink && r.data.seolink[0];
-            if (!seo) return null;
+        var sh = shops[si], lg = langs[li];
+        try {
+          var r = await fetchAjax('action=getNode&node_id=' + valueId + '&lang=' + lg + '&shop=' + sh + '&tree=parameters&parent=0');
+          var seo = r && r.data && r.data.seolink && r.data.seolink[0];
+          if (seo) {
             var path;
             try { path = new URL(seo).pathname; } catch (e) { path = seo; }
-            return { key: p.sh + '|' + p.lg, path: path };
-          })
-          .catch(function () { return null; });
-      }));
-      results.forEach(function (r) { if (r) map[r.key] = r.path; });
+            map[sh + '|' + lg] = path;
+          }
+        } catch (e) {}
+      }
     }
     return map;
   }
@@ -3807,8 +3772,6 @@ li.tp-row--selected > div {
       var oldUrls = await _collectValueUrls(sourceId, shops, langs);
 
       // 2) kolizja nazw w parametrze docelowym
-      // v4.6.192: invalidate cache PRZED loadChildValues (cache TTL 1h mogl trzymac stare dane)
-      try { tpCacheDel('ch2', targetParamId + '_' + LANG); } catch (e) {}
       var targetChildren = [];
       try { targetChildren = await loadChildValues(targetParamId); } catch (e) {}
       var existing = null;
@@ -3862,25 +3825,21 @@ li.tp-row--selected > div {
       }
 
       // 4) nowe adresy URL + przekierowania 301
-      // v4.6.188: rownolegle Promise.all
-      // v4.6.190: sleep przed collectowaniem URLi swiezo utworzonej target value
-      // (getNode moze nie miec jeszcze seolinkow indeksowanych w sesji)
-      await sleep(500);
       showForceDeleteStatus(doc, 'Zakladanie przekierowan 301...');
       var newUrls = await _collectValueUrls(targetValueId, shops, langs);
-      try { console.log('[Parametry PRO][redirect] oldUrls=', oldUrls, 'newUrls=', newUrls); } catch (e) {}
       var redirOk = 0, redirFail = 0, repointed = 0;
-      var redirResultsPM = await Promise.all(Object.keys(oldUrls).map(function (key) {
+      var keys = Object.keys(oldUrls);
+      for (var k = 0; k < keys.length; k++) {
+        var key = keys[k];
         var fromP = oldUrls[key], toP = newUrls[key];
-        if (!toP || toP === fromP) return Promise.resolve({ ok: 0, fail: 0, rp: 0 });
+        if (!toP || toP === fromP) continue;
         var shopId = key.split('|')[0];
-        return _repointRedirects(shopId, fromP, toP).then(function (rp) {
-          return _addRedirect(shopId, fromP, toP).then(function (ok) {
-            return { ok: ok ? 1 : 0, fail: ok ? 0 : 1, rp: rp };
-          });
-        }).catch(function () { return { ok: 0, fail: 1, rp: 0 }; });
-      }));
-      redirResultsPM.forEach(function (r) { redirOk += r.ok; redirFail += r.fail; repointed += r.rp; });
+        // przepnij istniejace przekierowania wskazujace na stary URL -> nowy (bez lancuchow)
+        repointed += await _repointRedirects(shopId, fromP, toP);
+        // dodaj nowe przekierowanie stary -> nowy
+        var ok = await _addRedirect(shopId, fromP, toP);
+        if (ok) redirOk++; else redirFail++;
+      }
 
       // 5) DOM + cache
       var srcLi = doc.getElementById('m_' + sourceId);
@@ -3894,9 +3853,6 @@ li.tp-row--selected > div {
       var msg = 'Przeniesiono \u201e' + sourceName + '\u201d do \u201e' + targetParamName +
         '\u201d \u2014 przekierowan 301: ' + redirOk + (repointed ? (', przepieto: ' + repointed) : '') + (redirFail ? (', nieudanych: ' + redirFail) : '');
       showForceDeleteStatus(doc, msg, !!redirFail);
-      // v4.6.191: fire-and-forget refresh (await blokowal 3-7s na poll expand)
-      setTimeout(function () { try { refreshParamValuesInTree(doc, sourceParamId); } catch (e) {} }, 100);
-      setTimeout(function () { try { refreshParamValuesInTree(doc, targetParamId); } catch (e) {} }, 200);
     } catch (e) {
       showForceDeleteStatus(doc, 'Blad przenoszenia: ' + (e && e.message || e), true);
     }
@@ -5510,11 +5466,28 @@ li.tp-row--selected > div {
     });
   }
 
-  // v4.6.194: rollback v4.6.193 — natywny show_group click ma side effects ktore
-  // psuły operacje (user: "teraz znowu nie przenosi"). Wracamy do no-op refresh
-  // (priorytet: operacja > odświeżanie widoku). Odświeżenie poprzez F5.
+  // v4.6.173: soft refresh wartosci parametru w drzewie (bez location.reload)
   function refreshParamValuesInTree(doc, pid) {
-    return Promise.resolve();
+    return new Promise(function (resolve) {
+      var block = doc.getElementById('block_group' + pid);
+      var btn = doc.getElementById('showChildren_' + pid);
+      if (!btn || !block) return resolve();
+      var wasExpanded = !!block.querySelector(':scope > li[id^="m_"]');
+      if (!wasExpanded) return resolve();
+      btn.click(); // collapse — czyści DOM dzieci
+      setTimeout(function () {
+        btn.click(); // expand — IdoSell pobiera dzieci na nowo
+        var checks = 0;
+        var iv = setInterval(function () {
+          checks++;
+          var b = doc.getElementById('block_group' + pid);
+          if ((b && b.querySelector(':scope > li[id^="m_"]')) || checks > 100) {
+            clearInterval(iv);
+            resolve();
+          }
+        }, 30);
+      }, 150);
+    });
   }
 
   // v4.6.173: custom modal podsumowania bulk operacji (zastepuje natywny alert())
@@ -6422,8 +6395,6 @@ li.tp-row--selected > div {
       var results = { success: 0, errors: [], total: valueIds.length, aborted: false };
 
       // Step 1: Load existing values in target parameter
-      // v4.6.192: invalidate cache PRZED loadChildValues (cache TTL 1h mogl trzymac stale)
-      try { tpCacheDel('ch2', selectedParamId + '_' + LANG); } catch (e) {}
       statusText.textContent = 'Ladowanie wartosci parametru docelowego...';
       var targetValues = [];
       try {
@@ -6528,9 +6499,6 @@ li.tp-row--selected > div {
 
       bulkAbortController = null;
       updateCounter(doc);
-
-      // v4.6.191: fire-and-forget refresh dla target paramu (source pewnie usuniety li juz)
-      setTimeout(function () { try { refreshParamValuesInTree(doc, selectedParamId); } catch (e) {} }, 200);
 
       // Show results
       body.innerHTML = '';
@@ -10429,7 +10397,7 @@ li.tp-row--selected > div {
       },
       pagination: { perPage: loadPerPagePref('Sec') },
       footer: {
-        version: 'v4.6.194',
+        version: 'v4.6.195',
         links: []
       }
     });
@@ -15220,7 +15188,7 @@ li.tp-row--selected > div {
       ],
       pagination: { perPage: 50 },
       footer: {
-        version: 'v4.6.194',
+        version: 'v4.6.195',
         links: []
       }
     });
