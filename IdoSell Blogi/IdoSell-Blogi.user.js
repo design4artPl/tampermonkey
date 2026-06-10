@@ -1,8 +1,8 @@
 ﻿// ==UserScript==
 // @name         IdoSell Blogi — rozszerzona lista wpisów
 // @namespace    https://github.com/design4artPl/tampermonkey
-// @version      0.4.0
-// @description  Lista wpisów blog: 4 dodatkowe kolumny + multi-select + eksport/import (JSON/CSV/XML) wszystkich ustawień wpisu z podziałem na języki. UPDATE istniejących i CREATE nowych, listy w trybach replace/add/remove (D3), auto-backup przed importem.
+// @version      0.5.0
+// @description  Lista wpisów blog: 4 dodatkowe kolumny + multi-select + eksport/import (JSON/CSV/XML) wszystkich ustawień wpisu z podziałem na języki. UPDATE/CREATE, D3-listy, auto-backup, import ikony wpisu z URL (fetch + multipart upload).
 // @author       design4artPl
 // @match        https://*.iai-shop.com/panel/entries.php?*mode=blog*
 // @run-at       document-idle
@@ -902,7 +902,30 @@
         return { dropped };
     }
 
-    function applyImportToFormData(fd, importEntry) {
+    async function fetchImageBlob(url, signal) {
+        let fullUrl = String(url || '').trim();
+        if (!fullUrl) throw new Error('pusty URL');
+        if (fullUrl.startsWith('//')) fullUrl = location.protocol + fullUrl;
+        else if (fullUrl.startsWith('/')) fullUrl = location.origin + fullUrl;
+        // Cross-origin URL — credentials: 'omit' żeby uniknąć błędu CORS dla cookies
+        const sameOrigin = fullUrl.startsWith(location.origin + '/') || fullUrl.startsWith(location.origin + '?') || fullUrl === location.origin;
+        const r = await fetch(fullUrl, { credentials: sameOrigin ? 'include' : 'omit', signal });
+        if (!r.ok) throw new Error('HTTP ' + r.status);
+        const blob = await r.blob();
+        if (!blob.size) throw new Error('pusty obrazek');
+        return blob;
+    }
+
+    function fileNameFromUrl(url) {
+        try {
+            const u = new URL(url, location.origin);
+            const last = u.pathname.split('/').filter(Boolean).pop() || 'image.jpg';
+            if (!/\.[a-z0-9]{2,5}$/i.test(last)) return last + '.jpg';
+            return last;
+        } catch (e) { return 'image.jpg'; }
+    }
+
+    async function applyImportToFormData(fd, importEntry, signal) {
         const warns = [];
         const setField = (name, val) => {
             if (val === undefined) return;
@@ -916,9 +939,22 @@
         if (importEntry.dataWpisu !== undefined) setField('created_at_ymd', importEntry.dataWpisu);
         if (importEntry.indeksowanie !== undefined) setField('sitemap_index', M.yn.toBackend(importEntry.indeksowanie));
         if (importEntry.wyszukiwarka !== undefined) setField('search_index', M.yn.toBackend(importEntry.wyszukiwarka));
-        // ikonaWpisu — w v0.4.0 import upload nie obsługujemy.
-        if (importEntry.ikonaWpisu !== undefined && importEntry.ikonaWpisu) {
-            warns.push('ikonaWpisu w pliku — upload obrazka będzie obsłużony od v0.5.0, pominięte');
+        if (importEntry.ikonaWpisu !== undefined) {
+            const url = importEntry.ikonaWpisu;
+            if (url == null || url === '') {
+                // C: jawnie puste = usuń grafikę
+                fd.set('ifimg', 'n');
+            } else {
+                try {
+                    const blob = await fetchImageBlob(url, signal);
+                    const fname = fileNameFromUrl(url);
+                    fd.set('plik', blob, fname);
+                    fd.set('ifimg', 't');
+                    warns.push('obrazek wgrany: ' + fname + ' (' + Math.round(blob.size / 1024) + ' KB)');
+                } catch (e) {
+                    warns.push('NIE pobrano obrazka ' + url + ': ' + e.message);
+                }
+            }
         }
         if (importEntry.kategoriaBloga) applyD3List(fd, 'categories[]', importEntry.kategoriaBloga);
         if (importEntry.strefyAktualnosci) applyD3List(fd, 'zones[]', importEntry.strefyAktualnosci);
@@ -1020,7 +1056,7 @@
                 }
                 const html = await fetchEntryEditHtml(entry.id || null, signal);
                 const { fd, action } = buildFormDataFromHtml(html);
-                const warns = applyImportToFormData(fd, entry);
+                const warns = await applyImportToFormData(fd, entry, signal);
                 await postEntryForm(action, fd, signal);
                 if (entry.id) cacheInvalidate(entry.id);
                 if (isCreate) created++; else updated++;
