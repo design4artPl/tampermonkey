@@ -1,8 +1,8 @@
 ﻿// ==UserScript==
 // @name         IdoSell Blogi — rozszerzona lista wpisów
 // @namespace    https://github.com/design4artPl/tampermonkey
-// @version      0.5.2
-// @description  Lista wpisów blog: 4 dodatkowe kolumny + multi-select + eksport/import (JSON/CSV/XML) wszystkich ustawień wpisu z podziałem na języki. UPDATE/CREATE, D3-listy, auto-backup, import ikony z dowolnego URL. Auto-konwersja webp/avif/heic → jpg dla starego panelu IdoSell + diagnostyka błędów POST.
+// @version      0.5.3
+// @description  Lista wpisów blog: 4 dodatkowe kolumny + multi-select + eksport/import (JSON/CSV/XML) wszystkich ustawień wpisu z podziałem na języki. UPDATE/CREATE z auto-fallbackiem CREATE gdy ID z pliku nie istnieje na backendzie, D3-listy, auto-backup, import ikony z dowolnego URL, konwersja webp/avif → jpg.
 // @author       design4artPl
 // @match        https://*.iai-shop.com/panel/entries.php?*mode=blog*
 // @run-at       document-idle
@@ -851,8 +851,19 @@
         return await r.text();
     }
 
+    // Wykrywa czy pobrany HTML to FAKTYCZNIE formularz edycji wpisu. Gdy ID nie istnieje na backendzie,
+    // panel IdoSell zwraca stronę logowania z dummy formem — wtedy nie ma żadnego z title[lang].
+    function isEditFormPresent(doc) {
+        return !!doc.querySelector('input[name^="title["]') && !!doc.querySelector('input[name="visible"]');
+    }
+
     function buildFormDataFromHtml(html) {
         const doc = new DOMParser().parseFromString(html, 'text/html');
+        if (!isEditFormPresent(doc)) {
+            const err = new Error('edit form not present in response (login/error page returned)');
+            err.code = 'NOT_EDIT_FORM';
+            throw err;
+        }
         const form = doc.querySelector('form#own-url') || doc.querySelector('form[action*="entries.php"]');
         if (!form) throw new Error('Form not found in edit page');
         const fd = new FormData();
@@ -1141,22 +1152,46 @@
 
         let done = 0, errors = 0, created = 0, updated = 0;
         const IMPORT_CONCURRENCY = 2;
+        const validateCreateTitle = (entry) => {
+            const hasTitle = entry.jezyki && Object.values(entry.jezyki).some(l => l && l.tytul && String(l.tytul).trim());
+            if (!hasTitle) throw new Error('CREATE wymaga tytul w przynajmniej 1 języku');
+        };
         const tasks = entries.map((entry, idx) => async (signal) => {
-            const isCreate = !entry.id;
+            const wasCreateRequested = !entry.id;
+            let didCreate = wasCreateRequested;
+            let fallbackFromId = null;
             try {
-                if (isCreate) {
-                    const hasTitle = entry.jezyki && Object.values(entry.jezyki).some(l => l && l.tytul && String(l.tytul).trim());
-                    if (!hasTitle) throw new Error('CREATE wymaga tytul w przynajmniej 1 języku');
+                if (wasCreateRequested) validateCreateTitle(entry);
+                let html;
+                let fdAction;
+                try {
+                    html = await fetchEntryEditHtml(entry.id || null, signal);
+                    const result = buildFormDataFromHtml(html);
+                    fdAction = { fd: result.fd, action: result.action };
+                } catch (formErr) {
+                    if (formErr.code === 'NOT_EDIT_FORM' && entry.id) {
+                        // ID podane, ale wpis nie istnieje na backendzie → fallback do CREATE
+                        validateCreateTitle(entry);
+                        fallbackFromId = entry.id;
+                        modal.log('ℹ ID ' + entry.id + ' nie istnieje na backendzie — fallback do CREATE');
+                        html = await fetchEntryEditHtml(null, signal);
+                        const result = buildFormDataFromHtml(html);
+                        fdAction = { fd: result.fd, action: result.action };
+                        didCreate = true;
+                    } else {
+                        throw formErr;
+                    }
                 }
-                const html = await fetchEntryEditHtml(entry.id || null, signal);
-                const { fd, action } = buildFormDataFromHtml(html);
-                const warns = await applyImportToFormData(fd, entry, signal);
-                await postEntryForm(action, fd, signal);
+                const warns = await applyImportToFormData(fdAction.fd, entry, signal);
+                await postEntryForm(fdAction.action, fdAction.fd, signal);
                 if (entry.id) cacheInvalidate(entry.id);
-                if (isCreate) created++; else updated++;
-                let msg = '✓ ' + (entry.id || 'NEW') + ' (' + (isCreate ? 'create' : 'update') + ')';
-                if (warns && warns.length) msg += ' [' + warns.join('; ') + ']';
-                modal.log(msg);
+                if (didCreate) created++; else updated++;
+                let label;
+                if (didCreate && fallbackFromId) label = '✓ ' + fallbackFromId + '→NEW (create, fallback)';
+                else if (didCreate) label = '✓ NEW (create)';
+                else label = '✓ ' + entry.id + ' (update)';
+                if (warns && warns.length) label += ' [' + warns.join('; ') + ']';
+                modal.log(label);
             } catch (e) {
                 if (e.name !== 'AbortError') {
                     errors++;
