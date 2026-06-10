@@ -1,8 +1,8 @@
 ﻿// ==UserScript==
 // @name         IdoSell Blogi — rozszerzona lista wpisów
 // @namespace    https://github.com/design4artPl/tampermonkey
-// @version      0.5.1
-// @description  Lista wpisów blog: 4 dodatkowe kolumny + multi-select + eksport/import (JSON/CSV/XML) wszystkich ustawień wpisu z podziałem na języki. UPDATE/CREATE, D3-listy, auto-backup, import ikony z dowolnego URL (CORS-bypass przez GM_xmlhttpRequest).
+// @version      0.5.2
+// @description  Lista wpisów blog: 4 dodatkowe kolumny + multi-select + eksport/import (JSON/CSV/XML) wszystkich ustawień wpisu z podziałem na języki. UPDATE/CREATE, D3-listy, auto-backup, import ikony z dowolnego URL. Auto-konwersja webp/avif/heic → jpg dla starego panelu IdoSell + diagnostyka błędów POST.
 // @author       design4artPl
 // @match        https://*.iai-shop.com/panel/entries.php?*mode=blog*
 // @run-at       document-idle
@@ -959,6 +959,42 @@
         } catch (e) { return 'image.jpg'; }
     }
 
+    // Stary panel IdoSell akceptuje tylko klasyczne formaty (jpg/png/gif). webp/avif/heic konwertujemy przez canvas.
+    const SUPPORTED_IMAGE_TYPES = ['image/jpeg', 'image/png', 'image/gif'];
+    function isSupportedImageType(blob, fname) {
+        if (SUPPORTED_IMAGE_TYPES.includes((blob.type || '').toLowerCase())) return true;
+        const lower = (fname || '').toLowerCase();
+        if (/\.(jpe?g|png|gif)$/i.test(lower) && !blob.type) return true;
+        return false;
+    }
+    async function convertBlobToJpeg(blob) {
+        const url = URL.createObjectURL(blob);
+        try {
+            const img = await new Promise((resolve, reject) => {
+                const im = new Image();
+                im.onload = () => resolve(im);
+                im.onerror = () => reject(new Error('image decode failed (' + (blob.type || 'unknown') + ')'));
+                im.src = url;
+            });
+            const canvas = document.createElement('canvas');
+            canvas.width = img.naturalWidth || img.width;
+            canvas.height = img.naturalHeight || img.height;
+            if (!canvas.width || !canvas.height) throw new Error('empty image dimensions');
+            const ctx = canvas.getContext('2d');
+            ctx.fillStyle = '#ffffff';
+            ctx.fillRect(0, 0, canvas.width, canvas.height);
+            ctx.drawImage(img, 0, 0);
+            return await new Promise((resolve, reject) => {
+                canvas.toBlob(b => b ? resolve(b) : reject(new Error('canvas.toBlob failed')), 'image/jpeg', 0.92);
+            });
+        } finally {
+            URL.revokeObjectURL(url);
+        }
+    }
+    function swapExtensionToJpg(fname) {
+        return String(fname || 'image').replace(/\.[a-z0-9]{2,5}$/i, '') + '.jpg';
+    }
+
     async function applyImportToFormData(fd, importEntry, signal) {
         const warns = [];
         const setField = (name, val) => {
@@ -980,11 +1016,22 @@
                 fd.set('ifimg', 'n');
             } else {
                 try {
-                    const blob = await fetchImageBlob(url, signal);
-                    const fname = fileNameFromUrl(url);
+                    let blob = await fetchImageBlob(url, signal);
+                    let fname = fileNameFromUrl(url);
+                    if (!isSupportedImageType(blob, fname)) {
+                        try {
+                            const origType = blob.type || 'unknown';
+                            const conv = await convertBlobToJpeg(blob);
+                            blob = conv;
+                            fname = swapExtensionToJpg(fname);
+                            warns.push('skonwertowano ' + origType + ' → image/jpeg');
+                        } catch (convErr) {
+                            warns.push('konwersja obrazka nieudana (' + convErr.message + ') — wysyłam oryginał');
+                        }
+                    }
                     fd.set('plik', blob, fname);
                     fd.set('ifimg', 't');
-                    warns.push('obrazek wgrany: ' + fname + ' (' + Math.round(blob.size / 1024) + ' KB)');
+                    warns.push('obrazek wgrany: ' + fname + ' (' + Math.round(blob.size / 1024) + ' KB, ' + (blob.type || '?') + ')');
                 } catch (e) {
                     warns.push('NIE pobrano obrazka ' + url + ': ' + e.message);
                 }
@@ -1037,7 +1084,20 @@
             url = location.origin + url;
         }
         const r = await fetch(url, { method: 'POST', credentials: 'include', body: fd, signal, redirect: 'follow' });
-        if (!r.ok) throw new Error('HTTP ' + r.status);
+        if (!r.ok) {
+            let snippet = '';
+            try {
+                const text = await r.text();
+                // wytnij HTML tagi, weź pierwsze 200 znaków znaczącej treści
+                const clean = text.replace(/<script[^>]*>[\s\S]*?<\/script>/gi, '')
+                    .replace(/<style[^>]*>[\s\S]*?<\/style>/gi, '')
+                    .replace(/<[^>]+>/g, ' ')
+                    .replace(/\s+/g, ' ')
+                    .trim();
+                if (clean) snippet = ' — ' + clean.slice(0, 200);
+            } catch (e) {}
+            throw new Error('HTTP ' + r.status + snippet);
+        }
         return r;
     }
 
