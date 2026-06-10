@@ -1,16 +1,21 @@
 ﻿// ==UserScript==
 // @name         IdoSell Blogi — rozszerzona lista wpisów
 // @namespace    https://github.com/design4artPl/tampermonkey
-// @version      0.5.0
-// @description  Lista wpisów blog: 4 dodatkowe kolumny + multi-select + eksport/import (JSON/CSV/XML) wszystkich ustawień wpisu z podziałem na języki. UPDATE/CREATE, D3-listy, auto-backup, import ikony wpisu z URL (fetch + multipart upload).
+// @version      0.5.1
+// @description  Lista wpisów blog: 4 dodatkowe kolumny + multi-select + eksport/import (JSON/CSV/XML) wszystkich ustawień wpisu z podziałem na języki. UPDATE/CREATE, D3-listy, auto-backup, import ikony z dowolnego URL (CORS-bypass przez GM_xmlhttpRequest).
 // @author       design4artPl
 // @match        https://*.iai-shop.com/panel/entries.php?*mode=blog*
 // @run-at       document-idle
-// @grant        none
+// @grant        GM_xmlhttpRequest
+// @grant        unsafeWindow
+// @connect      *
 // ==/UserScript==
 
 (function () {
     'use strict';
+
+    // Sandbox z @grant GM_* wymaga unsafeWindow do dotarcia do globalnych obiektów strony (IAI.*).
+    const W = (typeof unsafeWindow !== 'undefined') ? unsafeWindow : window;
 
     if (!/[?&]action=items(\b|&|$)/.test(location.search)) return;
     if (!/[?&]mode=blog(\b|&|$)/.test(location.search)) return;
@@ -902,18 +907,47 @@
         return { dropped };
     }
 
+    // GM_xmlhttpRequest dla cross-origin fetcha (omija CORS). Same-origin nadal przez zwykły fetch.
+    function gmGetBlob(url, signal) {
+        return new Promise((resolve, reject) => {
+            if (typeof GM_xmlhttpRequest !== 'function') return reject(new Error('GM_xmlhttpRequest niedostępne'));
+            const req = GM_xmlhttpRequest({
+                method: 'GET',
+                url,
+                responseType: 'blob',
+                timeout: 30000,
+                onload: r => {
+                    if (r.status >= 200 && r.status < 300) {
+                        if (!r.response || !r.response.size) return reject(new Error('pusty blob'));
+                        resolve(r.response);
+                    } else reject(new Error('HTTP ' + r.status));
+                },
+                onerror: () => reject(new Error('GM network error')),
+                ontimeout: () => reject(new Error('GM timeout'))
+            });
+            if (signal) {
+                if (signal.aborted) { try { req && req.abort && req.abort(); } catch (e) {} reject(new DOMException('aborted', 'AbortError')); return; }
+                signal.addEventListener('abort', () => { try { req && req.abort && req.abort(); } catch (e) {} reject(new DOMException('aborted', 'AbortError')); });
+            }
+        });
+    }
+
     async function fetchImageBlob(url, signal) {
         let fullUrl = String(url || '').trim();
         if (!fullUrl) throw new Error('pusty URL');
         if (fullUrl.startsWith('//')) fullUrl = location.protocol + fullUrl;
         else if (fullUrl.startsWith('/')) fullUrl = location.origin + fullUrl;
-        // Cross-origin URL — credentials: 'omit' żeby uniknąć błędu CORS dla cookies
+
         const sameOrigin = fullUrl.startsWith(location.origin + '/') || fullUrl.startsWith(location.origin + '?') || fullUrl === location.origin;
-        const r = await fetch(fullUrl, { credentials: sameOrigin ? 'include' : 'omit', signal });
-        if (!r.ok) throw new Error('HTTP ' + r.status);
-        const blob = await r.blob();
-        if (!blob.size) throw new Error('pusty obrazek');
-        return blob;
+        if (sameOrigin) {
+            const r = await fetch(fullUrl, { credentials: 'include', signal });
+            if (!r.ok) throw new Error('HTTP ' + r.status);
+            const blob = await r.blob();
+            if (!blob.size) throw new Error('pusty obrazek');
+            return blob;
+        }
+        // Cross-origin → GM_xmlhttpRequest (omija CORS)
+        return await gmGetBlob(fullUrl, signal);
     }
 
     function fileNameFromUrl(url) {
@@ -1086,7 +1120,7 @@
         if (sig.aborted) { modal.done('Anulowano (' + (updated + created) + '/' + entries.length + ')'); return; }
         modal.log('Wynik: ' + updated + ' update, ' + created + ' create, ' + errors + ' błędów');
         // Po imporcie - odśwież listę przez IAI.Table.reload (jeśli dostępny)
-        try { if (window.IAI && window.IAI.Table && window.IAI.Table.reload) window.IAI.Table.reload('blog'); } catch (e) {}
+        try { if (W.IAI && W.IAI.Table && W.IAI.Table.reload) W.IAI.Table.reload('blog'); } catch (e) {}
         modal.done('Import zakończony');
     }
 
@@ -1488,9 +1522,9 @@
     function bootstrap() {
         let tries = 0;
         const handle = setInterval(() => {
-            if (window.IAI && window.IAI.Table && typeof window.IAI.Table.setCallback === 'function') {
+            if (W.IAI && W.IAI.Table && typeof W.IAI.Table.setCallback === 'function') {
                 clearInterval(handle);
-                window.IAI.Table.setCallback(onListReload);
+                W.IAI.Table.setCallback(onListReload);
                 onListReload();
             } else if (++tries > BOOT_MAX_TRIES) {
                 clearInterval(handle);
