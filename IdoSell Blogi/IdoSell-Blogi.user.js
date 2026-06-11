@@ -1,8 +1,8 @@
 ﻿// ==UserScript==
 // @name         IdoSell Blogi — rozszerzona lista wpisów
 // @namespace    https://github.com/design4artPl/tampermonkey
-// @version      0.5.3
-// @description  Lista wpisów blog: 4 dodatkowe kolumny + multi-select + eksport/import (JSON/CSV/XML) wszystkich ustawień wpisu z podziałem na języki. UPDATE/CREATE z auto-fallbackiem CREATE gdy ID z pliku nie istnieje na backendzie, D3-listy, auto-backup, import ikony z dowolnego URL, konwersja webp/avif → jpg.
+// @version      0.5.4
+// @description  Lista wpisów blog: 6 dodatkowych kolumn (ID, Towary, URL, Meta, Img, Ikona) + multi-select + eksport/import (JSON/CSV/XML) wszystkich ustawień wpisu z podziałem na języki. UPDATE/CREATE z fallbackiem, D3-listy, auto-backup, import ikony z dowolnego URL, konwersja webp/avif → jpg.
 // @author       design4artPl
 // @match        https://*.iai-shop.com/panel/entries.php?*mode=blog*
 // @run-at       document-idle
@@ -29,10 +29,12 @@
     const BOOT_MAX_TRIES = 50;
 
     const COLUMNS = [
-        { key: 'products',   label: 'Towary', tooltip: 'Liczba towarów powiązanych z wpisem',  width: '60px' },
-        { key: 'customLink', label: 'URL',    tooltip: 'Czy wpis ma zdefiniowany własny URL',  width: '50px' },
-        { key: 'customMeta', label: 'Meta',   tooltip: 'Czy wpis ma indywidualne metatagi',    width: '50px' },
-        { key: 'hasImg',     label: 'Img',    tooltip: 'Czy treść wpisu zawiera obrazki',      width: '50px' }
+        { key: 'entryId',      label: 'ID',     tooltip: 'ID wpisu (z URL edycji)',                             width: '80px',  instant: true },
+        { key: 'products',     label: 'Towary', tooltip: 'Liczba towarów powiązanych z wpisem',                 width: '60px' },
+        { key: 'customLink',   label: 'URL',    tooltip: 'Czy wpis ma zdefiniowany własny URL',                 width: '50px' },
+        { key: 'customMeta',   label: 'Meta',   tooltip: 'Czy wpis ma indywidualne metatagi',                   width: '50px' },
+        { key: 'hasImg',       label: 'Img',    tooltip: 'Czy treść wpisu zawiera obrazki',                     width: '50px' },
+        { key: 'entryHasIcon', label: 'Ikona',  tooltip: 'Czy wpis ma ustawioną ikonę wpisu (grafikę nagłówka)', width: '60px' }
     ];
 
     // Mapowania backend ↔ polski etykiet (zgodne z TEMPLATE.md v3)
@@ -73,6 +75,7 @@
         'table.entries .blogi-yes{color:#2a8f2a;font-weight:bold}',
         'table.entries .blogi-no{color:#999}',
         'table.entries .blogi-num{font-weight:bold}',
+        'table.entries .blogi-id{font-family:monospace;color:#555;font-size:11px}',
         'table.entries th.blogi-select-col,table.entries td.blogi-select-col{width:32px;text-align:center;padding:2px}',
         'table.entries tr.blogi-selected td{background:#fff8d6 !important}',
         '.blogi-toolbar{display:inline-block;position:relative;margin:0 8px}',
@@ -155,7 +158,10 @@
             if (/<img\b/i.test(input.value || '')) { hasImg = true; break; }
         }
 
-        return { products, customLink, customMeta, hasImg };
+        const ifimgChecked = doc.querySelector('input[name="ifimg"]:checked');
+        const entryHasIcon = ifimgChecked ? ifimgChecked.value === 't' : false;
+
+        return { products, customLink, customMeta, hasImg, entryHasIcon };
     }
 
     // Parser produkuje schema zgodny z TEMPLATE.md v3 (klucze polskie, D3, ikona URL).
@@ -240,7 +246,7 @@
         return entry;
     }
 
-    // 4 flagi pochodne dla kolumn listy — wyciągane z pełnego rekordu.
+    // Flagi pochodne dla kolumn listy — wyciągane z pełnego rekordu.
     function deriveColumnFlags(full) {
         const langs = Object.values(full.jezyki || {});
         return {
@@ -248,7 +254,8 @@
             customLink: full.typWpisu !== 'link do podstrony' ||
                 langs.some(l => l.urlBloga.tryb === 'własny' || l.urlAktualnosci.tryb === 'własny'),
             customMeta: langs.some(l => l.meta.tryb === 'ręczne'),
-            hasImg: langs.some(l => /<img\b/i.test(l.pelnaTresc || ''))
+            hasImg: langs.some(l => /<img\b/i.test(l.pelnaTresc || '')),
+            entryHasIcon: !!full.ikonaWpisu
         };
     }
 
@@ -363,7 +370,12 @@
                 for (const col of COLUMNS) {
                     const td = document.createElement('td');
                     td.className = 'row0 blogi-col blogi-col-' + col.key;
-                    td.innerHTML = '<span class="blogi-cell loading" data-col="' + col.key + '">…</span>';
+                    if (col.instant && col.key === 'entryId') {
+                        // ID wpisu znamy od razu z DOM — bez czekania na fetch.
+                        td.innerHTML = '<span class="blogi-cell blogi-id">' + id + '</span>';
+                    } else {
+                        td.innerHTML = '<span class="blogi-cell loading" data-col="' + col.key + '">…</span>';
+                    }
                     tr.insertBefore(td, lastTd);
                 }
             }
@@ -422,6 +434,7 @@
         const tr = document.querySelector('tr[data-blogi-id="' + id + '"]');
         if (!tr) return;
         for (const col of COLUMNS) {
+            if (col.instant) continue; // ID i podobne — wstawione w rebuildRows.
             const td = tr.querySelector('td.blogi-col-' + col.key);
             if (td) td.innerHTML = renderCellValue(col.key, data);
         }
