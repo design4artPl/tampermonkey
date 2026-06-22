@@ -23,6 +23,17 @@
 
     const PANEL_ORIGIN = window.location.origin;
     const LANG_CODES = ['pol', 'cze', 'eng', 'fre', 'ger', 'por', 'ukr'];
+    // Czytelne nazwy jezykow (fallback: surowy kod)
+    const LANG_NAMES = {
+        pol: 'Polski', eng: 'Angielski', ger: 'Niemiecki', fre: 'Francuski', cze: 'Czeski',
+        por: 'Portugalski', ukr: 'Ukraiński', rus: 'Rosyjski', lit: 'Litewski', spa: 'Hiszpański',
+        ita: 'Włoski', nld: 'Holenderski', dut: 'Holenderski', slo: 'Słowacki', svk: 'Słowacki',
+        hun: 'Węgierski', rom: 'Rumuński', ron: 'Rumuński', bul: 'Bułgarski', gre: 'Grecki',
+        ell: 'Grecki', swe: 'Szwedzki', dan: 'Duński', fin: 'Fiński', nor: 'Norweski',
+        est: 'Estoński', lav: 'Łotewski', hrv: 'Chorwacki', slv: 'Słoweński', srp: 'Serbski',
+        tur: 'Turecki'
+    };
+    const langLabel = (code) => LANG_NAMES[code] ? `${LANG_NAMES[code]} (${code})` : code;
 
     // -----------------------------------------------------------------------
     // Dostep do dokumentu z formularzem (iframe lub bezposrednio)
@@ -76,6 +87,8 @@
     // UI - FAB + panel
     // -----------------------------------------------------------------------
     function createUI() {
+        // Zabezpieczenie przed podwojnym zbudowaniem UI (duplikaty ID -> rozjazd getElementById)
+        if (document.getElementById('sa-export-modal-bg')) return;
         const styleEl = document.createElement('style');
         styleEl.textContent = `
             #sa-fab {
@@ -325,6 +338,20 @@
                     <div class="sam-section-header">
                         <span class="sam-section-num">1</span>
                         <div>
+                            <div class="sam-section-title">Języki</div>
+                            <div class="sam-section-sub">Wersje językowe nazwy kraju do eksportu (nazwy zostaną dociągnięte z formularzy edycji)</div>
+                        </div>
+                    </div>
+                    <div class="sam-pill" id="sam-pill-langs">
+                        <button data-val="all" class="active">Wszystkie języki</button>
+                        <button data-val="selected">Wybrane języki</button>
+                    </div>
+                    <div class="sam-list" id="sam-list-langs" style="display:none;"></div>
+                </div>
+                <div class="sam-section">
+                    <div class="sam-section-header">
+                        <span class="sam-section-num">2</span>
+                        <div>
                             <div class="sam-section-title">Kraje</div>
                             <div class="sam-section-sub">Wybierz kraje do eksportu</div>
                         </div>
@@ -337,7 +364,7 @@
                 </div>
                 <div class="sam-section">
                     <div class="sam-section-header">
-                        <span class="sam-section-num">2</span>
+                        <span class="sam-section-num">3</span>
                         <div>
                             <div class="sam-section-title">Regiony</div>
                             <div class="sam-section-sub">Subregiony krajów wybranych powyżej</div>
@@ -351,7 +378,7 @@
                 </div>
                 <div class="sam-section">
                     <div class="sam-section-header">
-                        <span class="sam-section-num">3</span>
+                        <span class="sam-section-num">4</span>
                         <div>
                             <div class="sam-section-title">Ustawienia krajów/regionów</div>
                             <div class="sam-section-sub">Pola do eksportu (wyłączone trafią do JSON jako null)</div>
@@ -395,9 +422,23 @@
                     <input type="file" id="sai-file-input" accept=".json" style="display:none;">
                     <div id="sai-file-info" style="margin-top:8px; font-size:12px; color:#667085;"></div>
                 </div>
-                <div class="sam-section" id="sai-countries-section" style="display:none;">
+                <div class="sam-section" id="sai-langs-section" style="display:none;">
                     <div class="sam-section-header">
                         <span class="sam-section-num">2</span>
+                        <div>
+                            <div class="sam-section-title">Języki</div>
+                            <div class="sam-section-sub">Wersje językowe nazwy kraju do zaktualizowania (tylko te obecne w pliku)</div>
+                        </div>
+                    </div>
+                    <div class="sam-pill" id="sai-pill-langs">
+                        <button data-val="all" class="active">Wszystkie języki</button>
+                        <button data-val="selected">Wybrane języki</button>
+                    </div>
+                    <div class="sam-list" id="sai-list-langs" style="display:none;"></div>
+                </div>
+                <div class="sam-section" id="sai-countries-section" style="display:none;">
+                    <div class="sam-section-header">
+                        <span class="sam-section-num">3</span>
                         <div>
                             <div class="sam-section-title">Kraje</div>
                             <div class="sam-section-sub">Wybierz które kraje z pliku chcesz zaimportować</div>
@@ -593,8 +634,47 @@
         const selectedCountries = new Set(); // klucze: idr (kraj parent)
         const selectedRegions = new Set();   // klucze: idr_source subregionu
         const fieldsState = Object.fromEntries(FIELD_DEFS.map(f => [f.id, true]));
+        let langMode = 'all';                // 'all' | 'selected'
+        let availableLangs = [];             // jezyki wykryte ze sklepu
+        const selectedLangs = new Set();     // wybrane kody jezykow
 
         const $ = id => document.getElementById(id);
+
+        function langsToExport() {
+            return langMode === 'all' ? availableLangs.slice() : availableLangs.filter(l => selectedLangs.has(l));
+        }
+
+        function renderLangsList() {
+            const wrap = $('sam-list-langs');
+            wrap.innerHTML = '';
+            if (availableLangs.length === 0) {
+                wrap.innerHTML = '<div class="sam-list-empty">Nie wykryto języków</div>';
+                return;
+            }
+            for (const code of availableLangs) {
+                const on = selectedLangs.has(code);
+                const item = document.createElement('div');
+                item.className = 'sam-list-item' + (on ? ' checked' : '');
+                item.innerHTML = `
+                    <div class="sam-list-label"><span style="font-weight:500;">${langLabel(code)}</span></div>
+                    <button class="sam-toggle ${on ? 'on' : ''}"></button>
+                `;
+                item.addEventListener('click', () => {
+                    if (selectedLangs.has(code)) selectedLangs.delete(code);
+                    else selectedLangs.add(code);
+                    if (selectedLangs.size > 0 && langMode !== 'selected') {
+                        langMode = 'selected';
+                        $('sam-pill-langs').querySelectorAll('button').forEach(b =>
+                            b.classList.toggle('active', b.getAttribute('data-val') === 'selected')
+                        );
+                        $('sam-list-langs').style.display = 'block';
+                    }
+                    renderLangsList();
+                    updateSummary();
+                });
+                wrap.appendChild(item);
+            }
+        }
 
         function renderCountriesList() {
             const wrap = $('sam-list-countries');
@@ -701,8 +781,9 @@
             const totalRegionsOfVisible = visibleC.reduce((n, c) => n + (c.subregions ? c.subregions.length : 0), 0);
             const visR = regionMode === 'all' ? totalRegionsOfVisible : selectedRegions.size;
             const enabledFields = Object.values(fieldsState).filter(Boolean).length;
+            const visL = langsToExport().length;
             $('sam-summary').textContent =
-                `${visC}/${allCountries} kraj${visC === 1 ? '' : 'ów'} · ${visR}/${allRegions} region${visR === 1 ? '' : 'ów'} · ${enabledFields}/${FIELD_DEFS.length} pól`;
+                `${visL}/${availableLangs.length} jęz. · ${visC}/${allCountries} kraj${visC === 1 ? '' : 'ów'} · ${visR}/${allRegions} region${visR === 1 ? '' : 'ów'} · ${enabledFields}/${FIELD_DEFS.length} pól`;
             $('sam-btn-go').disabled = (visC === 0);
         }
 
@@ -723,6 +804,9 @@
         // Otwieranie modalu - przygotowanie danych
         // preselectCountryIdrs (opcjonalne) - lista idr krajow do wstepnego zaznaczenia (z paska akcji)
         async function open(preselectCountryIdrs) {
+            // Odswiez na zywo (dialog jest singletonem - iframe mogl sie przeladowac)
+            formDoc = getFormDoc() || formDoc;
+            shopId = getCurrentShopId() || shopId;
             modalBg.classList.add('sa-visible');
             $('sam-header-sub').textContent = `Sklep ${shopId} - przygotowywanie listy...`;
             // Pobierz pelne dane (extract + enrich subregionow)
@@ -730,14 +814,18 @@
             await enrichSubregions(allFlat, shopId);
             nestedAssignments = nestSubregions(allFlat);
             const subC = nestedAssignments.reduce((n, c) => n + (c.subregions ? c.subregions.length : 0), 0);
-            $('sam-header-sub').textContent = `Sklep ${shopId} · ${nestedAssignments.length} krajów · ${subC} subregionów`;
+            // Wykryj jezyki dostepne w sklepie
+            availableLangs = await detectAvailableLanguages(allFlat, shopId);
+            $('sam-header-sub').textContent = `Sklep ${shopId} · ${nestedAssignments.length} krajów · ${subC} subregionów · ${availableLangs.length} języków`;
 
             // Reset stanu
-            countryMode = 'all'; regionMode = 'all';
-            selectedCountries.clear(); selectedRegions.clear();
+            countryMode = 'all'; regionMode = 'all'; langMode = 'all';
+            selectedCountries.clear(); selectedRegions.clear(); selectedLangs.clear();
             FIELD_DEFS.forEach(f => fieldsState[f.id] = true);
+            $('sam-pill-langs').querySelectorAll('button').forEach((b, i) => b.classList.toggle('active', i === 0));
             $('sam-pill-countries').querySelectorAll('button').forEach((b, i) => b.classList.toggle('active', i === 0));
             $('sam-pill-regions').querySelectorAll('button').forEach((b, i) => b.classList.toggle('active', i === 0));
+            $('sam-list-langs').style.display = 'none';
             $('sam-list-countries').style.display = 'none';
             $('sam-list-regions').style.display = 'none';
 
@@ -756,6 +844,7 @@
                 }
             }
 
+            renderLangsList();
             renderCountriesList();
             renderRegionsList();
             renderFields();
@@ -767,9 +856,16 @@
         // Filtruj nestedAssignments zgodnie z wyborami i zwroc finalna strukture do eksportu
         function buildFiltered() {
             const out = [];
+            const expLangs = langsToExport();
             for (const c of nestedAssignments) {
                 if (countryMode === 'selected' && !selectedCountries.has(c.idr)) continue;
                 const newC = { country: c.country, country_name: c.country_name, idr: c.idr };
+                // Wielojezyczne nazwy kraju (tylko wybrane jezyki)
+                if (expLangs.length && c.languages) {
+                    const langsOut = {};
+                    for (const l of expLangs) if (c.languages[l] !== undefined) langsOut[l] = c.languages[l];
+                    if (Object.keys(langsOut).length) newC.languages = langsOut;
+                }
                 // Pola z fieldsState - wylaczone -> null
                 for (const f of FIELD_DEFS) {
                     newC[f.id] = fieldsState[f.id] ? c[f.id] : null;
@@ -809,11 +905,13 @@
                 _count: out.length,
                 _subregion_count: subCount,
                 _exported_fields: enabledFieldIds,
+                _exported_languages: expLangs,
                 assignments: out
             };
         }
 
         // Setup pill events (jednorazowo)
+        pillSetup('sam-pill-langs', 'sam-list-langs', v => { langMode = v; updateSummary(); });
         pillSetup('sam-pill-countries', 'sam-list-countries', v => { countryMode = v; renderRegionsList(); updateSummary(); });
         pillSetup('sam-pill-regions', 'sam-list-regions', v => { regionMode = v; updateSummary(); });
 
@@ -826,8 +924,14 @@
                     await enrichMarketplaceProfiles(allFlat, shopId);
                     nestedAssignments = nestSubregions(allFlat); // re-nest po wzbogaceniu
                 }
+                const expLangs = langsToExport();
+                if (expLangs.length) {
+                    $('sam-header-sub').textContent = `Pobieram nazwy w ${expLangs.length} językach...`;
+                    await enrichCountryLanguages(allFlat, shopId, expLangs);
+                    nestedAssignments = nestSubregions(allFlat); // re-nest po wzbogaceniu (zachowuje a.languages na krajach)
+                }
             } catch (e) {
-                log(`BLAD pobierania marketplace: ${e.message}`);
+                log(`BLAD pobierania danych: ${e.message}`);
                 $('sam-btn-go').disabled = false;
                 return;
             }
@@ -877,8 +981,47 @@
         const fieldsState = Object.fromEntries(FIELD_DEFS.map(f => [f.id, true]));
         let importCountryMode = 'all';
         let importRegionMode = 'all';
+        let importLangMode = 'all';
         const selectedImportCountries = new Set();
         const selectedImportRegions = new Set();
+        const selectedImportLangs = new Set();
+        let availableImportLangs = [];       // jezyki obecne w pliku
+
+        function importLangsEnabled() {
+            return importLangMode === 'all' ? availableImportLangs.slice() : availableImportLangs.filter(l => selectedImportLangs.has(l));
+        }
+
+        function renderImportLangs() {
+            const wrap = $('sai-list-langs');
+            wrap.innerHTML = '';
+            if (availableImportLangs.length === 0) {
+                wrap.innerHTML = '<div class="sam-list-empty">Brak nazw językowych w pliku</div>';
+                return;
+            }
+            for (const code of availableImportLangs) {
+                const on = selectedImportLangs.has(code);
+                const item = document.createElement('div');
+                item.className = 'sam-list-item' + (on ? ' checked' : '');
+                item.innerHTML = `
+                    <div class="sam-list-label"><span style="font-weight:500;">${langLabel(code)}</span></div>
+                    <button class="sam-toggle ${on ? 'on' : ''}"></button>
+                `;
+                item.addEventListener('click', () => {
+                    if (selectedImportLangs.has(code)) selectedImportLangs.delete(code);
+                    else selectedImportLangs.add(code);
+                    if (selectedImportLangs.size > 0 && importLangMode !== 'selected') {
+                        importLangMode = 'selected';
+                        $('sai-pill-langs').querySelectorAll('button').forEach(b =>
+                            b.classList.toggle('active', b.getAttribute('data-val') === 'selected')
+                        );
+                        $('sai-list-langs').style.display = 'block';
+                    }
+                    renderImportLangs();
+                    updateButtons();
+                });
+                wrap.appendChild(item);
+            }
+        }
 
         function iLog(msg) {
             const el = $('sai-execute-log');
@@ -1040,12 +1183,15 @@
                 parts.push(`${filteredCount}/${totC} kraj(ów)`);
                 if (totS) parts.push(`${filteredSubs}/${totS} subregion(ów)`);
             }
+            if (availableImportLangs.length) parts.push(`${importLangsEnabled().length}/${availableImportLangs.length} jęz.`);
             if (mode) parts.push(`tryb: ${mode}`);
             parts.push(`${enabledCount}/${FIELD_DEFS.length} pól`);
             $('sai-summary').textContent = parts.join(' · ');
         }
 
         function open() {
+            // Odswiez na zywo (dialog jest singletonem - iframe mogl sie przeladowac)
+            shopId = getCurrentShopId() || shopId;
             modalBg.classList.add('sa-visible');
             pendingConfig = null; pendingItems = null; mode = null;
             FIELD_DEFS.forEach(f => fieldsState[f.id] = true);
@@ -1072,12 +1218,16 @@
             $('sai-btn-preview').textContent = 'Pokaż podgląd';
             $('sai-btn-cancel').textContent = 'Anuluj';
             document.querySelectorAll('input[name="sai-mode"]').forEach(r => r.checked = false);
-            importCountryMode = 'all'; importRegionMode = 'all';
-            selectedImportCountries.clear(); selectedImportRegions.clear();
+            importCountryMode = 'all'; importRegionMode = 'all'; importLangMode = 'all';
+            selectedImportCountries.clear(); selectedImportRegions.clear(); selectedImportLangs.clear();
+            availableImportLangs = [];
+            $('sai-langs-section').style.display = 'none';
             $('sai-countries-section').style.display = 'none';
             $('sai-regions-section').style.display = 'none';
+            $('sai-pill-langs').querySelectorAll('button').forEach((b, i) => b.classList.toggle('active', i === 0));
             $('sai-pill-countries').querySelectorAll('button').forEach((b, i) => b.classList.toggle('active', i === 0));
             $('sai-pill-regions').querySelectorAll('button').forEach((b, i) => b.classList.toggle('active', i === 0));
+            $('sai-list-langs').style.display = 'none';
             $('sai-list-countries').style.display = 'none';
             $('sai-list-regions').style.display = 'none';
             renderFields();
@@ -1098,6 +1248,8 @@
                     if (cfg._format !== 'idosell-shipping-assignments-v2' || !Array.isArray(cfg.assignments)) {
                         $('sai-file-info').innerHTML = `<span style="color:#c62828;">BŁĄD: nieprawidłowy format (oczekiwano idosell-shipping-assignments-v2)</span>`;
                         pendingConfig = null;
+                        availableImportLangs = [];
+                        $('sai-langs-section').style.display = 'none';
                         $('sai-countries-section').style.display = 'none';
                         $('sai-regions-section').style.display = 'none';
                         renumberSections();
@@ -1105,15 +1257,23 @@
                         pendingConfig = cfg;
                         const subC = cfg.assignments.reduce((n, c) => n + (c.subregions ? c.subregions.length : 0), 0);
                         const sameShop = String(cfg._source_shop) === String(shopId);
-                        $('sai-file-info').innerHTML = `<strong>${f.name}</strong><br>${cfg._count} kraj(ów), ${subC} subregion(ów), źródło: sklep ${cfg._source_shop}` + (sameShop ? ` <span style="color:#c62828;">⚠ ten sam sklep co docelowy!</span>` : '');
-                        importCountryMode = 'all'; importRegionMode = 'all';
-                        selectedImportCountries.clear(); selectedImportRegions.clear();
+                        // Wykryj jezyki obecne w pliku (z _exported_languages lub z kluczy languages)
+                        const langSet = new Set(Array.isArray(cfg._exported_languages) ? cfg._exported_languages : []);
+                        cfg.assignments.forEach(c => { if (c.languages) Object.keys(c.languages).forEach(l => langSet.add(l)); });
+                        availableImportLangs = [...langSet];
+                        $('sai-file-info').innerHTML = `<strong>${f.name}</strong><br>${cfg._count} kraj(ów), ${subC} subregion(ów)` + (availableImportLangs.length ? `, nazwy w ${availableImportLangs.length} jęz.` : '') + `, źródło: sklep ${cfg._source_shop}` + (sameShop ? ` <span style="color:#c62828;">⚠ ten sam sklep co docelowy!</span>` : '');
+                        importCountryMode = 'all'; importRegionMode = 'all'; importLangMode = 'all';
+                        selectedImportCountries.clear(); selectedImportRegions.clear(); selectedImportLangs.clear();
+                        $('sai-langs-section').style.display = availableImportLangs.length ? 'block' : 'none';
                         $('sai-countries-section').style.display = 'block';
                         $('sai-regions-section').style.display = 'block';
+                        $('sai-pill-langs').querySelectorAll('button').forEach((b, i) => b.classList.toggle('active', i === 0));
                         $('sai-pill-countries').querySelectorAll('button').forEach((b, i) => b.classList.toggle('active', i === 0));
                         $('sai-pill-regions').querySelectorAll('button').forEach((b, i) => b.classList.toggle('active', i === 0));
+                        $('sai-list-langs').style.display = 'none';
                         $('sai-list-countries').style.display = 'none';
                         $('sai-list-regions').style.display = 'none';
+                        renderImportLangs();
                         renderImportCountries();
                         renderImportRegions();
                         renumberSections();
@@ -1151,8 +1311,9 @@
             $('sai-preview-summary').textContent = 'Pobieram dane z docelowego sklepu...';
             try {
                 const enabled = new Set(Object.keys(fieldsState).filter(k => fieldsState[k]));
+                const enabledLangs = new Set(importLangsEnabled());
                 const filteredCfg = buildFilteredConfig();
-                pendingItems = await buildPreview(filteredCfg, shopId, mode, enabled, (done, total) => {
+                pendingItems = await buildPreview(filteredCfg, shopId, mode, enabled, enabledLangs, (done, total) => {
                     const pct = total ? Math.round(done / total * 100) : 0;
                     $('sai-prev-bar').style.width = pct + '%';
                     $('sai-prev-bar').textContent = pct + '%';
@@ -1301,6 +1462,10 @@
             if (ifr) { try { ifr.contentWindow.location.reload(); } catch (e) { ifr.src = ifr.src; } }
         };
 
+        pillSetupImport('sai-pill-langs', 'sai-list-langs', v => {
+            importLangMode = v;
+            updateButtons();
+        });
         pillSetupImport('sai-pill-countries', 'sai-list-countries', v => {
             importCountryMode = v;
             renderImportRegions();
@@ -1521,6 +1686,53 @@
         log(`Subregiony: gotowe.`);
     }
 
+    // Pobierz wielojezyczne nazwy kraju (languages[xx][regionname]) z formularza edycji
+    // Zwraca { pol: "Polska", eng: "Poland", ... } dla wszystkich jezykow obecnych w formularzu
+    async function fetchCountryLanguageNames(shopId, country, idr, parent) {
+        const doc = await fetchEditPage(shopId, country, idr, parent);
+        const form = findEditForm(doc);
+        const out = {};
+        if (!form) return out;
+        form.querySelectorAll('[name*="[regionname]"]').forEach(el => {
+            const m = el.name.match(/languages\[([a-z]{2,3})\]\[regionname\]/);
+            if (m) out[m[1]] = el.value || '';
+        });
+        return out;
+    }
+
+    // Wykryj jezyki dostepne w sklepie (na podstawie formularza pierwszego kraju)
+    async function detectAvailableLanguages(flatAssignments, shopId) {
+        const first = flatAssignments.find(a => !a.parent);
+        if (!first) return [];
+        try {
+            const names = await fetchCountryLanguageNames(shopId, first.country, first.idr, null);
+            const langs = Object.keys(names);
+            return langs.length ? langs : LANG_CODES.slice();
+        } catch (e) {
+            return LANG_CODES.slice();
+        }
+    }
+
+    // Dla kazdego kraju (nie subregionu) doczytaj nazwy w wybranych jezykach -> a.languages = {lang: name}
+    async function enrichCountryLanguages(flatAssignments, shopId, langs) {
+        if (!langs || langs.length === 0) return;
+        const countries = flatAssignments.filter(a => !a.parent);
+        log(`Nazwy jezykowe (${countries.length} krajow, ${langs.length} jezykow): pobieram...`);
+        for (let i = 0; i < countries.length; i++) {
+            const a = countries[i];
+            try {
+                const names = await fetchCountryLanguageNames(shopId, a.country, a.idr, null);
+                a.languages = {};
+                for (const l of langs) if (names[l] !== undefined) a.languages[l] = names[l];
+            } catch (e) {
+                a.languages = a.languages || {};
+                log(`  [${a.country}/${a.idr}] BLAD pobrania nazw: ${e.message}`);
+            }
+            if ((i + 1) % 10 === 0) log(`  Nazwy ${i + 1}/${countries.length}...`);
+        }
+        log(`Nazwy jezykowe: gotowe.`);
+    }
+
     async function buildExportJson(formDoc, shopId) {
         const flat = extractAssignments(formDoc);
         await enrichSubregions(flat, shopId);
@@ -1632,11 +1844,12 @@
             }
             return el.value;
         };
+        // Czytaj WSZYSTKIE wersje jezykowe nazwy obecne w formularzu (nie tylko LANG_CODES)
         const languages = {};
-        for (const lang of LANG_CODES) {
-            const v = get(`languages[${lang}][regionname]`);
-            if (v !== null) languages[lang] = v;
-        }
+        form.querySelectorAll('[name*="[regionname]"]').forEach(el => {
+            const m = el.name.match(/languages\[([a-z]{2,3})\]\[regionname\]/);
+            if (m) languages[m[1]] = el.value || '';
+        });
         // Subregion ma pole "name" zamiast languages[][regionname]
         const isSubregion = !!form.querySelector('[name="parent"]');
         return {
@@ -1662,8 +1875,9 @@
         return v === '' || v === null || v === undefined;
     }
 
-    function diffPlanned(current, source, mode, enabledFields) {
+    function diffPlanned(current, source, mode, enabledFields, enabledLangs) {
         // enabledFields - Set z polami ktore user chce zmieniac. Pola spoza Set -> nie ruszamy.
+        // enabledLangs - Set z kodami jezykow nazwy kraju do zmiany (puste = nie ruszamy nazw).
         // Domyslnie wszystkie pola wlaczone.
         const allFields = ['profile', 'profile_wholesale', 'payform', 'payform_wholesale', 'vat', 'profile_auctions', 'payform_auctions'];
         if (!enabledFields) enabledFields = new Set(allFields);
@@ -1752,6 +1966,35 @@
                 }
             }
         }
+
+        // Wielojezyczna nazwa kraju (languages[lang][regionname]) - tylko dla krajow (nie subregionow)
+        if (!current.isSubregion && source.languages && enabledLangs && enabledLangs.size) {
+            const curLangs = current.languages || {};
+            planned.languages = {};
+            for (const lang of enabledLangs) {
+                const srcName = source.languages[lang];
+                if (srcName === undefined) continue;          // jezyka nie ma w pliku - pomin
+                const curName = curLangs[lang] || '';
+                let newVal = curName, action = 'keep';
+                if (mode === 'overwrite') {
+                    newVal = srcName;
+                    if (curName !== srcName) action = 'overwrite';
+                } else if (mode === 'fill_empty') {
+                    if (isEmpty(curName) && !isEmpty(srcName)) { newVal = srcName; action = 'fill'; }
+                } else if (mode === 'skip') {
+                    if (allCurrentEmpty && !isEmpty(srcName)) { newVal = srcName; action = 'add'; }
+                } else if (isUpdateExisting && recordExists) {
+                    newVal = srcName;
+                    if (curName !== srcName) action = 'update';
+                }
+                planned.languages[lang] = newVal;
+                if (action !== 'keep') {
+                    willChange = true;
+                    changes.push({ field: `nazwa[${lang}]`, from: curName, to: newVal, action });
+                }
+            }
+        }
+
         return { planned, changes, willChange };
     }
 
@@ -1779,6 +2022,11 @@
             if (src && src.name) setVal('name', src.name);
             if (src && src.postcodefrom !== undefined) setVal('postcodefrom', src.postcodefrom);
             if (src && src.postcodeto !== undefined) setVal('postcodeto', src.postcodeto);
+        } else if (planned.languages) {
+            // Kraj - podmien wielojezyczne nazwy zgodnie z planem (tylko wybrane jezyki obecne w formularzu)
+            for (const lang in planned.languages) {
+                setVal(`languages[${lang}][regionname]`, planned.languages[lang]);
+            }
         }
 
         const fd = new FormData(form);
@@ -1908,7 +2156,7 @@
     // -----------------------------------------------------------------------
     // Podglad zmian
     // -----------------------------------------------------------------------
-    async function buildPreview(config, shopId, mode, enabledFields, onProgress) {
+    async function buildPreview(config, shopId, mode, enabledFields, enabledLangs, onProgress) {
         const items = [];
         const total = config.assignments.length;
         const totalSubs = config.assignments.reduce((n, c) => n + (c.subregions ? c.subregions.length : 0), 0);
@@ -1923,7 +2171,7 @@
                     items.push({ src, error: 'Nie znaleziono formularza w docelowym sklepie' });
                     continue;
                 }
-                const { planned, changes, willChange } = diffPlanned(current, src, mode, enabledFields);
+                const { planned, changes, willChange } = diffPlanned(current, src, mode, enabledFields, enabledLangs);
                 let mpChange = null;
                 if (Array.isArray(src.profile_auctions) && (!enabledFields || enabledFields.has('profile_auctions'))) {
                     const curMp = await fetchMarketplaceState(shopId, src.idr);
@@ -2276,7 +2524,7 @@
     // Inicjalizacja / odporne wstrzykiwanie (naprawia podwojne odswiezanie)
     // -----------------------------------------------------------------------
     let currentCtx = null;     // { formDoc, shopId, exportDialog, importDialog, deleteDialog }
-    let setupFormDoc = null;   // dokument iframe dla ktorego zbudowano dialogi
+    let dialogs = null;        // SINGLETONY dialogow (tworzone raz) - open() odswieza formDoc/shopId na zywo
 
     function ensureSetup() {
         if (!isListPage()) {
@@ -2288,20 +2536,19 @@
         if (!formDoc || !formDoc.querySelector('table tr[id^="tr_row_"]')) return;
         const shopId = getCurrentShopId();
 
-        // Dokument iframe zmienil sie (reload/nawigacja) -> (prze)buduj dialogi zwiazane z formDoc
-        if (setupFormDoc !== formDoc || !currentCtx) {
+        // Dialogi tworzymy DOKLADNIE RAZ (singletony). Dzieki temu link breadcrumb i przyciski
+        // zawsze wskazuja te sama instancje - brak rozjazdu A/B przy re-renderze/reloadzie iframe.
+        // Aktualny formDoc/shopId dialogi odczytuja na zywo w open() (getFormDoc/getCurrentShopId).
+        if (!dialogs) {
             const exportDialog = setupExportDialog(formDoc, shopId, (data) => {
                 log(`Eksport OK. ${data._count} kraj(ów), ${data._subregion_count} subregion(ów).`);
             });
             const importDialog = setupImportDialog(shopId);
             const deleteDialog = setupDeleteModal();
-            currentCtx = { formDoc, shopId, exportDialog, importDialog, deleteDialog };
-            setupFormDoc = formDoc;
+            dialogs = { exportDialog, importDialog, deleteDialog };
             log(`Lista zaladowana. Sklep ${shopId}.`);
-        } else {
-            currentCtx.formDoc = formDoc;
-            currentCtx.shopId = shopId;
         }
+        currentCtx = { formDoc, shopId, exportDialog: dialogs.exportDialog, importDialog: dialogs.importDialog, deleteDialog: dialogs.deleteDialog };
 
         initBulkBar();
         // Idempotentne wstrzykniecia - re-injectuja sie po re-renderze iframe
