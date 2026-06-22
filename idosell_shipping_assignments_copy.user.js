@@ -2182,9 +2182,17 @@
     // GRUPOWE USUWANIE - reuzje linku "usun" (action=clear) z kazdego wiersza
     // -----------------------------------------------------------------------
     async function clearAssignment(href) {
-        const url = /^https?:/i.test(href) ? href : (PANEL_ORIGIN + (href.startsWith('/') ? href : '/' + href));
+        // Link "usun" z tabeli wskazuje na nowy panel (/panel/app/...), ktory zwraca tylko skorupe React
+        // i NIE wykonuje akcji. Realny backend to /panel/config-shipping.php (bez /app/) - tak jak eksport/import.
+        let url = /^https?:/i.test(href) ? href : (PANEL_ORIGIN + (href.startsWith('/') ? href : '/' + href));
+        url = url.replace('/panel/app/', '/panel/');
         const res = await fetch(url, { credentials: 'include' });
         if (!res.ok) throw new Error(`HTTP ${res.status}`);
+        // Po udanej akcji backend przekierowuje na liste krajow; skorupa React (brak <table>) = akcja sie nie wykonala
+        const finalUrl = res.url || '';
+        if (/\/panel\/app\//.test(finalUrl)) {
+            throw new Error('akcja trafila na nowy panel (skorupa) zamiast na backend');
+        }
         return true;
     }
 
