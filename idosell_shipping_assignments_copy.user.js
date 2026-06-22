@@ -986,6 +986,7 @@
         const selectedImportRegions = new Set();
         const selectedImportLangs = new Set();
         let availableImportLangs = [];       // jezyki obecne w pliku
+        let importNameEnabled = true;        // czy aktualizowac nazwe kraju (pole w sekcji "Pola do zaktualizowania")
 
         function importLangsEnabled() {
             return importLangMode === 'all' ? availableImportLangs.slice() : availableImportLangs.filter(l => selectedImportLangs.has(l));
@@ -1166,16 +1167,33 @@
                 });
                 wrap.appendChild(item);
             }
+            // Dodatkowe pole: Nazwa kraju (tylko gdy plik zawiera nazwy jezykowe)
+            if (availableImportLangs.length) {
+                const on = importNameEnabled;
+                const item = document.createElement('div');
+                item.className = 'sam-list-item' + (on ? ' checked' : '');
+                item.innerHTML = `
+                    <div class="sam-list-label"><strong>Nazwa kraju</strong><small>Aktualizuj nazwę kraju w wybranych językach (sekcja „Języki")</small></div>
+                    <button class="sam-toggle ${on ? 'on' : ''}"></button>
+                `;
+                item.addEventListener('click', () => {
+                    importNameEnabled = !importNameEnabled;
+                    renderFields();
+                    updateButtons();
+                });
+                wrap.appendChild(item);
+            }
         }
 
         function updateButtons() {
             const enabledCount = Object.values(fieldsState).filter(Boolean).length;
+            const nameActive = importNameEnabled && availableImportLangs.length > 0 && importLangsEnabled().length > 0;
             const hasFile = !!pendingConfig;
             const hasMode = !!mode;
             const filtered = buildFilteredConfig();
             const filteredCount = filtered ? filtered.assignments.length : 0;
             const filteredSubs = filtered ? filtered.assignments.reduce((n, c) => n + (c.subregions ? c.subregions.length : 0), 0) : 0;
-            $('sai-btn-preview').disabled = !(hasFile && hasMode && enabledCount > 0 && filteredCount > 0);
+            $('sai-btn-preview').disabled = !(hasFile && hasMode && (enabledCount > 0 || nameActive) && filteredCount > 0);
             const parts = [];
             if (pendingConfig) {
                 const totC = pendingConfig.assignments.length;
@@ -1220,7 +1238,7 @@
             document.querySelectorAll('input[name="sai-mode"]').forEach(r => r.checked = false);
             importCountryMode = 'all'; importRegionMode = 'all'; importLangMode = 'all';
             selectedImportCountries.clear(); selectedImportRegions.clear(); selectedImportLangs.clear();
-            availableImportLangs = [];
+            availableImportLangs = []; importNameEnabled = true;
             $('sai-langs-section').style.display = 'none';
             $('sai-countries-section').style.display = 'none';
             $('sai-regions-section').style.display = 'none';
@@ -1276,6 +1294,7 @@
                         renderImportLangs();
                         renderImportCountries();
                         renderImportRegions();
+                        renderFields();  // odswiez liste pol (dodaje/usuwa przelacznik "Nazwa kraju")
                         renumberSections();
                     }
                 } catch (err) {
@@ -1311,7 +1330,8 @@
             $('sai-preview-summary').textContent = 'Pobieram dane z docelowego sklepu...';
             try {
                 const enabled = new Set(Object.keys(fieldsState).filter(k => fieldsState[k]));
-                const enabledLangs = new Set(importLangsEnabled());
+                // Nazwy aktualizujemy tylko gdy wlaczony przelacznik "Nazwa kraju"
+                const enabledLangs = importNameEnabled ? new Set(importLangsEnabled()) : new Set();
                 const filteredCfg = buildFilteredConfig();
                 pendingItems = await buildPreview(filteredCfg, shopId, mode, enabled, enabledLangs, (done, total) => {
                     const pct = total ? Math.round(done / total * 100) : 0;
