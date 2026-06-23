@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         IdoSell Banery — Eksport/Import JSON
 // @namespace    https://github.com/design4artPl/tampermonkey
-// @version      0.8.1
+// @version      0.8.2
 // @description  Eksport i import banerów IdoSell do/z pliku JSON z podziałem na sklepy i strefy
 // @match        https://*/panel/config-links.php*
 // @match        https://*/panel/app/config-links.php*
@@ -1085,11 +1085,15 @@
 
     const slots = ['plik', 'rwd_desktop', 'rwd_tablet', 'rwd_mobile'];
     for (const slot of slots) {
-      const cont = doc.getElementById('displayFile_' + slot);
+      // The populated preview lives in `displayFile_img_<slot>` (RWD slots); the
+      // legacy `displayFile_<slot>` container is kept only as a fallback (e.g. `plik`).
+      const cont = doc.getElementById('displayFile_img_' + slot) || doc.getElementById('displayFile_' + slot);
       if (!cont) continue;
       const imgEl = cont.querySelector('img[src*="/data/include/img/links/"]');
       if (!imgEl) continue;
       const rawSrc = imgEl.getAttribute('src');
+      // The preview <img> exists even for empty slots, but then src has no filename
+      // (e.g. `/links/?rand=...`); require a real filename with extension.
       if (!/\/links\/[^/?]+\./.test(rawSrc)) continue;
       const absUrl = new URL(rawSrc, `${location.protocol}//${location.host}`).href;
       const imgInfo = { url: absUrl, fileName: filenameFromUrl(absUrl) };
